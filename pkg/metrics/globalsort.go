@@ -14,10 +14,7 @@
 
 package metrics
 
-import (
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
-	"github.com/prometheus/client_golang/prometheus"
-)
+import "github.com/prometheus/client_golang/prometheus"
 
 var (
 	// GlobalSortWriteToCloudStorageDuration records the duration of writing to cloud storage.
@@ -30,17 +27,11 @@ var (
 	GlobalSortReadFromCloudStorageRate *prometheus.HistogramVec
 	// GlobalSortIngestWorkerCnt records the working number of ingest workers.
 	GlobalSortIngestWorkerCnt *prometheus.GaugeVec
-	// GlobalSortUploadWorkerCount is the gauge of active parallel upload worker count.
-	GlobalSortUploadWorkerCount prometheus.Gauge
-	// MergeSortWriteBytes records the bytes written in merge sort.
-	MergeSortWriteBytes prometheus.Counter
-	// MergeSortReadBytes records the bytes read in merge sort.
-	MergeSortReadBytes prometheus.Counter
 )
 
 // InitGlobalSortMetrics initializes defines global sort metrics.
 func InitGlobalSortMetrics() {
-	GlobalSortWriteToCloudStorageDuration = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
+	GlobalSortWriteToCloudStorageDuration = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "global_sort",
 		Name:      "write_to_cloud_storage_duration",
@@ -48,7 +39,7 @@ func InitGlobalSortMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 	}, []string{LblType})
 
-	GlobalSortWriteToCloudStorageRate = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
+	GlobalSortWriteToCloudStorageRate = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "global_sort",
 		Name:      "write_to_cloud_storage_rate",
@@ -56,7 +47,7 @@ func InitGlobalSortMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
 
-	GlobalSortReadFromCloudStorageDuration = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
+	GlobalSortReadFromCloudStorageDuration = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "global_sort",
 		Name:      "read_from_cloud_storage_duration",
@@ -64,7 +55,7 @@ func InitGlobalSortMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20),
 	}, []string{LblType})
 
-	GlobalSortReadFromCloudStorageRate = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
+	GlobalSortReadFromCloudStorageRate = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "global_sort",
 		Name:      "read_from_cloud_storage_rate",
@@ -72,37 +63,10 @@ func InitGlobalSortMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
 
-	GlobalSortIngestWorkerCnt = metricscommon.NewGaugeVec(prometheus.GaugeOpts{
+	GlobalSortIngestWorkerCnt = NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "tidb",
 		Subsystem: "global_sort",
 		Name:      "ingest_worker_cnt",
 		Help:      "ingest worker cnt",
 	}, []string{LblType})
-
-	GlobalSortUploadWorkerCount = metricscommon.NewGauge(
-		prometheus.GaugeOpts{
-			Namespace: "tidb",
-			Subsystem: "global_sort",
-			Name:      "upload_worker_cnt",
-			Help:      "Gauge of active parallel upload worker count.",
-		},
-	)
-
-	MergeSortWriteBytes = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "global_sort",
-			Name:      "merge_sort_write_bytes",
-			Help:      "Counter of bytes written in merge sort.",
-		},
-	)
-
-	MergeSortReadBytes = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "global_sort",
-			Name:      "merge_sort_read_bytes",
-			Help:      "Counter of bytes read in merge sort.",
-		},
-	)
 }

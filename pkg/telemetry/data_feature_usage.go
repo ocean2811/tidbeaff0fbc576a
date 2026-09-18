@@ -19,23 +19,29 @@ import (
 	"errors"
 	"strconv"
 
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	m "github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	m "github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/metrics"
 	"go.uber.org/zap"
 )
 
+// emptyClusterIndexUsage is empty ClusterIndexUsage, deprecated.
+var emptyClusterIndexUsage = ClusterIndexUsage{}
+
 type featureUsage struct {
 	// transaction usage information
-	Txn                       *TxnUsage                        `json:"txn"`
+	Txn *TxnUsage `json:"txn"`
+	// cluster index usage information
+	// key is the first 6 characters of sha2(TABLE_NAME, 256)
+	ClusterIndex              *ClusterIndexUsage               `json:"clusterIndex"`
 	NewClusterIndex           *NewClusterIndexUsage            `json:"newClusterIndex"`
 	TemporaryTable            bool                             `json:"temporaryTable"`
 	CTE                       *m.CTEUsageCounter               `json:"cte"`
@@ -76,7 +82,7 @@ type resourceControlUsage struct {
 func getFeatureUsage(ctx context.Context, sctx sessionctx.Context) (*featureUsage, error) {
 	var usage featureUsage
 	var err error
-	usage.NewClusterIndex, err = getClusterIndexUsageInfo(ctx, sctx)
+	usage.NewClusterIndex, usage.ClusterIndex, err = getClusterIndexUsageInfo(ctx, sctx)
 	if err != nil {
 		logutil.BgLogger().Info("Failed to get feature usage", zap.Error(err))
 		return nil, err
@@ -134,24 +140,20 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 			usage.PlacementPolicyUsage.NumDBWithPolicies++
 		}
 
-		tblInfos, err := is.SchemaTableInfos(context.Background(), dbInfo.Name)
-		if err != nil {
-			return
-		}
-		for _, tbInfo := range tblInfos {
-			if tbInfo.TempTableType != model.TempTableNone {
+		for _, tbInfo := range is.SchemaTables(dbInfo.Name) {
+			if tbInfo.Meta().TempTableType != model.TempTableNone {
 				usage.TemporaryTable = true
 			}
-			if tbInfo.TableCacheStatusType != model.TableCacheStatusDisable {
+			if tbInfo.Meta().TableCacheStatusType != model.TableCacheStatusDisable {
 				usage.CachedTable = true
 			}
-			if tbInfo.PlacementPolicyRef != nil {
+			if tbInfo.Meta().PlacementPolicyRef != nil {
 				usage.PlacementPolicyUsage.NumTableWithPolicies++
 			}
-			if tbInfo.AutoIDCache == 1 {
+			if tbInfo.Meta().AutoIdCache == 1 {
 				usage.AutoIDNoCache = true
 			}
-			partitions := tbInfo.GetPartitionInfo()
+			partitions := tbInfo.Meta().GetPartitionInfo()
 			if partitions == nil {
 				continue
 			}
@@ -168,12 +170,15 @@ func collectFeatureUsageFromInfoschema(ctx sessionctx.Context, usage *featureUsa
 		usage.ResourceControlUsage = &resourceControlUsage{}
 	}
 	usage.ResourceControlUsage.NumResourceGroups = uint64(len(is.AllResourceGroups()))
-	usage.ResourceControlUsage.Enabled = vardef.EnableResourceControl.Load()
+	usage.ResourceControlUsage.Enabled = variable.EnableResourceControl.Load()
 }
 
 // GetDomainInfoSchema is used by the telemetry package to get the latest schema information
 // while avoiding circle dependency with domain package.
 var GetDomainInfoSchema func(sessionctx.Context) infoschema.InfoSchema
+
+// ClusterIndexUsage records the usage info of all the tables, no more than 10k tables, deprecated.
+type ClusterIndexUsage map[string]TableClusteredInfo
 
 // TableClusteredInfo records the usage info of clusterindex of each table
 // CLUSTERED, NON_CLUSTERED, NA
@@ -193,7 +198,7 @@ type NewClusterIndexUsage struct {
 }
 
 // getClusterIndexUsageInfo gets the ClusterIndex usage information. It's exported for future test.
-func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu *NewClusterIndexUsage, err error) {
+func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu *NewClusterIndexUsage, cu *ClusterIndexUsage, err error) {
 	var newUsage NewClusterIndexUsage
 	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 
@@ -203,7 +208,7 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 		FROM information_schema.tables
 		WHERE table_schema not in ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA', 'mysql')`)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	defer func() {
@@ -221,7 +226,7 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 
 	err = sctx.RefreshTxnCtx(ctx)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	// check ClusterIndex information for each table
@@ -235,7 +240,7 @@ func getClusterIndexUsageInfo(ctx context.Context, sctx sessionctx.Context) (ncu
 		}
 	}
 	newUsage.NumTotalTables = uint64(len(rows))
-	return &newUsage, nil
+	return &newUsage, &emptyClusterIndexUsage, nil
 }
 
 // TxnUsage records the usage info of transaction related features, including
@@ -271,34 +276,34 @@ var initialFairLockingUsageCounter m.FairLockingUsageCounter
 // getTxnUsageInfo gets the usage info of transaction related features. It's exported for tests.
 func getTxnUsageInfo(ctx sessionctx.Context) *TxnUsage {
 	asyncCommitUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncCommit); err == nil {
-		asyncCommitUsed = val == vardef.On
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit); err == nil {
+		asyncCommitUsed = val == variable.On
 	}
 	onePCUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnable1PC); err == nil {
-		onePCUsed = val == vardef.On
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC); err == nil {
+		onePCUsed = val == variable.On
 	}
 	curr := metrics.GetTxnCommitCounter()
 	diff := curr.Sub(initialTxnCommitCounter)
 	mutationCheckerUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnableMutationChecker); err == nil {
-		mutationCheckerUsed = val == vardef.On
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableMutationChecker); err == nil {
+		mutationCheckerUsed = val == variable.On
 	}
 	assertionUsed := ""
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBTxnAssertionLevel); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBTxnAssertionLevel); err == nil {
 		assertionUsed = val
 	}
 	rcCheckTSUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBRCReadCheckTS); err == nil {
-		rcCheckTSUsed = val == vardef.On
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCReadCheckTS); err == nil {
+		rcCheckTSUsed = val == variable.On
 	}
 	rcWriteCheckTSUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBRCWriteCheckTs); err == nil {
-		rcWriteCheckTSUsed = val == vardef.On
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBRCWriteCheckTs); err == nil {
+		rcWriteCheckTSUsed = val == variable.On
 	}
 	fairLockingUsed := false
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBPessimisticTransactionFairLocking); err == nil {
-		fairLockingUsed = val == vardef.On
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBPessimisticTransactionFairLocking); err == nil {
+		fairLockingUsed = val == variable.On
 	}
 
 	currSavepointCount := m.GetSavepointStmtCounter()
@@ -391,8 +396,8 @@ func getTablePartitionUsageInfo() *m.TablePartitionUsageCounter {
 
 // getAutoCaptureUsageInfo gets the 'Auto Capture' usage
 func getAutoCaptureUsageInfo(ctx sessionctx.Context) bool {
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBCapturePlanBaseline); err == nil {
-		return val == vardef.On
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBCapturePlanBaseline); err == nil {
+		return val == variable.On
 	}
 	return false
 }
@@ -419,8 +424,8 @@ func getCostModelVer2UsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().CostModelVersion == 2
 }
 
-// getPagingUsageInfo gets the value of system vardef `tidb_enable_paging`.
-// This vardef is set to true as default since v6.2.0. We want to know many
+// getPagingUsageInfo gets the value of system variable `tidb_enable_paging`.
+// This variable is set to true as default since v6.2.0. We want to know many
 // users set it to false manually.
 func getPagingUsageInfo(ctx sessionctx.Context) bool {
 	return ctx.GetSessionVars().EnablePaging
@@ -453,7 +458,7 @@ func getIndexMergeUsageInfo() *m.IndexMergeUsageCounter {
 func getStoreBatchUsage(ctx sessionctx.Context) *m.StoreBatchCoprCounter {
 	curr := m.GetStoreBatchCoprCounter()
 	diff := curr.Sub(initialStoreBatchCoprCounter)
-	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBStoreBatchSize); err == nil {
+	if val, err := ctx.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBStoreBatchSize); err == nil {
 		if batchSize, err := strconv.Atoi(val); err == nil {
 			diff.BatchSize = batchSize
 		}

@@ -139,7 +139,7 @@ There will need to be a way for plugins to register new dynamic privileges via t
 
 ```
 import (
-	"github.com/pingcap/tidb/privilege/privileges"
+	"github.com/ocean2811/tidbeaff0fbc576a/privilege/privileges"
 )
 
 err = privileges.RegisterDynamicPrivilege("AUDIT_ADMIN")

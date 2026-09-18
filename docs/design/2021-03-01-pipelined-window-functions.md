@@ -1,8 +1,8 @@
 # Proposal: Pipeline Window Function Execution
 
 - Author(s): [ichn-hu](https://github.com/ichn-hu)
-- Discussion at: https://github.com/pingcap/tidb/pull/23028
-- Tracking issue: https://github.com/pingcap/tidb/pull/23022
+- Discussion at: https://github.com/ocean2811/tidbeaff0fbc576a/pull/23028
+- Tracking issue: https://github.com/ocean2811/tidbeaff0fbc576a/pull/23022
 
 ## Note
 
@@ -15,7 +15,7 @@ This document proposes to support executing window functions in a pipelined mann
 
 ## Background
 
-The current WF implementation materialized a whole partition before processing it, and if a partition is too large, it will cause TiDB OOM. One particular example is seen in [issue/18444](https://github.com/pingcap/tidb/issues/18444) where the whole table is processed as a single partition in order to get a row number for the paging scenario, while the alternative solution using user variable could significantly decrease the memory usage.
+The current WF implementation materialized a whole partition before processing it, and if a partition is too large, it will cause TiDB OOM. One particular example is seen in [issue/18444](https://github.com/ocean2811/tidbeaff0fbc576a/issues/18444) where the whole table is processed as a single partition in order to get a row number for the paging scenario, while the alternative solution using user variable could significantly decrease the memory usage.
 
 As the cause is clear, we aim to pipeline the calculation of some of the window function, which means the window function executor will return data as soon as possible before the whole partition is consumed. After this design is implemented, the evaluation of RN WF will not cause the whole partition to be materialized, instead, it can be processed in a pipelined manner in the whole executor pipeline, that’s why we call it pipelining.
 
@@ -102,7 +102,7 @@ Pipelining won't cause any compatibility issue.
 
 ## Implementation
 
-All implemented by [PR23022](https://github.com/pingcap/tidb/pull/23022).
+All implemented by [PR23022](https://github.com/ocean2811/tidbeaff0fbc576a/pull/23022).
 
 * [x] Create PipelinedWindowExec based on current implementation and modify the windowProcessor interface.
 * [x] Change data flow, make Next() pulling data from windowProcessor, and windowProcessor calls fetchChild and process data at maximum effort.

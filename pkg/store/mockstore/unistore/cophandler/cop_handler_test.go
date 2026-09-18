@@ -15,34 +15,29 @@
 package cophandler
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"math"
 	"os"
 	"path/filepath"
-	"slices"
 	"testing"
-	"time"
 
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/lockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/dbreader"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/mvcc"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -108,7 +103,7 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	}
 	colInfos := make([]*tipb.ColumnInfo, 3)
 	colTypeMap := map[int64]*types.FieldType{}
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		colInfos[i] = &tipb.ColumnInfo{
 			ColumnId:  colIds[i],
 			Tp:        int32(colTypes[i].GetType()),
@@ -119,10 +114,10 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 	rows := map[int64][]types.Datum{}
 	encodedTestKVDatas := make([]*encodedTestKVData, keyNumber)
 	encoder := &rowcodec.Encoder{Enable: true}
-	for i := range keyNumber {
+	for i := 0; i < keyNumber; i++ {
 		datum := types.MakeDatums(i, "abc", 10.0)
 		rows[int64(i)] = datum
-		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx.TimeZone(), datum, colIds, nil, nil, nil, encoder)
+		rowEncodedData, err := tablecodec.EncodeRow(stmtCtx, datum, colIds, nil, nil, encoder)
 		if err != nil {
 			return nil, err
 		}
@@ -139,7 +134,8 @@ func prepareTestTableData(keyNumber int, tableID int64) (*data, error) {
 
 func getTestPointRange(tableID int64, handle int64) kv.KeyRange {
 	startKey := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(handle))
-	endKey := slices.Clone(startKey)
+	endKey := make([]byte, len(startKey))
+	copy(endKey, startKey)
 	convertToPrefixNext(endKey)
 	return kv.KeyRange{
 		StartKey: startKey,
@@ -160,7 +156,7 @@ func convertToPrefixNext(key []byte) []byte {
 		}
 		key[i] = 0
 	}
-	for i := range key {
+	for i := 0; i < len(key); i++ {
 		key[i] = 255
 	}
 	return append(key, 0)
@@ -169,17 +165,23 @@ func convertToPrefixNext(key []byte) []byte {
 // return whether these two keys are equal.
 func isPrefixNext(key []byte, expected []byte) bool {
 	key = convertToPrefixNext(key)
-	return slices.Equal(key, expected)
+	if len(key) != len(expected) {
+		return false
+	}
+	for i := 0; i < len(key); i++ {
+		if key[i] != expected[i] {
+			return false
+		}
+	}
+	return true
 }
 
 // return a dag context according to dagReq and key ranges.
-func newDagContext(t require.TestingT, store *testStore, keyRanges []kv.KeyRange, dagReq *tipb.DAGRequest, startTs uint64) *dagContext {
-	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
-	require.NoError(t, err)
-	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
+func newDagContext(store *testStore, keyRanges []kv.KeyRange, dagReq *tipb.DAGRequest, startTs uint64) *dagContext {
+	sc := flagsToStatementContext(dagReq.Flags)
 	txn := store.db.NewTransaction(false)
 	dagCtx := &dagContext{
-		evalContext: &evalContext{sctx: sctx},
+		evalContext: &evalContext{sc: sc},
 		dbReader:    dbreader.NewDBReader(nil, []byte{255}, txn),
 		lockStore:   store.locks,
 		dagReq:      dagReq,
@@ -260,7 +262,8 @@ func (dagBuilder *dagBuilder) addSelection(expr *tipb.Expr) *dagBuilder {
 	dagBuilder.executors = append(dagBuilder.executors, &tipb.Executor{
 		Tp: tipb.ExecType_TypeSelection,
 		Selection: &tipb.Selection{
-			Conditions: []*tipb.Expr{expr},
+			Conditions:       []*tipb.Expr{expr},
+			XXX_unrecognized: nil,
 		},
 	})
 	return dagBuilder
@@ -320,7 +323,7 @@ func TestPointGet(t *testing.T) {
 		addTableScan(data.colInfos, tableID).
 		setOutputOffsets([]uint32{0, 1}).
 		build()
-	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, handle)},
+	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, handle)},
 		dagRequest, dagRequestStartTs)
 	chunks, rowCount, err := buildExecutorsAndExecute(dagCtx, dagRequest)
 	require.Len(t, chunks, 0)
@@ -334,7 +337,7 @@ func TestPointGet(t *testing.T) {
 		addTableScan(data.colInfos, tableID).
 		setOutputOffsets([]uint32{0, 1}).
 		build()
-	dagCtx = newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, handle)},
+	dagCtx = newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, handle)},
 		dagRequest, dagRequestStartTs)
 	chunks, rowCount, err = buildExecutorsAndExecute(dagCtx, dagRequest)
 	require.NoError(t, err)
@@ -346,10 +349,10 @@ func TestPointGet(t *testing.T) {
 
 	// verify the returned rows value as input
 	expectedRow := data.rows[handle]
-	eq, err := returnedRow[0].Compare(types.DefaultStmtNoWarningContext, &expectedRow[0], collate.GetBinaryCollator())
+	eq, err := returnedRow[0].Compare(nil, &expectedRow[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
-	eq, err = returnedRow[1].Compare(types.DefaultStmtNoWarningContext, &expectedRow[1], collate.GetBinaryCollator())
+	eq, err = returnedRow[1].Compare(nil, &expectedRow[1], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, eq)
 }
@@ -375,7 +378,7 @@ func TestClosureExecutor(t *testing.T) {
 		setOutputOffsets([]uint32{0, 1}).
 		build()
 
-	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, 1)},
+	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
 	_, rowCount, err := buildExecutorsAndExecute(dagCtx, dagRequest)
 	require.NoError(t, err)
@@ -404,9 +407,9 @@ func TestMppExecutor(t *testing.T) {
 		setCollectRangeCounts(true).
 		build()
 
-	dagCtx := newDagContext(t, store, []kv.KeyRange{getTestPointRange(tableID, 1)},
+	dagCtx := newDagContext(store, []kv.KeyRange{getTestPointRange(tableID, 1)},
 		dagRequest, dagRequestStartTs)
-	_, _, _, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
+	_, _, _, rowCount, _, err := buildAndRunMPPExecutor(dagCtx, dagRequest, 0)
 	require.Equal(t, rowCount[0], int64(1))
 	require.NoError(t, err)
 }
@@ -573,7 +576,6 @@ func BenchmarkExecutors(b *testing.B) {
 			build()
 
 		dagCtx = newDagContext(
-			b,
 			store,
 			[]kv.KeyRange{
 				{
@@ -610,7 +612,7 @@ func BenchmarkExecutors(b *testing.B) {
 			// })
 			b.Run(fmt.Sprintf("(row=%d, limit=%d)", row, lim), func(b *testing.B) {
 				for i := 0; i < b.N; i++ {
-					_, _, _, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq, 0)
+					_, _, _, _, _, err := buildAndRunMPPExecutor(dagCtx, dagReq, 0)
 					if err != nil {
 						b.Fatal(err)
 					}
@@ -623,57 +625,5 @@ func BenchmarkExecutors(b *testing.B) {
 		if err != nil {
 			b.Fatal(err)
 		}
-	}
-}
-
-type mockExchSenderChildExec struct{}
-
-func (*mockExchSenderChildExec) open() error                                   { return nil }
-func (*mockExchSenderChildExec) next() (*chunk.Chunk, error)                   { return nil, nil }
-func (*mockExchSenderChildExec) stop() error                                   { return nil }
-func (*mockExchSenderChildExec) getChildren() []mppExec                        { return nil }
-func (*mockExchSenderChildExec) getIntermediateFieldTypes() []*types.FieldType { return nil }
-func (*mockExchSenderChildExec) takeIntermediateResults() []*chunk.Chunk       { return nil }
-func (*mockExchSenderChildExec) getFieldTypes() []*types.FieldType             { return nil }
-func (*mockExchSenderChildExec) buildSummary() *tipb.ExecutorExecutionSummary  { return nil }
-func (*mockExchSenderChildExec) scanDetail() *kvrpcpb.ScanDetailV2             { return &kvrpcpb.ScanDetailV2{} }
-
-func TestExchSenderExecNextReturnsWhenCtxCanceledBeforeTunnelConnected(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-
-	tunnel := &ExchangerTunnel{
-		DataCh:      make(chan *tipb.Chunk, 1),
-		connectedCh: make(chan struct{}),
-		ErrCh:       make(chan error, 1),
-	}
-	t.Cleanup(func() {
-		select {
-		case <-tunnel.connectedCh:
-		default:
-			close(tunnel.connectedCh)
-		}
-	})
-
-	exec := &exchSenderExec{
-		baseMPPExec: baseMPPExec{
-			sctx:     flagsAndTzToSessionContext(0, time.UTC),
-			mppCtx:   &MPPCtx{Ctx: ctx},
-			children: []mppExec{&mockExchSenderChildExec{}},
-		},
-		tunnels: []*ExchangerTunnel{tunnel},
-	}
-
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = exec.next()
-	}()
-
-	cancel()
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		t.Fatal("exchSenderExec.next blocks on connectedCh even when context is canceled")
 	}
 }

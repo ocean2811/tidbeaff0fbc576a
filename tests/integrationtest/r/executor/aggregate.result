@@ -50,7 +50,8 @@ a	MIN(b)	MAX(b)
 1	11	11
 3	NULL	NULL
 drop table if exists t;
-create table t (a int, b int, c int, index idx(a, b, c));
+create table t (a int, b int, c int);
+alter table t add index idx(a, b, c);
 select count(a) from t group by a;
 count(a)
 select count(a) from t;
@@ -315,6 +316,9 @@ approx_count_distinct( a, b)
 drop table if exists t;
 create table t(a char(10), b char(10));
 insert into t values('1', '222'), ('12', '22');
+select group_concat(distinct a, b) from t;
+group_concat(distinct a, b)
+1222,1222
 drop table if exists t, s;
 create table t(a int);
 create table s(a int, b int);
@@ -537,18 +541,18 @@ DROP TABLE IF EXISTS customer, orders;
 CREATE TABLE `customer` (  `C_CUSTKEY` bigint(20) NOT NULL,  `C_NAME` varchar(25) NOT NULL,  `C_ADDRESS` varchar(40) NOT NULL,  `C_NATIONKEY` bigint(20) NOT NULL,  `C_PHONE` char(15) NOT NULL,  `C_ACCTBAL` decimal(15,2) NOT NULL,  `C_MKTSEGMENT` char(10) NOT NULL,  `C_COMMENT` varchar(117) NOT NULL,  PRIMARY KEY (`C_CUSTKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 CREATE TABLE `orders` (  `O_ORDERKEY` bigint(20) NOT NULL,  `O_CUSTKEY` bigint(20) NOT NULL,  `O_ORDERSTATUS` char(1) NOT NULL,  `O_TOTALPRICE` decimal(15,2) NOT NULL,  `O_ORDERDATE` date NOT NULL,  `O_ORDERPRIORITY` char(15) NOT NULL,  `O_CLERK` char(15) NOT NULL,  `O_SHIPPRIORITY` bigint(20) NOT NULL,  `O_COMMENT` varchar(79) NOT NULL,  PRIMARY KEY (`O_ORDERKEY`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;
 set tidb_opt_agg_push_down=ON;
-explain format='plan_tree' SELECT  /*+ hash_join_build(customer) */ c_custkey, count(o_orderkey)  as  c_count  from customer left join orders on c_custkey = o_custkey and o_comment not like '%special%requests%'        group by c_custkey;
-id	task	access object	operator info
-Projection	root		executor__aggregate.customer.c_custkey, Column
-└─HashAgg	root		group by:executor__aggregate.customer.c_custkey, funcs:count(Column)->Column, funcs:firstrow(executor__aggregate.customer.c_custkey)->executor__aggregate.customer.c_custkey
-  └─HashJoin	root		left outer join, left side:TableReader, equal:[eq(executor__aggregate.customer.c_custkey, executor__aggregate.orders.o_custkey)]
-    ├─TableReader(Build)	root		data:TableFullScan
-    │ └─TableFullScan	cop[tikv]	table:customer	keep order:false, stats:pseudo
-    └─HashAgg(Probe)	root		group by:executor__aggregate.orders.o_custkey, funcs:count(Column)->Column, funcs:firstrow(executor__aggregate.orders.o_custkey)->executor__aggregate.orders.o_custkey
-      └─TableReader	root		data:HashAgg
-        └─HashAgg	cop[tikv]		group by:executor__aggregate.orders.o_custkey, funcs:count(executor__aggregate.orders.o_orderkey)->Column
-          └─Selection	cop[tikv]		not(like(executor__aggregate.orders.o_comment, "%special%requests%", 92))
-            └─TableFullScan	cop[tikv]	table:orders	keep order:false, stats:pseudo
+explain format='brief' SELECT  /*+ hash_join_build(customer) */ c_custkey, count(o_orderkey)  as  c_count  from customer left join orders on c_custkey = o_custkey and o_comment not like '%special%requests%'        group by c_custkey;
+id	estRows	task	access object	operator info
+Projection	8000.00	root		executor__aggregate.customer.c_custkey, Column#18
+└─HashAgg	8000.00	root		group by:executor__aggregate.customer.c_custkey, funcs:count(Column#19)->Column#18, funcs:firstrow(executor__aggregate.customer.c_custkey)->executor__aggregate.customer.c_custkey
+  └─HashJoin	10000.00	root		left outer join, equal:[eq(executor__aggregate.customer.c_custkey, executor__aggregate.orders.o_custkey)]
+    ├─TableReader(Build)	10000.00	root		data:TableFullScan
+    │ └─TableFullScan	10000.00	cop[tikv]	table:customer	keep order:false, stats:pseudo
+    └─HashAgg(Probe)	6400.00	root		group by:executor__aggregate.orders.o_custkey, funcs:count(Column#20)->Column#19, funcs:firstrow(executor__aggregate.orders.o_custkey)->executor__aggregate.orders.o_custkey
+      └─TableReader	6400.00	root		data:HashAgg
+        └─HashAgg	6400.00	cop[tikv]		group by:executor__aggregate.orders.o_custkey, funcs:count(executor__aggregate.orders.o_orderkey)->Column#20
+          └─Selection	8000.00	cop[tikv]		not(like(executor__aggregate.orders.o_comment, "%special%requests%", 92))
+            └─TableFullScan	10000.00	cop[tikv]	table:orders	keep order:false, stats:pseudo
 set tidb_opt_agg_push_down=default;
 SET sql_mode = 'NO_ENGINE_SUBSTITUTION';
 DROP TABLE IF EXISTS t1;
@@ -697,7 +701,7 @@ select approx_count_distinct(c,d) from t;
 approx_count_distinct(c,d)
 5
 select count(c,d) from t;
-Error 1064 (42000): You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near ",d) from t" 
+[parser:1064]You have an error in your SQL syntax; check the manual that corresponds to your TiDB version for the right syntax to use line 1 column 15 near ",d) from t;" 
 select d*2 as ee, sum(c) from t group by ee order by ee;
 ee	sum(c)
 2	2
@@ -1138,6 +1142,9 @@ select group_concat(a), group_concat(distinct a) from t;
 group_concat(a)	group_concat(distinct a)
 NULL	NULL
 insert into t value(1, null), (null, 1), (1, 2), (3, 4);
+select group_concat(a, b), group_concat(distinct a,b) from t;
+group_concat(a, b)	group_concat(distinct a,b)
+12,34	12,34
 set @@session.tidb_opt_distinct_agg_push_down = 0;
 select count(distinct a) from t;
 count(distinct a)
@@ -1178,7 +1185,7 @@ delete from t where t.a = 2;
 insert into t values(1, 2, 4, 5, 6, 6.1, 7.2, 9);
 select a, var_pop(distinct b), var_pop(distinct c), var_pop(distinct d), var_pop(distinct e), var_pop(distinct f), var_pop(distinct g), var_pop(distinct h) from t group by a;
 a	var_pop(distinct b)	var_pop(distinct c)	var_pop(distinct d)	var_pop(distinct e)	var_pop(distinct f)	var_pop(distinct g)	var_pop(distinct h)
-1	0.25	0.25	0.25	0.25	0.25	0.24999999999999956	0.25
+1	0.25	0.25	0.25	0.25	0.25	0.25	0.25
 drop table t;
 create table t(a int, b bigint, c float, d double, e decimal);
 insert into t values(1, 1000, 6.8, 3.45, 8.3), (1, 3998, -3.4, 5.12, 9.3),(1, 288, 9.2, 6.08, 1);
@@ -1188,7 +1195,7 @@ variance(b)	variance(c)	variance(d)	variance(e)
 insert into t values(1, 255, 6.8, 6.08, 1);
 select variance(distinct b), variance(distinct c), variance(distinct d), variance(distinct e) from t group by a;
 variance(distinct b)	variance(distinct c)	variance(distinct d)	variance(distinct e)
-2364075.6875	29.840000178019235	1.180822222222222	12.666666666666666
+2364075.6875	29.840000178019228	1.1808222222222229	12.666666666666666
 insert into t values(2, 322, 0.8, 2.22, 6);
 select a, variance(b) over w from t window w as (partition by a);
 a	variance(b) over w
@@ -1477,8 +1484,6 @@ select * from t group by b,c;
 Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select * from t where c = d group by b, c;
 a	b	c	d
-select /* issue:68026 */ a from t where c = 1 or d = 1 group by b, c;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select t.*, x.* from t, x where t.a = x.a group by t.a;
 a	b	c	d	a	b	c	d
 select t.*, x.* from t, x where t.b = x.b and t.d = x.d group by t.b, t.d;
@@ -1512,7 +1517,7 @@ a	b	c	d
 select * from (select * from t) as e group by b,d;
 a	b	c	d
 select * from (select * from t) as e group by b,c;
-Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'e.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
+Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.e.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 select c from t group by c,d order by d;
 c
 select c from t group by c order by d;
@@ -1548,564 +1553,3 @@ a
 select a from t group by (-a);
 Error 1055 (42000): Expression #1 of SELECT list is not in GROUP BY clause and contains nonaggregated column 'executor__aggregate.t.a' which is not functionally dependent on columns in GROUP BY clause; this is incompatible with sql_mode=only_full_group_by
 set sql_mode = default;
-drop table if exists test;
-create table test(id int, name int);
-insert into test values(1, 10);
-insert into test values(1, 20);
-insert into test values(1, 30);
-insert into test values(2, 20);
-insert into test values(3, 200);
-insert into test values(3, 500);
-select id, group_concat(name) from test group by id order by id;
-id	group_concat(name)
-1	10,20,30
-2	20
-3	200,500
-select id, group_concat(name SEPARATOR ';') from test group by id order by id;
-id	group_concat(name SEPARATOR ';')
-1	10;20;30
-2	20
-3	200;500
-select id, group_concat(name SEPARATOR ',') from test group by id order by id;
-id	group_concat(name SEPARATOR ',')
-1	10,20,30
-2	20
-3	200,500
-select id, group_concat(name SEPARATOR '%') from test group by id order by id;
-id	group_concat(name SEPARATOR '%')
-1	10%20%30
-2	20
-3	200%500
-select id, group_concat(name SEPARATOR '') from test group by id order by id;
-id	group_concat(name SEPARATOR '')
-1	102030
-2	20
-3	200500
-select id, group_concat(name SEPARATOR '123') from test group by id order by id;
-id	group_concat(name SEPARATOR '123')
-1	101232012330
-2	20
-3	200123500
-select group_concat(id ORDER BY name) from (select * from test order by id, name limit 2,2) t;
-group_concat(id ORDER BY name)
-2,1
-select group_concat(id ORDER BY name desc) from (select * from test order by id, name limit 2,2) t;
-group_concat(id ORDER BY name desc)
-1,2
-select group_concat(name ORDER BY id) from (select * from test order by id, name limit 2,2) t;
-group_concat(name ORDER BY id)
-30,20
-select group_concat(name ORDER BY id desc) from (select * from test order by id, name limit 2,2) t;
-group_concat(name ORDER BY id desc)
-20,30
-select group_concat(name ORDER BY name desc SEPARATOR '++') from test;
-group_concat(name ORDER BY name desc SEPARATOR '++')
-500++200++30++20++20++10
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--1--1--2--1
-select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(name ORDER BY name desc SEPARATOR '++')	group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-500++200++30++20++20++10	3--3--1--1--2--1
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,200,30,20,10
-set session group_concat_max_len=4;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=5;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3-
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=6;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=7;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--1
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=8;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--1-
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=9;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--1--
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=10;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--1--1
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=11;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--1--1-
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=12;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--1--1--
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=13;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--1--1--2
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=14;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--1--1--2-
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=15;
-select group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test;
-group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-3--3--1--1--2--
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=4;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=5;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2-
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=6;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2--
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=7;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2--1
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=8;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2--1-
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=9;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2--1--
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=10;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2--1--1
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=11;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2--1--1-
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=12;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2--1--1--
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=13;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2--1--1--3
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=14;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2--1--1--3-
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=15;
-select group_concat(id ORDER BY name asc, id desc SEPARATOR '--') from test;
-group_concat(id ORDER BY name asc, id desc SEPARATOR '--')
-1--2--1--1--3--
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=4;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=5;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,2
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=6;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,20
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=7;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,200
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=8;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,200,
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=9;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,200,3
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=10;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,200,30
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=11;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,200,30,
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=12;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,200,30,2
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=13;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,200,30,20
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=14;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,200,30,20,
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=15;
-select group_concat(distinct name order by name desc) from test;
-group_concat(distinct name order by name desc)
-500,200,30,20,1
-select @@warning_count;
-@@warning_count
-1
-set session group_concat_max_len=default;
-drop table if exists test2;
-create table test2(id varchar(20), name varchar(20));
-insert into test2 select * from test;
-select group_concat(id ORDER BY name) from (select * from test2 order by id, name limit 2,2) t;
-group_concat(id ORDER BY name)
-2,1
-select group_concat(id ORDER BY name desc) from (select * from test2 order by id, name limit 2,2) t;
-group_concat(id ORDER BY name desc)
-1,2
-select group_concat(name ORDER BY id) from (select * from test2 order by id, name limit 2,2) t;
-group_concat(name ORDER BY id)
-30,20
-select group_concat(name ORDER BY id desc) from (select * from test2 order by id, name limit 2,2) t;
-group_concat(name ORDER BY id desc)
-20,30
-select group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from test2;
-group_concat(name ORDER BY name desc SEPARATOR '++')	group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-500++30++200++20++20++10	3--1--3--1--2--1
-select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 1 desc, id SEPARATOR '++') from test;
-1	2	3	4	5	group_concat(name, id ORDER BY 1 desc, id SEPARATOR '++')
-1	2	3	4	5	5003++2003++301++201++202++101
-select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 2 desc, name SEPARATOR '++') from test;
-1	2	3	4	5	group_concat(name, id ORDER BY 2 desc, name SEPARATOR '++')
-1	2	3	4	5	2003++5003++202++101++201++301
-select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY 3 desc, name SEPARATOR '++') from test;
-Error 1054 (42S22): Unknown column '3' in 'order clause'
-prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY floor(id/?) desc, name SEPARATOR '++') from test";
-set @a=2;
-execute s1 using @a;
-1	2	3	4	5	group_concat(name, id ORDER BY floor(id/?) desc, name SEPARATOR '++')
-1	2	3	4	5	202++2003++5003++101++201++301
-prepare s1 from "select 1, 2, 3, 4, 5 , group_concat(name, id ORDER BY ? desc, name SEPARATOR '++') from test";
-set @a=2;
-execute s1 using @a;
-1	2	3	4	5	group_concat(name, id ORDER BY ? desc, name SEPARATOR '++')
-1	2	3	4	5	2003++5003++202++101++201++301
-set @a=3;
-execute s1 using @a;
-Error 1054 (42S22): Unknown column '?' in 'order clause'
-set @a=3.0;
-execute s1 using @a;
-1	2	3	4	5	group_concat(name, id ORDER BY ? desc, name SEPARATOR '++')
-1	2	3	4	5	101++202++201++301++2003++5003
-drop table if exists ptest;
-CREATE TABLE ptest (id int,name int) PARTITION BY RANGE ( id ) (PARTITION `p0` VALUES LESS THAN (2), PARTITION `p1` VALUES LESS THAN (11));
-insert into ptest select * from test;
-set session tidb_opt_distinct_agg_push_down = 0;
-set session tidb_opt_agg_push_down = 0;
-select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
-group_concat(name ORDER BY name desc SEPARATOR '++')	group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-500++200++30++20++20++10	3--3--1--1--2--1
-select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
-group_concat(distinct name order by name desc)
-500,200,30,20,10
-set session tidb_opt_distinct_agg_push_down = 0;
-set session tidb_opt_agg_push_down = 1;
-select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
-group_concat(name ORDER BY name desc SEPARATOR '++')	group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-500++200++30++20++20++10	3--3--1--1--2--1
-select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
-group_concat(distinct name order by name desc)
-500,200,30,20,10
-set session tidb_opt_distinct_agg_push_down = 1;
-set session tidb_opt_agg_push_down = 0;
-select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
-group_concat(name ORDER BY name desc SEPARATOR '++')	group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-500++200++30++20++20++10	3--3--1--1--2--1
-select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
-group_concat(distinct name order by name desc)
-500,200,30,20,10
-set session tidb_opt_distinct_agg_push_down = 1;
-set session tidb_opt_agg_push_down = 1;
-select /*+ agg_to_cop */ group_concat(name ORDER BY name desc SEPARATOR '++'), group_concat(id ORDER BY name desc, id asc SEPARATOR '--') from ptest;
-group_concat(name ORDER BY name desc SEPARATOR '++')	group_concat(id ORDER BY name desc, id asc SEPARATOR '--')
-500++200++30++20++20++10	3--3--1--1--2--1
-select /*+ agg_to_cop */ group_concat(distinct name order by name desc) from ptest;
-group_concat(distinct name order by name desc)
-500,200,30,20,10
-set session tidb_opt_distinct_agg_push_down = default;
-set session tidb_opt_agg_push_down = default;
-select group_concat(123, null);
-group_concat(123, null)
-NULL
-drop table if exists t1;
-create table t1(cid int, sname varchar(100));
-insert into t1 values(1, 'Bob'), (1, 'Alice');
-insert into t1 values(3, 'Ace');
-set @@group_concat_max_len=5;
-select group_concat(sname order by sname) from t1 group by cid;
-group_concat(sname order by sname)
-Alice
-Ace
-drop table if exists t1;
-create table t1(c1 varchar(10));
-insert into t1 values('0123456789');
-insert into t1 values('12345');
-set @@group_concat_max_len=8;
-select group_concat(c1 order by c1) from t1 group by c1;
-group_concat(c1 order by c1)
-01234567
-12345
-set @@group_concat_max_len=default;
-drop table if exists select_distinct_test;
-create table select_distinct_test(id int not null default 1, name varchar(255), PRIMARY KEY(id));
-insert INTO select_distinct_test VALUES (1, "hello");
-insert into select_distinct_test values (2, "hello");
-begin;
-select distinct name from select_distinct_test;
-name
-hello
-commit;
-drop table if exists t;
-create table t (i int);
-insert into t values (1), (1), (1),(2),(3),(2),(3),(2),(3);
-explain format = 'plan_tree' select * from t order by i + 1;
-id	task	access object	operator info
-Projection	root		executor__aggregate.t.i
-└─Sort	root		Column
-  └─Projection	root		executor__aggregate.t.i, plus(executor__aggregate.t.i, 1)->Column
-    └─TableReader	root		data:TableFullScan
-      └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-select * from t order by i + 1;
-i
-1
-1
-1
-2
-2
-2
-3
-3
-3
-explain format = 'plan_tree' select * from t order by i + 1 limit 2;
-id	task	access object	operator info
-Projection	root		executor__aggregate.t.i
-└─TopN	root		Column, offset:0, count:2
-  └─Projection	root		executor__aggregate.t.i, plus(executor__aggregate.t.i, 1)->Column
-    └─TableReader	root		data:TopN
-      └─TopN	cop[tikv]		plus(executor__aggregate.t.i, 1), offset:0, count:2
-        └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
-select * from t order by i + 1 limit 2;
-i
-1
-1
-select i, i, i from t order by i + 1;
-i	i	i
-1	1	1
-1	1	1
-1	1	1
-2	2	2
-2	2	2
-2	2	2
-3	3	3
-3	3	3
-3	3	3
-insert into mysql.opt_rule_blacklist value("decorrelate");
-drop table if exists test;
-create table test (a int);
-insert into test value(1);
-analyze table test;
-select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
-sum(a)	(select NULL from test where tt.a = test.a limit 1)	(select NULL from test where tt.a = test.a limit 1)	(select NULL from test where tt.a = test.a limit 1)
-1	NULL	NULL	NULL
-explain format = 'plan_tree' select /*+ hash_agg() */ sum(a), (select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1),(select NULL from test where tt.a = test.a limit 1) from test tt;
-id	task	access object	operator info
-Projection	root		Column, Column, Column, Column
-└─Apply	root		CARTESIAN left outer join, left side:Apply
-  ├─Apply(Build)	root		CARTESIAN left outer join, left side:Apply
-  │ ├─Apply(Build)	root		CARTESIAN left outer join, left side:HashAgg
-  │ │ ├─HashAgg(Build)	root		funcs:sum(Column)->Column, funcs:firstrow(Column)->executor__aggregate.test.a
-  │ │ │ └─Projection	root		cast(executor__aggregate.test.a, decimal(10,0) BINARY)->Column, executor__aggregate.test.a->Column
-  │ │ │   └─TableReader	root		data:TableFullScan
-  │ │ │     └─TableFullScan	cop[tikv]	table:tt	keep order:false
-  │ │ └─Projection(Probe)	root		<nil>->Column
-  │ │   └─Limit	root		offset:0, count:1
-  │ │     └─TableReader	root		data:Limit
-  │ │       └─Limit	cop[tikv]		offset:0, count:1
-  │ │         └─Selection	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-  │ │           └─TableFullScan	cop[tikv]	table:test	keep order:false
-  │ └─Projection(Probe)	root		<nil>->Column
-  │   └─Limit	root		offset:0, count:1
-  │     └─TableReader	root		data:Limit
-  │       └─Limit	cop[tikv]		offset:0, count:1
-  │         └─Selection	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-  │           └─TableFullScan	cop[tikv]	table:test	keep order:false
-  └─Projection(Probe)	root		<nil>->Column
-    └─Limit	root		offset:0, count:1
-      └─TableReader	root		data:Limit
-        └─Limit	cop[tikv]		offset:0, count:1
-          └─Selection	cop[tikv]		eq(executor__aggregate.test.a, executor__aggregate.test.a)
-            └─TableFullScan	cop[tikv]	table:test	keep order:false
-delete from mysql.opt_rule_blacklist where name = "decorrelate";
-admin reload opt_rule_blacklist;
-select nullif(77.15, PI());
-nullif(77.15, PI())
-77.15
-select avg(nullif(77.15, PI()));
-avg(nullif(77.15, PI()))
-77.150000
-select distinct avg(nullif(77.15, PI()));
-avg(nullif(77.15, PI()))
-77.150000
-drop table if exists t_a;
-CREATE TABLE `t_a` (
-`id` bigint(20) unsigned NOT NULL AUTO_INCREMENT COMMENT 'id',
-`a` bigint(20) unsigned NOT NULL DEFAULT '0' COMMENT 'merchant id',
-`b` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'total amount',
-`c` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'settlement amount',
-`d` decimal(64,8) NOT NULL DEFAULT '0.00000000' COMMENT 'total fee',
-`e` int(11) unsigned NOT NULL DEFAULT '0' COMMENT 'settle time',
-`f` int(11) unsigned NOT NULL DEFAULT '0' COMMENT 'create time',
-`g` tinyint(1) NOT NULL DEFAULT '0' COMMENT 'is deleted',
-PRIMARY KEY (`id`)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin COMMENT='settlement table';
-explain format = 'plan_tree' SELECT
-MAX(id) AS id,
-LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
-a,
-SUM(b) AS total_amount,
-SUM(c) AS settlement_amount,
-SUM(d) AS total_fee
-FROM `t_a`
-WHERE `f` >= 1753632000
-AND `f` <= 1753718399
-AND `g` = 0
-GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
-id	task	access object	operator info
-Projection	root		Column, left(cast(from_unixtime(cast(executor__aggregate.t_a.e, decimal(10,0) UNSIGNED BINARY)), var_string(19)), 10)->Column, executor__aggregate.t_a.a, Column, Column, Column
-└─HashAgg	root		group by:Column, Column, funcs:max(Column)->Column, funcs:sum(Column)->Column, funcs:sum(Column)->Column, funcs:sum(Column)->Column, funcs:firstrow(Column)->executor__aggregate.t_a.a, funcs:firstrow(Column)->executor__aggregate.t_a.e
-  └─Projection	root		executor__aggregate.t_a.id->Column, executor__aggregate.t_a.b->Column, executor__aggregate.t_a.c->Column, executor__aggregate.t_a.d->Column, executor__aggregate.t_a.a->Column, executor__aggregate.t_a.e->Column, left(cast(from_unixtime(cast(executor__aggregate.t_a.e, decimal(10,0) UNSIGNED BINARY)), var_string(19)), 10)->Column
-    └─TableReader	root		data:Selection
-      └─Selection	cop[tikv]		eq(executor__aggregate.t_a.g, 0), ge(executor__aggregate.t_a.f, 1753632000), le(executor__aggregate.t_a.f, 1753718399)
-        └─TableFullScan	cop[tikv]	table:t_a	keep order:false, stats:pseudo
-SELECT
-MAX(id) AS id,
-LEFT(FROM_UNIXTIME(e), 10) AS settle_time,
-a,
-SUM(b) AS total_amount,
-SUM(c) AS settlement_amount,
-SUM(d) AS total_fee
-FROM `t_a`
-WHERE `f` >= 1753632000
-AND `f` <= 1753718399
-AND `g` = 0
-GROUP BY `a`, left(FROM_UNIXTIME(e), 10);
-id	settle_time	a	total_amount	settlement_amount	total_fee

@@ -18,10 +18,10 @@ import (
 	"context"
 	"crypto/tls"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/server/internal/resultset"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/extension"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/resultset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 // IDriver opens IContext.
@@ -40,9 +40,6 @@ type PreparedStatement interface {
 
 	// AppendParam appends parameter to the statement.
 	AppendParam(paramID int, data []byte) error
-
-	// CheckLongDataSize checks whether the statement has accumulated too much data through COM_STMT_SEND_LONG_DATA.
-	CheckLongDataSize() error
 
 	// NumParams returns number of parameters.
 	NumParams() int

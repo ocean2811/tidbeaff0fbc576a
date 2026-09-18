@@ -24,20 +24,17 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/testkit"
-	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
-	tidbtls "github.com/pingcap/tidb/pkg/util/tls"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/sessionstates"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,7 +73,7 @@ func TestUserVars(t *testing.T) {
 		tk2 := testkit.NewTestKit(t, store)
 		namesNum := strings.Count(tt, "%s")
 		names := make([]any, 0, namesNum)
-		for i := range namesNum {
+		for i := 0; i < namesNum; i++ {
 			names = append(names, fmt.Sprintf("a%d", i))
 		}
 		var sql string
@@ -96,11 +93,6 @@ func TestUserVars(t *testing.T) {
 }
 
 func TestSystemVars(t *testing.T) {
-	testSystemVars(t, sem.V1)
-	testSystemVars(t, sem.V2)
-}
-
-func testSystemVars(t *testing.T, semVer string) {
 	store := testkit.CreateMockStore(t)
 
 	tests := []struct {
@@ -113,37 +105,37 @@ func testSystemVars(t *testing.T, semVer string) {
 		{
 			// normal variable
 			inSessionStates: true,
-			varName:         vardef.TiDBMaxTiFlashThreads,
-			expectedValue:   strconv.Itoa(vardef.DefTiFlashMaxThreads),
+			varName:         variable.TiDBMaxTiFlashThreads,
+			expectedValue:   strconv.Itoa(variable.DefTiFlashMaxThreads),
 		},
 		{
 			// hidden variable
 			inSessionStates: true,
-			varName:         vardef.TiDBTxnReadTS,
+			varName:         variable.TiDBTxnReadTS,
 			expectedValue:   "",
 		},
 		{
 			// none-scoped variable
 			inSessionStates: false,
-			varName:         vardef.DataDir,
+			varName:         variable.DataDir,
 			expectedValue:   "/usr/local/mysql/data/",
 		},
 		{
 			// instance-scoped variable
 			inSessionStates: false,
-			varName:         vardef.TiDBGeneralLog,
+			varName:         variable.TiDBGeneralLog,
 			expectedValue:   "0",
 		},
 		{
 			// global-scoped variable
 			inSessionStates: false,
-			varName:         vardef.TiDBAutoAnalyzeStartTime,
-			expectedValue:   vardef.DefAutoAnalyzeStartTime,
+			varName:         variable.TiDBAutoAnalyzeStartTime,
+			expectedValue:   variable.DefAutoAnalyzeStartTime,
 		},
 		{
 			// sem invisible variable
 			inSessionStates: false,
-			varName:         vardef.TiDBConfig,
+			varName:         variable.TiDBConfig,
 		},
 		{
 			// noop variables
@@ -160,25 +152,25 @@ func testSystemVars(t *testing.T, semVer string) {
 		},
 		{
 			inSessionStates: false,
-			varName:         vardef.Timestamp,
+			varName:         variable.Timestamp,
 		},
 		{
 			stmts:           []string{"set timestamp=100"},
 			inSessionStates: true,
-			varName:         vardef.Timestamp,
+			varName:         variable.Timestamp,
 			expectedValue:   "100",
 		},
 		{
 			stmts:           []string{"set rand_seed1=10000000, rand_seed2=1000000"},
 			inSessionStates: true,
-			varName:         vardef.RandSeed1,
+			varName:         variable.RandSeed1,
 			checkStmt:       "select rand()",
 			expectedValue:   "0.028870999839968048",
 		},
 		{
 			stmts:           []string{"set rand_seed1=10000000, rand_seed2=1000000", "select rand()"},
 			inSessionStates: true,
-			varName:         vardef.RandSeed1,
+			varName:         variable.RandSeed1,
 			checkStmt:       "select rand()",
 			expectedValue:   "0.11641535266900002",
 		},
@@ -190,7 +182,7 @@ func testSystemVars(t *testing.T, semVer string) {
 				"set @@tidb_enforce_mpp=1",
 			},
 			inSessionStates: true,
-			varName:         vardef.TiDBEnforceMPPExecution,
+			varName:         variable.TiDBEnforceMPPExecution,
 			expectedValue:   "1",
 		},
 		{
@@ -201,12 +193,15 @@ func testSystemVars(t *testing.T, semVer string) {
 				"set @@tx_read_only=1",
 			},
 			inSessionStates: true,
-			varName:         vardef.TxReadOnly,
+			varName:         variable.TxReadOnly,
 			expectedValue:   "1",
 		},
 	}
 
-	defer sem.SwitchToSEMForTest(t, semVer)()
+	if !sem.IsEnabled() {
+		sem.Enable()
+		defer sem.Disable()
+	}
 	for _, tt := range tests {
 		tk1 := testkit.NewTestKit(t, store)
 		for _, stmt := range tt.stmts {
@@ -246,11 +241,6 @@ func testSystemVars(t *testing.T, semVer string) {
 }
 
 func TestInvisibleVars(t *testing.T) {
-	testInvisibleVars(t, sem.V1)
-	testInvisibleVars(t, sem.V2)
-}
-
-func testInvisibleVars(t *testing.T, semVer string) {
 	tests := []struct {
 		hasPriv       bool
 		stmt          string
@@ -278,21 +268,21 @@ func testInvisibleVars(t *testing.T, semVer string) {
 			// The value is changed and the user has the privilege.
 			hasPriv:       true,
 			stmt:          "set tidb_opt_write_row_id=true",
-			varName:       vardef.TiDBOptWriteRowID,
+			varName:       variable.TiDBOptWriteRowID,
 			expectedValue: "1",
 		},
 		{
 			// The value has a global scope.
 			hasPriv:       true,
 			stmt:          "set tidb_row_format_version=1",
-			varName:       vardef.TiDBRowFormatVersion,
+			varName:       variable.TiDBRowFormatVersion,
 			expectedValue: "1",
 		},
 		{
 			// The global value is changed, so the session value is still different with global.
 			hasPriv:       true,
 			stmt:          "set global tidb_row_format_version=1",
-			varName:       vardef.TiDBRowFormatVersion,
+			varName:       variable.TiDBRowFormatVersion,
 			cleanStmt:     "set global tidb_row_format_version=2",
 			expectedValue: "2",
 		},
@@ -307,7 +297,10 @@ func testInvisibleVars(t *testing.T, semVer string) {
 
 	sessionstates.SetupSigningCertForTest(t)
 	store := testkit.CreateMockStore(t)
-	defer sem.SwitchToSEMForTest(t, semVer)()
+	if !sem.IsEnabled() {
+		sem.Enable()
+		defer sem.Disable()
+	}
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("CREATE USER u1, u2")
 	tk.MustExec("GRANT RESTRICTED_VARIABLES_ADMIN ON *.* to u1")
@@ -348,33 +341,12 @@ func TestIssue47665(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.Session().GetSessionVars().TLSConnectionState = &tls.ConnectionState{} // unrelated mock for the test.
-	originCfg := *config.GetGlobalConfig()
-	originalDeployMode := deploymode.Get()
-	originRequireSecureTransport := tidbtls.RequireSecureTransport.Load()
-	t.Cleanup(func() {
-		config.StoreGlobalConfig(&originCfg)
-		if kerneltype.IsNextGen() {
-			require.NoError(t, deploymode.Set(originalDeployMode))
-		}
-		tidbtls.RequireSecureTransport.Store(originRequireSecureTransport)
-	})
-	semCfg := originCfg
-	semCfg.Security.EnableSEM = true
-	config.StoreGlobalConfig(&semCfg)
+	originSEM := config.GetGlobalConfig().Security.EnableSEM
+	config.GetGlobalConfig().Security.EnableSEM = true
 	tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set to ON with SEM(security enhanced mode) enabled")
-	config.StoreGlobalConfig(&originCfg)
+	config.GetGlobalConfig().Security.EnableSEM = originSEM
 	tk.MustExec("set @@global.require_secure_transport = on")
 	tk.MustExec("set @@global.require_secure_transport = off") // recover to default value
-	if kerneltype.IsNextGen() {
-		require.NoError(t, deploymode.Set(deploymode.Starter))
-		tk.MustQuery("select @@global.require_secure_transport").Check(testkit.Rows("1"))
-		tk.MustGetErrMsg("set @@global.require_secure_transport = on", "require_secure_transport can not be set in starter mode")
-		tk.MustGetErrMsg("set @@global.require_secure_transport = off", "require_secure_transport can not be set in starter mode")
-		require.NoError(t, deploymode.Set(originalDeployMode))
-	}
-	config.StoreGlobalConfig(&originCfg)
-	// StoreGlobalConfig does not restore the TLS atomic; it is restored by t.Cleanup.
-	tk.MustQuery("select @@global.require_secure_transport").Check(testkit.Rows("0"))
 }
 
 func TestSessionCtx(t *testing.T) {
@@ -405,7 +377,7 @@ func TestSessionCtx(t *testing.T) {
 		{
 			// check Status
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.True(t, tk.Session().GetSessionVars().IsAutocommit())
+				require.Equal(t, mysql.ServerStatusAutocommit, tk.Session().GetSessionVars().Status&mysql.ServerStatusAutocommit)
 			},
 		},
 		{
@@ -415,7 +387,7 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.False(t, tk.Session().GetSessionVars().IsAutocommit())
+				require.Equal(t, uint16(0), tk.Session().GetSessionVars().Status&mysql.ServerStatusAutocommit)
 			},
 		},
 		{
@@ -463,7 +435,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_txn_info").Check(param.([][]any))
+				tk.MustQuery("select @@tidb_last_txn_info").Check(param.([][]interface{}))
 			},
 		},
 		{
@@ -474,7 +446,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_query_info").Check(param.([][]any))
+				tk.MustQuery("select @@tidb_last_query_info").Check(param.([][]interface{}))
 			},
 		},
 		{
@@ -498,7 +470,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]any))
+				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]interface{}))
 			},
 		},
 		{
@@ -510,7 +482,7 @@ func TestSessionCtx(t *testing.T) {
 				return rows
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]any))
+				tk.MustQuery("select @@tidb_last_ddl_info").Check(param.([][]interface{}))
 			},
 		},
 		{
@@ -607,10 +579,10 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(
-					`TableReader 10000.00 root  MppVersion: 3, data:ExchangeSender`,
-					`└─ExchangeSender 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
-					`  └─TableFullScan 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
+					`TableReader_12 10000.00 root  MppVersion: 2, data:ExchangeSender_11`,
+					`└─ExchangeSender_11 10000.00 mpp[tiflash]  ExchangeType: PassThrough`,
+					`  └─TableFullScan_10 10000.00 mpp[tiflash] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -622,9 +594,9 @@ func TestSessionCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(
-					`TableReader 10000.00 root  data:TableFullScan`,
-					`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(
+					`TableReader_5 10000.00 root  data:TableFullScan_4`,
+					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -639,8 +611,8 @@ func TestSessionCtx(t *testing.T) {
 					"  `id` int(11) DEFAULT NULL,\n" +
 					"  KEY `hypo_id` (`id`) /* HYPO INDEX */\n" +
 					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(`IndexReader 10000.00 root  index:IndexFullScan`,
-					`└─IndexFullScan 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`IndexReader_7 10000.00 root  index:IndexFullScan_6`,
+					`└─IndexFullScan_6 10000.00 cop[tikv] table:t1, index:hypo_id(id) keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -655,8 +627,8 @@ func TestSessionCtx(t *testing.T) {
 				tk.MustQuery(`show create table test.t1`).Check(testkit.Rows("t1 CREATE TABLE `t1` (\n" +
 					"  `id` int(11) DEFAULT NULL\n" +
 					") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"))
-				tk.MustQuery(`explain format = 'brief' select id from test.t1`).Check(testkit.Rows(`TableReader 10000.00 root  data:TableFullScan`,
-					`└─TableFullScan 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
+				tk.MustQuery(`explain select id from test.t1`).Check(testkit.Rows(`TableReader_5 10000.00 root  data:TableFullScan_4`,
+					`└─TableFullScan_4 10000.00 cop[tikv] table:t1 keep order:false, stats:pseudo`))
 			},
 		},
 		{
@@ -712,7 +684,6 @@ func TestStatementCtx(t *testing.T) {
 				return nil
 			},
 			checkFunc: func(tk *testkit.TestKit, param any) {
-				require.Equal(t, uint64(0), tk.Session().AffectedRows())
 				tk.MustQuery("select row_count()").Check(testkit.Rows("-1"))
 			},
 		},
@@ -1187,7 +1158,7 @@ func TestPreparedStatements(t *testing.T) {
 				require.NoError(t, conn.Dispatch(context.Background(), cmd))
 			},
 		},
-		// Skip this case. Refer to https://github.com/pingcap/tidb/issues/35784.
+		// Skip this case. Refer to https://github.com/ocean2811/tidbeaff0fbc576a/issues/35784.
 		//{
 		//	// update privilege after prepare
 		//	setFunc: func(tk *testkit.TestKit, conn server.MockConn) any {
@@ -1412,45 +1383,6 @@ func TestSQLBinding(t *testing.T) {
 		if tt.cleanFunc != nil {
 			tt.cleanFunc(tk1)
 		}
-	}
-}
-
-func TestSQLBindingCompatibility(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create table test.t1(id int primary key, name varchar(10), key(name))")
-
-	tests := []struct {
-		bindingStr     string
-		expectedResult []string
-	}{
-		// db is empty
-		{
-			bindingStr:     "{\"bindings\": \"[{\\\\\"OriginalSQL\\\\\":\\\\\"select * from `test` . `t1`\\\\\",\\\\\"Db\\\\\":\\\\\"\\\\\",\\\\\"Bindings\\\\\":[{\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`name`)\\\\\",\\\\\"Status\\\\\":\\\\\"enabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}]}]\"}",
-			expectedResult: []string{"select * from `test` . `t1` SELECT * FROM `test`.`t1` USE INDEX (`name`)  enabled 2024-03-18 16:38:14.270 2024-03-18 16:38:14.270 utf8mb4 utf8mb4_0900_ai_ci manual 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 "},
-		},
-		// db is not empty
-		{
-			bindingStr:     "{\"bindings\": \"[{\\\\\"OriginalSQL\\\\\":\\\\\"select * from `t1`\\\\\",\\\\\"Db\\\\\":\\\\\"test\\\\\",\\\\\"Bindings\\\\\":[{\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`name`)\\\\\",\\\\\"Status\\\\\":\\\\\"enabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}]}]\"}",
-			expectedResult: []string{"select * from `t1` SELECT * FROM `test`.`t1` USE INDEX (`name`) test enabled 2024-03-18 16:38:14.270 2024-03-18 16:38:14.270 utf8mb4 utf8mb4_0900_ai_ci manual 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 "},
-		},
-		// 2 bindings in 2 arrays
-		{
-			bindingStr:     "{\"bindings\": \"[{\\\\\"OriginalSQL\\\\\":\\\\\"select * from `t1`\\\\\",\\\\\"Db\\\\\":\\\\\"test\\\\\",\\\\\"Bindings\\\\\":[{\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`name`)\\\\\",\\\\\"Status\\\\\":\\\\\"enabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}]}, {\\\\\"OriginalSQL\\\\\":\\\\\"select * from `test` . `t1`\\\\\",\\\\\"Db\\\\\":\\\\\"\\\\\",\\\\\"Bindings\\\\\":[{\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`name`)\\\\\",\\\\\"Status\\\\\":\\\\\"enabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}]}]\"}",
-			expectedResult: []string{"select * from `t1` SELECT * FROM `test`.`t1` USE INDEX (`name`) test enabled 2024-03-18 16:38:14.270 2024-03-18 16:38:14.270 utf8mb4 utf8mb4_0900_ai_ci manual 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 ", "select * from `test` . `t1` SELECT * FROM `test`.`t1` USE INDEX (`name`)  enabled 2024-03-18 16:38:14.270 2024-03-18 16:38:14.270 utf8mb4 utf8mb4_0900_ai_ci manual 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 "},
-		},
-		// 2 bindings in 1 array, one is enabled while another is disabled
-		{
-			bindingStr:     "{\"bindings\": \"[{\\\\\"OriginalSQL\\\\\":\\\\\"select * from `t1`\\\\\",\\\\\"Db\\\\\":\\\\\"test\\\\\",\\\\\"Bindings\\\\\":[{\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`name`)\\\\\",\\\\\"Status\\\\\":\\\\\"enabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}, {\\\\\"BindSQL\\\\\":\\\\\"SELECT * FROM `test`.`t1` USE INDEX (`primary`)\\\\\",\\\\\"Status\\\\\":\\\\\"disabled\\\\\",\\\\\"CreateTime\\\\\":2279073240653628855,\\\\\"UpdateTime\\\\\":2279073240653628855,\\\\\"Source\\\\\":\\\\\"manual\\\\\",\\\\\"Charset\\\\\":\\\\\"utf8mb4\\\\\",\\\\\"Collation\\\\\":\\\\\"utf8mb4_0900_ai_ci\\\\\",\\\\\"SQLDigest\\\\\":\\\\\"4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0\\\\\",\\\\\"PlanDigest\\\\\":\\\\\"\\\\\"}]}]\"}",
-			expectedResult: []string{"select * from `t1` SELECT * FROM `test`.`t1` USE INDEX (`primary`) test disabled 2024-03-18 16:38:14.270 2024-03-18 16:38:14.270 utf8mb4 utf8mb4_0900_ai_ci manual 4ea0618129ffc6a7effbc0eff4bbcb41a7f5d4c53a6fa0b2e9be81c7010915b0 "},
-		},
-	}
-
-	for _, test := range tests {
-		setSQL := fmt.Sprintf("set session_states '%s'", test.bindingStr)
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec(setSQL)
-		tk.MustQuery("show session bindings").Sort().Check(testkit.Rows(test.expectedResult...))
 	}
 }
 
@@ -1720,7 +1652,7 @@ func getExecuteBytes(stmtID uint32, useCursor bool, newParam bool, params ...par
 	if newParam {
 		buf[pos] = 1
 		pos++
-		for range params {
+		for i := 0; i < len(params); i++ {
 			buf[pos] = mysql.TypeLong
 			pos++
 			buf[pos] = 0

@@ -14,16 +14,12 @@
 package txn
 
 import (
-	stderrors "errors"
 	"testing"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 	"github.com/stretchr/testify/require"
-	tikverr "github.com/tikv/client-go/v2/error"
 )
 
 func TestLockNotFoundPrint(t *testing.T) {
@@ -32,73 +28,6 @@ func TestLockNotFoundPrint(t *testing.T) {
 	key := prettyLockNotFoundKey(msg)
 	expected := "{tableID=12937, indexID=1, indexValues={C19092900000048625523, }}"
 	require.Equal(t, expected, key)
-}
-
-func TestLockUpgradeConflictMapsToNonRetryableDeadlock(t *testing.T) {
-	err := extractKeyErr(errors.WithStack(&tikverr.ErrLockUpgradeConflict{
-		LockUpgradeConflict: &kvrpcpb.LockUpgradeConflict{
-			Key:          []byte("key"),
-			StartTs:      101,
-			OwnerStartTs: 202,
-			Reason:       kvrpcpb.LockUpgradeConflict_SecondUpgrader,
-		},
-	}))
-	require.Error(t, err)
-	require.False(t, kv.ErrWriteConflict.Equal(err))
-	require.False(t, kv.ErrTxnRetryable.Equal(err))
-
-	var deadlock *tikverr.ErrDeadlock
-	require.ErrorAs(t, err, &deadlock)
-	require.False(t, deadlock.IsRetryable)
-	require.Equal(t, uint64(202), deadlock.LockTs)
-	require.Equal(t, []byte("key"), deadlock.LockKey)
-}
-
-func TestSharedLockLostErrorMapping(t *testing.T) {
-	originalMode := errors.RedactLogEnabled.Load()
-	t.Cleanup(func() { errors.RedactLogEnabled.Store(originalMode) })
-
-	newClientErr := func() error {
-		return errors.WithStack(&tikverr.ErrSharedLockLost{
-			SharedLockLost: &kvrpcpb.SharedLockLost{
-				Key:     []byte("key"),
-				StartTs: 101,
-			},
-		})
-	}
-
-	errors.RedactLogEnabled.Store(errors.RedactLogDisable)
-	err := extractKeyErr(newClientErr())
-	require.EqualError(
-		t,
-		err,
-		"[tikv:9015]Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=101, key=6B6579",
-	)
-	require.True(t, kv.ErrSharedLockLost.Equal(err))
-	require.False(t, kv.ErrTxnRetryable.Equal(err))
-	require.False(t, kv.ErrWriteConflict.Equal(err))
-	require.False(t, kv.IsTxnRetryableError(err))
-	require.False(t, terror.ErrResultUndetermined.Equal(err))
-	var deadlock *tikverr.ErrDeadlock
-	require.False(t, stderrors.As(err, &deadlock))
-	require.False(t, exeerrors.ErrDeadlock.Equal(err))
-
-	emptyErr := extractKeyErr(errors.WithStack(&tikverr.ErrSharedLockLost{}))
-	require.EqualError(
-		t,
-		emptyErr,
-		"[tikv:9015]Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=0, key=",
-	)
-	require.True(t, kv.ErrSharedLockLost.Equal(emptyErr))
-
-	errors.RedactLogEnabled.Store(errors.RedactLogEnable)
-	redactedErr := extractKeyErr(newClientErr())
-	require.EqualError(
-		t,
-		redactedErr,
-		"[tikv:9015]Shared lock was lost during lock upgrade; transaction cannot continue, txnStartTS=101, key=?",
-	)
-	require.True(t, kv.ErrSharedLockLost.Equal(redactedErr))
 }
 
 func TestWriteConflictPrettyFormat(t *testing.T) {
@@ -146,12 +75,5 @@ func TestWriteConflictPrettyFormat(t *testing.T) {
 	expectedStr = "[kv:9007]Write conflict, " +
 		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
 		"key=????, reason=Optimistic " + kv.TxnRetryableMark
-	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
-
-	errors.RedactLogEnabled.Store(errors.RedactLogMarker)
-	defer func() { errors.RedactLogEnabled.Store(original) }()
-	expectedStr = "[kv:9007]Write conflict, " +
-		"txnStartTS=399402937522847774, conflictStartTS=399402937719455772, conflictCommitTS=399402937719455773, " +
-		"key=‹›‹{metaKey=true, key=DB:56, field=TID:108}, originalKey=6d44423a3536000000fc00000000000000685449443a31303800fe, primary=›‹›‹{metaKey=true, key=DB:56, field=TID:108}, originalPrimaryKey=6d44423a3536000000fc00000000000000685449443a31303800fe›, reason=Optimistic " + kv.TxnRetryableMark
 	require.EqualError(t, newWriteConflictError(conflict), expectedStr)
 }

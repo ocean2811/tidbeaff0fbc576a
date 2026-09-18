@@ -17,8 +17,8 @@ package codec
 import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 )
 
 // EncodeDecimal encodes a decimal into a byte slice which can be sorted lexicographically later.
@@ -46,7 +46,7 @@ func valueSizeOfDecimal(dec *types.MyDecimal, precision, frac int) (int, error) 
 }
 
 // DecodeDecimal decodes bytes to decimal.
-func DecodeDecimal(b []byte) (_ []byte, dec *types.MyDecimal, precision, frac int, err error) {
+func DecodeDecimal(b []byte) ([]byte, *types.MyDecimal, int, int, error) {
 	failpoint.Inject("errorInDecodeDecimal", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(b, nil, 0, 0, errors.New("gofail error"))
@@ -56,10 +56,10 @@ func DecodeDecimal(b []byte) (_ []byte, dec *types.MyDecimal, precision, frac in
 	if len(b) < 3 {
 		return b, nil, 0, 0, errors.New("insufficient bytes to decode value")
 	}
-	precision = int(b[0])
-	frac = int(b[1])
+	precision := int(b[0])
+	frac := int(b[1])
 	b = b[2:]
-	dec = new(types.MyDecimal)
+	dec := new(types.MyDecimal)
 	binSize, err := dec.FromBin(b, precision, frac)
 	b = b[binSize:]
 	if err != nil {

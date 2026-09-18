@@ -32,28 +32,24 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	ddltestutil "github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/executor/join"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testutil"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/gcutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	ddltestutil "github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/testutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -73,27 +69,24 @@ func TestEarlyClose(t *testing.T) {
 
 	N := 100
 	// Insert N rows.
-	values := make([]string, 0, N)
-	for i := range N {
+	var values []string
+	for i := 0; i < N; i++ {
 		values = append(values, fmt.Sprintf("(%d)", i))
 	}
 	tk.MustExec("insert earlyclose values " + strings.Join(values, ","))
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("earlyclose"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("earlyclose"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tblID)
-	if kerneltype.IsNextGen() {
-		tableStart = store.GetCodec().EncodeKey(tableStart)
-	}
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), N/2)
 
 	ctx := context.Background()
-	for range N / 2 {
+	for i := 0; i < N/2; i++ {
 		rss, err := tk.Session().Execute(ctx, "select * from earlyclose order by id")
 		require.NoError(t, err)
 		rs := rss[0]
@@ -103,9 +96,9 @@ func TestEarlyClose(t *testing.T) {
 	}
 
 	// Goroutine should not leak when error happen.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/handleTaskOnceError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/handleTaskOnceError", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/handleTaskOnceError"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/handleTaskOnceError"))
 	}()
 	rss, err := tk.Session().Execute(ctx, "select * from earlyclose")
 	require.NoError(t, err)
@@ -119,15 +112,15 @@ func TestEarlyClose(t *testing.T) {
 type stats struct {
 }
 
-func (s stats) GetScope(_ string) vardef.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
+func (s stats) GetScope(_ string) variable.ScopeFlag { return variable.DefaultStatusVarScopeFlag }
 
-func (s stats) Stats(_ *variable.SessionVars) (map[string]any, error) {
-	m := make(map[string]any)
-	var a, b any
+func (s stats) Stats(_ *variable.SessionVars) (map[string]interface{}, error) {
+	m := make(map[string]interface{})
+	var a, b interface{}
 	b = "123"
 	m["test_interface_nil"] = a
 	m["test_interface"] = b
-	m["test_interface_slice"] = []any{"a", "b", "c"}
+	m["test_interface_slice"] = []interface{}{"a", "b", "c"}
 	return m, nil
 }
 
@@ -150,14 +143,14 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row := result.Rows()[0]
-	// For issue https://github.com/pingcap/tidb/issues/1061
-	expectedRow := []any{
+	// For issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/1061
+	expectedRow := []interface{}{
 		"SHOW_test", "CREATE TABLE `SHOW_test` (\n  `id` int(11) NOT NULL AUTO_INCREMENT,\n  `c1` int(11) DEFAULT NULL COMMENT 'c1_comment',\n  `c2` int(11) DEFAULT NULL,\n  `c3` int(11) DEFAULT '1',\n  `c4` text DEFAULT NULL,\n  `c5` tinyint(1) DEFAULT NULL,\n  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */,\n  KEY `idx_wide_c4` (`c3`,`c4`(10))\n) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin AUTO_INCREMENT=28934 COMMENT='table_comment'"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
 
-	// For issue https://github.com/pingcap/tidb/issues/1918
+	// For issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/1918
 	testSQL = `create table ptest(
 		a int primary key,
 		b double NOT NULL DEFAULT 2.0,
@@ -171,7 +164,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []any{
+	expectedRow = []interface{}{
 		"ptest", "CREATE TABLE `ptest` (\n  `a` int(11) NOT NULL,\n  `b` double NOT NULL DEFAULT '2',\n  `c` varchar(10) NOT NULL,\n  `d` time DEFAULT NULL,\n  `e` timestamp NULL DEFAULT NULL,\n  `f` timestamp NULL DEFAULT NULL,\n  PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,\n  UNIQUE KEY `d` (`d`)\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
@@ -191,7 +184,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []any{
+	expectedRow = []interface{}{
 		"t1", "CREATE TABLE `t1` (\n" +
 			"  `c1` tinyint(3) unsigned DEFAULT NULL,\n" +
 			"  `c2` smallint(5) unsigned DEFAULT NULL,\n" +
@@ -211,7 +204,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []any{
+	expectedRow = []interface{}{
 		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
 			"  `c1` decimal(10,0) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
@@ -226,7 +219,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []any{
+	expectedRow = []interface{}{
 		"decimalschema", "CREATE TABLE `decimalschema` (\n" +
 			"  `c1` decimal(15,0) DEFAULT NULL\n" +
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
@@ -275,18 +268,18 @@ func TestShow(t *testing.T) {
 	tk.MustExec(`create index expr_idx on show_index ((id*2+1))`)
 	testSQL = "SHOW index from show_index;"
 	tk.MustQuery(testSQL).Check(testkit.RowsWithSep("|",
-		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|YES|NO",
-		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|<nil>|NO|NO",
-		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO|NO",
-		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO|NO",
-		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|<nil>|NO|NO",
-		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO|NO",
-		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO|NO",
-		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO|NO",
-		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO|NO",
-		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO|NO",
-		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO|NO",
-		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>||BTREE| |YES|`id` * 2 + 1|NO|NO",
+		"show_index|0|PRIMARY|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|YES",
+		"show_index|1|cIdx|1|c|A|0|<nil>|<nil>|YES|HASH||index_comment_for_cIdx|YES|<nil>|NO",
+		"show_index|1|idx1|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO",
+		"show_index|1|idx2|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
+		"show_index|1|idx3|1|id|A|0|<nil>|<nil>||HASH||idx|YES|<nil>|NO",
+		"show_index|1|idx4|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
+		"show_index|1|idx5|1|id|A|0|<nil>|<nil>||BTREE||idx|YES|<nil>|NO",
+		"show_index|1|idx6|1|id|A|0|<nil>|<nil>||HASH| |YES|<nil>|NO",
+		"show_index|1|idx7|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
+		"show_index|1|idx8|1|id|A|0|<nil>|<nil>||BTREE| |YES|<nil>|NO",
+		"show_index|1|idx9|1|id|A|0|<nil>|<nil>||BTREE| |NO|<nil>|NO",
+		"show_index|1|expr_idx|1|NULL|A|0|<nil>|<nil>||BTREE| |YES|`id` * 2 + 1|NO",
 	))
 
 	// For show like with escape
@@ -294,7 +287,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	rows := result.Rows()
 	require.Len(t, rows, 1)
-	require.Equal(t, []any{"SHOW_test"}, rows[0])
+	require.Equal(t, []interface{}{"SHOW_test"}, rows[0])
 
 	var ss stats
 	variable.RegisterStatistics(ss)
@@ -304,8 +297,8 @@ func TestShow(t *testing.T) {
 
 	tk.MustQuery("SHOW PROCEDURE STATUS WHERE Db='test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW TRIGGERS WHERE `Trigger` ='test'").Check(testkit.Rows())
-	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Query 0 autocommit SHOW PROCESSLIST;", tk.Session().ShowProcess().ID)))
-	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Query 0 autocommit SHOW FULL PROCESSLIST;", tk.Session().ShowProcess().ID)))
+	tk.MustQuery("SHOW PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Sleep 0 autocommit SHOW PROCESSLIST;", tk.Session().ShowProcess().ID)))
+	tk.MustQuery("SHOW FULL PROCESSLIST;").Check(testkit.Rows(fmt.Sprintf("%d   test Sleep 0 autocommit SHOW FULL PROCESSLIST;", tk.Session().ShowProcess().ID)))
 	tk.MustQuery("SHOW EVENTS WHERE Db = 'test'").Check(testkit.Rows())
 	tk.MustQuery("SHOW PLUGINS").Check(testkit.Rows())
 	tk.MustQuery("SHOW PROFILES").Check(testkit.Rows())
@@ -321,15 +314,7 @@ func TestShow(t *testing.T) {
 	require.Len(t, row, 5)
 	require.NotEqual(t, "0", row[1].(string))
 
-	rows = tk.MustQuery("SHOW PRIVILEGES").Rows()
-	foundOperateView := false
-	for _, r := range rows {
-		if len(r) >= 2 && r[0] == "Operate view" && r[1] == "Tables" {
-			foundOperateView = true
-			break
-		}
-	}
-	require.True(t, foundOperateView)
+	tk.MustQuery("SHOW PRIVILEGES")
 
 	// Test show create database
 	testSQL = `create database show_test_DB`
@@ -348,7 +333,7 @@ func TestShow(t *testing.T) {
 	require.Len(t, result.Rows(), 1)
 
 	// Test show full columns
-	// for issue https://github.com/pingcap/tidb/issues/4224
+	// for issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/4224
 	tk.MustExec(`drop table if exists show_test_comment`)
 	tk.MustExec(`create table show_test_comment (id int not null default 0 comment "show_test_comment_id")`)
 	tk.MustQuery(`show full columns from show_test_comment`).Check(testkit.RowsWithSep("|",
@@ -356,7 +341,7 @@ func TestShow(t *testing.T) {
 	))
 
 	// Test show create table with AUTO_INCREMENT option
-	// for issue https://github.com/pingcap/tidb/issues/3747
+	// for issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/3747
 	tk.MustExec(`drop table if exists show_auto_increment`)
 	tk.MustExec(`create table show_auto_increment (id int key auto_increment) auto_increment=4`)
 	tk.MustQuery(`show create table show_auto_increment`).Check(testkit.RowsWithSep("|",
@@ -366,7 +351,7 @@ func TestShow(t *testing.T) {
 			"  PRIMARY KEY (`id`) /*T![clustered_index] CLUSTERED */\n"+
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin AUTO_INCREMENT=4",
 	))
-	// for issue https://github.com/pingcap/tidb/issues/4678
+	// for issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/4678
 	autoIDStep := autoid.GetStep()
 	tk.MustExec("insert into show_auto_increment values(20)")
 	autoID := autoIDStep + 21
@@ -397,7 +382,7 @@ func TestShow(t *testing.T) {
 	))
 
 	// Test show table with column's comment contain escape character
-	// for issue https://github.com/pingcap/tidb/issues/4411
+	// for issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/4411
 	tk.MustExec(`drop table if exists show_escape_character`)
 	tk.MustExec(`create table show_escape_character(id int comment 'a\rb\nc\td\0ef')`)
 	tk.MustQuery(`show create table show_escape_character`).Check(testkit.RowsWithSep("|",
@@ -407,7 +392,7 @@ func TestShow(t *testing.T) {
 			") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin",
 	))
 
-	// for issue https://github.com/pingcap/tidb/issues/4424
+	// for issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/4424
 	tk.MustExec("drop table if exists show_test")
 	testSQL = `create table show_test(
 		a varchar(10) COMMENT 'a\nb\rc\td\0e'
@@ -417,13 +402,13 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []any{
+	expectedRow = []interface{}{
 		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT NULL COMMENT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin COMMENT='a\\nb\\rc	d\\0e'"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
 
-	// for issue https://github.com/pingcap/tidb/issues/4425
+	// for issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/4425
 	tk.MustExec("drop table if exists show_test")
 	testSQL = `create table show_test(
 		a varchar(10) DEFAULT 'a\nb\rc\td\0e'
@@ -433,13 +418,13 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []any{
+	expectedRow = []interface{}{
 		"show_test", "CREATE TABLE `show_test` (\n  `a` varchar(10) DEFAULT 'a\\nb\\rc	d\\0e'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
 	}
 
-	// for issue https://github.com/pingcap/tidb/issues/4426
+	// for issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/4426
 	tk.MustExec("drop table if exists show_test")
 	testSQL = `create table show_test(
 		a bit(1),
@@ -452,7 +437,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []any{
+	expectedRow = []interface{}{
 		"show_test", "CREATE TABLE `show_test` (\n  `a` bit(1) DEFAULT NULL,\n  `b` bit(32) DEFAULT b'0',\n  `c` bit(1) DEFAULT b'1',\n  `d` bit(10) DEFAULT b'1010'\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin"}
 	for i, r := range row {
 		require.Equal(t, expectedRow[i], r)
@@ -473,7 +458,7 @@ func TestShow(t *testing.T) {
 	result = tk.MustQuery(testSQL)
 	require.Len(t, result.Rows(), 1)
 	row = result.Rows()[0]
-	expectedRow = []any{
+	expectedRow = []interface{}{
 		"t",
 		"CREATE TABLE `t` (\n" +
 			"  `a` tinyint(4) DEFAULT NULL,\n" +
@@ -629,19 +614,22 @@ func TestShowStatsHealthy(t *testing.T) {
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (1), (2)")
 	do, _ := session.GetDomain(store)
-	tk.MustExec("flush stats_delta *.*")
+	err := do.StatsHandle().DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("insert into t values (3), (4), (5), (6), (7), (8), (9), (10)")
-	tk.MustExec("flush stats_delta *.*")
-	err := do.StatsHandle().Update(context.Background(), do.InfoSchema())
+	err = do.StatsHandle().DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
+	err = do.StatsHandle().Update(do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 	tk.MustExec("analyze table t")
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  100"))
 	tk.MustExec("delete from t")
-	tk.MustExec("flush stats_delta *.*")
-	err = do.StatsHandle().Update(context.Background(), do.InfoSchema())
+	err = do.StatsHandle().DumpStatsDeltaToKV(true)
+	require.NoError(t, err)
+	err = do.StatsHandle().Update(do.InfoSchema())
 	require.NoError(t, err)
 	tk.MustQuery("show stats_healthy").Check(testkit.Rows("test t  0"))
 }
@@ -657,14 +645,14 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	}
 	originSize := atomic.LoadInt32(&executor.LookupTableTaskChannelSize)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, 1)
-	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
+	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set @@tidb_index_lookup_size = '10'")
 	tk.MustExec("use test")
 	tk.MustExec("create table dist (id int primary key, c_idx int, c_col int, index (c_idx))")
 
 	// Insert 100 rows.
-	values := make([]string, 0, 100)
-	for i := range 100 {
+	var values []string
+	for i := 0; i < 100; i++ {
 		values = append(values, fmt.Sprintf("(%d, %d, %d)", i, i, i))
 	}
 	tk.MustExec("insert dist values " + strings.Join(values, ","))
@@ -675,11 +663,11 @@ func TestIndexDoubleReadClose(t *testing.T) {
 	err = rs.Next(context.Background(), req)
 	require.NoError(t, err)
 	require.NoError(t, err)
-	keyword := "execTableTask"
+	keyword := "pickAndExecTask"
 	require.NoError(t, rs.Close())
 	require.Eventually(t, func() bool {
 		return !checkGoroutineExists(keyword)
-	}, time.Second, time.Millisecond*10)
+	}, time.Millisecond*100, time.Millisecond*10)
 	atomic.StoreInt32(&executor.LookupTableTaskChannelSize, originSize)
 }
 
@@ -694,9 +682,9 @@ func TestIndexMergeReaderClose(t *testing.T) {
 	tk.MustExec("create table t (a int, b int)")
 	tk.MustExec("create index idx1 on t(a)")
 	tk.MustExec("create index idx2 on t(b)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/startPartialIndexWorkerErr", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/startPartialIndexWorkerErr", "return"))
 	err := tk.QueryToErr("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a > 10 or b < 100")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/startPartialIndexWorkerErr"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/startPartialIndexWorkerErr"))
 	require.Error(t, err)
 	require.Eventually(t, func() bool {
 		return !checkGoroutineExists("fetchLoop")
@@ -723,9 +711,9 @@ func TestParallelHashAggClose(t *testing.T) {
 	//     └─TableFullScan_10   | 3.00  | cop[tikv]  | table:t, keep order:fa$se, stats:pseudo |
 
 	// Goroutine should not leak when error happen.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/parallelHashAggError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggregate/parallelHashAggError", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/parallelHashAggError"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggregate/parallelHashAggError"))
 	}()
 	ctx := context.Background()
 	rss, err := tk.Session().Execute(ctx, "select sum(a) from (select cast(t.a as signed) as a, b from t) t group by b;")
@@ -745,13 +733,11 @@ func TestUnparallelHashAggClose(t *testing.T) {
 	tk.MustExec("insert into t values(1,1),(2,2)")
 
 	// Goroutine should not leak when error happen.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/aggregate/unparallelHashAggError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggregate/unparallelHashAggError", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/aggregate/unparallelHashAggError"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggregate/unparallelHashAggError"))
 	}()
 	ctx := context.Background()
-	_, err := tk.Session().Execute(ctx, "set tidb_executor_concurrency=1;")
-	require.NoError(t, err)
 	rss, err := tk.Session().Execute(ctx, "select sum(distinct a) from (select cast(t.a as signed) as a, b from t) t group by b;")
 	require.NoError(t, err)
 	rs := rss[0]
@@ -772,8 +758,6 @@ func checkGoroutineExists(keyword string) bool {
 }
 
 func TestAdminShowNextID(t *testing.T) {
-	step := int64(10)
-	autoid.SetStep(step)
 	store := testkit.CreateMockStore(t)
 
 	HelperTestAdminShowNextID(t, store, `admin show `)
@@ -781,10 +765,14 @@ func TestAdminShowNextID(t *testing.T) {
 }
 
 func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDChange"))
 	}()
+	step := int64(10)
+	autoIDStep := autoid.GetStep()
+	autoid.SetStep(step)
+	defer autoid.SetStep(autoIDStep)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t,tt")
@@ -797,7 +785,7 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	r = tk.MustQuery(str + " t next_row_id")
 	r.Check(testkit.Rows("test t _tidb_rowid 11 _TIDB_ROWID"))
 	// Row ID is original + step.
-	for range int(10) {
+	for i := 0; i < int(step); i++ {
 		tk.MustExec("insert into t values(10000, 1)")
 	}
 	r = tk.MustQuery(str + " t next_row_id")
@@ -808,34 +796,28 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	tk.MustExec("create table tt(id int primary key auto_increment, c int)")
 	// Start handle is 1.
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 1 _TIDB_ROWID"))
+	r.Check(testkit.Rows("test tt id 1 _TIDB_ROWID", "test tt id 1 AUTO_INCREMENT"))
 	// After rebasing auto ID, row ID is 20 + step + 1.
 	tk.MustExec("insert into tt values(20, 1)")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test tt id 31 _TIDB_ROWID"))
+	r.Check(testkit.Rows("test tt id 31 _TIDB_ROWID", "test tt id 1 AUTO_INCREMENT"))
 	// test for renaming the table
 	tk.MustExec("drop database if exists test1")
 	tk.MustExec("create database test1")
 	tk.MustExec("rename table test.tt to test1.tt")
 	tk.MustExec("use test1")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID"))
-	tk.MustQuery(`select * from tt`).Sort().Check(testkit.Rows("20 1"))
+	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
 	tk.MustExec("insert test1.tt values ()")
 	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 31 _TIDB_ROWID"))
-	tk.MustQuery(`select * from tt`).Sort().Check(testkit.Rows("20 1", "21 <nil>"))
-	tk.MustExec("drop table tt")
-
-	tk.MustExec("create table tt(id int primary key auto_increment, c int) auto_id_cache = 1;")
-	r = tk.MustQuery(str + " tt next_row_id")
-	r.Check(testkit.Rows("test1 tt id 1 AUTO_INCREMENT"))
+	r.Check(testkit.Rows("test1 tt id 41 _TIDB_ROWID", "test1 tt id 1 AUTO_INCREMENT"))
 	tk.MustExec("drop table tt")
 
 	tk.MustExec("drop table if exists t;")
 	tk.MustExec("create table t (a int auto_increment primary key nonclustered, b int);")
 	tk.MustQuery("show table t next_row_id;").Check(testkit.Rows(
-		"test1 t _tidb_rowid 1 _TIDB_ROWID"))
+		"test1 t _tidb_rowid 1 _TIDB_ROWID",
+		"test1 t _tidb_rowid 1 AUTO_INCREMENT"))
 
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
@@ -871,6 +853,47 @@ func HelperTestAdminShowNextID(t *testing.T, store kv.Storage, str string) {
 	r.Check(testkit.Rows("test1 seq1 _tidb_rowid 1 _TIDB_ROWID", "test1 seq1  97 SEQUENCE"))
 }
 
+func TestNoHistoryWhenDisableRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists history")
+	tk.MustExec("create table history (a int)")
+	tk.MustExec("set @@autocommit = 0")
+
+	// retry_limit = 0 will not add history.
+	tk.MustExec("set @@tidb_retry_limit = 0")
+	tk.MustExec("insert history values (1)")
+	require.Equal(t, 0, session.GetHistory(tk.Session()).Count())
+
+	// Disable auto_retry will add history for auto committed only
+	tk.MustExec("set @@autocommit = 1")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 1")
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/keepHistory", `return(true)`))
+	tk.MustExec("insert history values (1)")
+	require.Equal(t, 1, session.GetHistory(tk.Session()).Count())
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/keepHistory"))
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	require.Equal(t, 0, session.GetHistory(tk.Session()).Count())
+	tk.MustExec("commit")
+
+	// Enable auto_retry will add history for both.
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/keepHistory", `return(true)`))
+	tk.MustExec("insert history values (1)")
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/keepHistory"))
+	require.Equal(t, 1, session.GetHistory(tk.Session()).Count())
+	tk.MustExec("begin")
+	tk.MustExec("insert history values (1)")
+	require.Equal(t, 2, session.GetHistory(tk.Session()).Count())
+	tk.MustExec("commit")
+}
+
 func TestPrepareMaxParamCountCheck(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -888,10 +911,10 @@ func TestPrepareMaxParamCountCheck(t *testing.T) {
 	require.EqualError(t, err, "[executor:1390]Prepared statement contains too many placeholders")
 }
 
-func generateBatchSQL(paramCount int) (sql string, paramSlice []any) {
-	params := make([]any, 0, paramCount)
+func generateBatchSQL(paramCount int) (sql string, paramSlice []interface{}) {
+	params := make([]interface{}, 0, paramCount)
 	placeholders := make([]string, 0, paramCount)
-	for i := range paramCount {
+	for i := 0; i < paramCount; i++ {
 		params = append(params, i)
 		placeholders = append(placeholders, "(?)")
 	}
@@ -907,11 +930,11 @@ func TestCartesianProduct(t *testing.T) {
 	tk.MustExec("create table t(c1 int)")
 	plannercore.AllowCartesianProduct.Store(false)
 	err := tk.ExecToErr("select * from t t1, t t2")
-	require.True(t, plannererrors.ErrCartesianProductUnsupported.Equal(err))
+	require.True(t, plannercore.ErrCartesianProductUnsupported.Equal(err))
 	err = tk.ExecToErr("select * from t t1 left join t t2 on 1")
-	require.True(t, plannererrors.ErrCartesianProductUnsupported.Equal(err))
+	require.True(t, plannercore.ErrCartesianProductUnsupported.Equal(err))
 	err = tk.ExecToErr("select * from t t1 right join t t2 on 1")
-	require.True(t, plannererrors.ErrCartesianProductUnsupported.Equal(err))
+	require.True(t, plannercore.ErrCartesianProductUnsupported.Equal(err))
 	plannercore.AllowCartesianProduct.Store(true)
 }
 
@@ -923,7 +946,7 @@ func TestBatchInsertDelete(t *testing.T) {
 		kv.TxnTotalSizeLimit.Store(originLimit)
 	}()
 	// Set the limitation to a small value, make it easier to reach the limitation.
-	kv.TxnTotalSizeLimit.Store(8050)
+	kv.TxnTotalSizeLimit.Store(7000)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -955,7 +978,7 @@ func TestBatchInsertDelete(t *testing.T) {
 	r = tk.MustQuery("select count(*) from batch_insert;")
 	r.Check(testkit.Rows("320"))
 	// for on duplicate key
-	for i := range 320 {
+	for i := 0; i < 320; i++ {
 		tk.MustExec(fmt.Sprintf("insert into batch_insert_on_duplicate values(%d, %d);", i, i))
 	}
 	r = tk.MustQuery("select count(*) from batch_insert_on_duplicate;")
@@ -1017,7 +1040,7 @@ func TestBatchInsertDelete(t *testing.T) {
 	tk.MustExec("create table com_batch_insert (c int)")
 	sql := "insert into com_batch_insert values "
 	values := make([]string, 0, 200)
-	for range 200 {
+	for i := 0; i < 200; i++ {
 		values = append(values, "(1)")
 	}
 	sql = sql + strings.Join(values, ",")
@@ -1092,7 +1115,7 @@ func TestCoprocessorPriority(t *testing.T) {
 	tk.MustExec("insert into t values (1)")
 
 	// Insert some data to make sure plan build IndexLookup for t1.
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%d, %d)", i, i))
 	}
 
@@ -1165,6 +1188,96 @@ func TestCoprocessorPriority(t *testing.T) {
 	cli.mu.Unlock()
 }
 
+func TestShowForNewCollations(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	expectRows := testkit.Rows(
+		"ascii_bin ascii 65 Yes Yes 1",
+		"binary binary 63 Yes Yes 1",
+		"gbk_bin gbk 87  Yes 1",
+		"gbk_chinese_ci gbk 28 Yes Yes 1",
+		"latin1_bin latin1 47 Yes Yes 1",
+		"utf8_bin utf8 83 Yes Yes 1",
+		"utf8_general_ci utf8 33  Yes 1",
+		"utf8_unicode_ci utf8 192  Yes 1",
+		"utf8mb4_0900_ai_ci utf8mb4 255  Yes 1",
+		"utf8mb4_0900_bin utf8mb4 309  Yes 1",
+		"utf8mb4_bin utf8mb4 46 Yes Yes 1",
+		"utf8mb4_general_ci utf8mb4 45  Yes 1",
+		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
+	)
+	tk.MustQuery("show collation").Check(expectRows)
+	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
+	tk.MustQuery("show character set like '%utf8mb4%'").Check(testkit.Rows("utf8mb4 UTF-8 Unicode utf8mb4_bin 4"))
+	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+	// update default_collation_for_utf8mb4
+	tk.MustExec("set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';")
+	tk.MustQuery("show variables like 'default_collation_for_utf8mb4';").Check(testkit.Rows("default_collation_for_utf8mb4 utf8mb4_0900_ai_ci"))
+	expectRows1 := testkit.Rows(
+		"ascii_bin ascii 65 Yes Yes 1",
+		"binary binary 63 Yes Yes 1",
+		"gbk_bin gbk 87  Yes 1",
+		"gbk_chinese_ci gbk 28 Yes Yes 1",
+		"latin1_bin latin1 47 Yes Yes 1",
+		"utf8_bin utf8 83 Yes Yes 1",
+		"utf8_general_ci utf8 33  Yes 1",
+		"utf8_unicode_ci utf8 192  Yes 1",
+		"utf8mb4_0900_ai_ci utf8mb4 255 Yes Yes 1",
+		"utf8mb4_0900_bin utf8mb4 309  Yes 1",
+		"utf8mb4_bin utf8mb4 46  Yes 1",
+		"utf8mb4_general_ci utf8mb4 45  Yes 1",
+		"utf8mb4_unicode_ci utf8mb4 224  Yes 1",
+	)
+	tk.MustQuery("show collation").Check(expectRows1)
+	tk.MustQuery("select * from information_schema.COLLATIONS").Check(expectRows)
+	tk.MustQuery("show character set like '%utf8mb4%'").Check(testkit.Rows("utf8mb4 UTF-8 Unicode utf8mb4_0900_ai_ci 4"))
+	tk.MustQuery("select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4'").Check(testkit.Rows("utf8mb4_bin utf8mb4 46 Yes Yes 1"))
+}
+
+func TestForbidUnsupportedCollations(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	mustGetUnsupportedCollation := func(sql string, coll string) {
+		tk.MustGetErrMsg(sql, fmt.Sprintf("[ddl:1273]Unsupported collation when new collation is enabled: '%s'", coll))
+	}
+
+	mustGetUnsupportedCollation("select 'a' collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("select cast('a' as char) collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set names utf8 collate utf8_roman_ci", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_server = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_database = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set session collation_connection = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_server = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_database = 'utf8_roman_ci'", "utf8_roman_ci")
+	mustGetUnsupportedCollation("set global collation_connection = 'utf8_roman_ci'", "utf8_roman_ci")
+}
+
+func TestAutoIncIDInRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t (id int not null auto_increment primary key)")
+
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (),()")
+	tk.MustExec("insert into t values ()")
+
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockCommitRetryForAutoIncID", `return(true)`))
+	tk.MustExec("commit")
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockCommitRetryForAutoIncID"))
+
+	tk.MustExec("insert into t values ()")
+	tk.MustQuery(`select * from t`).Check(testkit.Rows("1", "2", "3", "4", "5"))
+}
+
 func TestPessimisticConflictRetryAutoID(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1177,13 +1290,13 @@ func TestPessimisticConflictRetryAutoID(t *testing.T) {
 	var err []error
 	wg.Add(concurrency)
 	err = make([]error, concurrency)
-	for i := range concurrency {
+	for i := 0; i < concurrency; i++ {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 		tk.MustExec("set autocommit = 1")
 		go func(idx int) {
-			for i := range 10 {
+			for i := 0; i < 10; i++ {
 				sql := fmt.Sprintf("insert into t(idx, c) values (1, %[1]d) on duplicate key update c = %[1]d", i)
 				_, e := tk.Exec(sql)
 				if e != nil {
@@ -1215,11 +1328,11 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 	wgCount := concurrency + 1
 	wg.Add(wgCount)
 	err = make([]error, concurrency)
-	for i := range concurrency {
+	for i := 0; i < concurrency; i++ {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
 		go func(idx int) {
-			for i := range 10 {
+			for i := 0; i < 10; i++ {
 				sql := fmt.Sprintf("insert into t(idx, c) select 1 as idx, 1 as c from src on duplicate key update c = %[1]d", i)
 				_, e := tk.Exec(sql)
 				if e != nil {
@@ -1235,7 +1348,7 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 	go func() {
 		tk := testkit.NewTestKit(t, store)
 		tk.MustExec("use test")
-		for range 10 {
+		for i := 0; i < 10; i++ {
 			_, e := tk.Exec("insert into src values (null);")
 			if e != nil {
 				insertErr = e
@@ -1250,6 +1363,53 @@ func TestInsertFromSelectConflictRetryAutoID(t *testing.T) {
 		require.NoError(t, e)
 	}
 	require.NoError(t, insertErr)
+}
+
+func TestAutoRandIDRetry(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	setTxnTk := testkit.NewTestKit(t, store)
+	setTxnTk.MustExec("set global tidb_txn_mode=''")
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create database if not exists auto_random_retry")
+	tk.MustExec("use auto_random_retry")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (id bigint auto_random(3) primary key clustered)")
+
+	extractMaskedOrderedHandles := func() []int64 {
+		handles, err := ddltestutil.ExtractAllTableHandles(tk.Session(), "auto_random_retry", "t")
+		require.NoError(t, err)
+		return testutil.MaskSortHandles(handles, 3, mysql.TypeLong)
+	}
+
+	tk.MustExec("set @@tidb_disable_txn_auto_retry = 0")
+	tk.MustExec("set @@tidb_retry_limit = 10")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	tk.MustExec("insert into t values (),()")
+	tk.MustExec("insert into t values ()")
+
+	session.ResetMockAutoRandIDRetryCount(5)
+	fpName := "github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockCommitRetryForAutoRandID"
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	tk.MustExec("commit")
+	require.NoError(t, failpoint.Disable(fpName))
+	tk.MustExec("insert into t values ()")
+	maskedHandles := extractMaskedOrderedHandles()
+	require.Equal(t, []int64{1, 2, 3, 4, 5}, maskedHandles)
+
+	session.ResetMockAutoRandIDRetryCount(11)
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values ()")
+	require.NoError(t, failpoint.Enable(fpName, `return(true)`))
+	// Insertion failure will skip the 6 in retryInfo.
+	tk.MustGetErrCode("commit", errno.ErrTxnRetryable)
+	require.NoError(t, failpoint.Disable(fpName))
+
+	tk.MustExec("insert into t values ()")
+	maskedHandles = extractMaskedOrderedHandles()
+	require.Equal(t, []int64{1, 2, 3, 4, 5, 7}, maskedHandles)
 }
 
 func TestAutoRandRecoverTable(t *testing.T) {
@@ -1281,9 +1441,9 @@ func TestAutoRandRecoverTable(t *testing.T) {
 	err := gcutil.EnableGC(tk.Session())
 	require.NoError(t, err)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 	const autoRandIDStep = 5000
 	stp := autoid.GetStep()
@@ -1303,6 +1463,33 @@ func TestAutoRandRecoverTable(t *testing.T) {
 	require.Equal(t, []int64{1, 2, 3, autoRandIDStep + 1, autoRandIDStep + 2, autoRandIDStep + 3}, ordered)
 }
 
+func TestMaxDeltaSchemaCount(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.Equal(t, int64(variable.DefTiDBMaxDeltaSchemaCount), variable.GetMaxDeltaSchemaCount())
+
+	tk.MustExec("set @@global.tidb_max_delta_schema_count= -1")
+	tk.MustQuery("show warnings;").Check(testkit.Rows("Warning 1292 Truncated incorrect tidb_max_delta_schema_count value: '-1'"))
+	// Make sure a new session will load global variables.
+	tk.RefreshSession()
+	tk.MustExec("use test")
+	require.Equal(t, int64(100), variable.GetMaxDeltaSchemaCount())
+	tk.MustExec(fmt.Sprintf("set @@global.tidb_max_delta_schema_count= %v", uint64(math.MaxInt64)))
+	tk.MustQuery("show warnings;").Check(testkit.Rows(fmt.Sprintf("Warning 1292 Truncated incorrect tidb_max_delta_schema_count value: '%d'", uint64(math.MaxInt64))))
+	tk.RefreshSession()
+	tk.MustExec("use test")
+	require.Equal(t, int64(16384), variable.GetMaxDeltaSchemaCount())
+	tk.MustGetErrCode("set @@global.tidb_max_delta_schema_count= invalid_val", errno.ErrWrongTypeForVar)
+
+	tk.MustExec("set @@global.tidb_max_delta_schema_count= 2048")
+	tk.RefreshSession()
+	tk.MustExec("use test")
+	require.Equal(t, int64(2048), variable.GetMaxDeltaSchemaCount())
+	tk.MustQuery("select @@global.tidb_max_delta_schema_count").Check(testkit.Rows("2048"))
+}
+
 func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1311,13 +1498,13 @@ func TestOOMPanicInHashJoinWhenFetchBuildRows(t *testing.T) {
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(c1 int, c2 int)")
 	tk.MustExec("insert into t values(1,1),(2,2)")
-	fpName := "github.com/pingcap/tidb/pkg/executor/join/errorFetchBuildSideRowsMockOOMPanic"
+	fpName := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/errorFetchBuildSideRowsMockOOMPanic"
 	require.NoError(t, failpoint.Enable(fpName, `panic("ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")`))
-	for _, hashJoinV2 := range join.HashJoinV2Strings {
-		tk.MustExec(hashJoinV2)
-		err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
-		require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
-	}
+	defer func() {
+		require.NoError(t, failpoint.Disable(fpName))
+	}()
+	err := tk.QueryToErr("select * from t as t2  join t as t1 where t1.c1=t2.c1")
+	require.EqualError(t, err, "failpoint panic: ERROR 1105 (HY000): Out Of Memory Quota![conn=1]")
 }
 
 func TestIssue18744(t *testing.T) {
@@ -1361,12 +1548,36 @@ func TestIssue18744(t *testing.T) {
 	tk.MustExec(`insert into t values(1 , NULL , NULL                , NULL                , NULL , NULL ,        NULL);`)
 	tk.MustExec(`insert into t values(2 , 2012 , "2012-01-01 01:01:00" , "2012-01-01 01:01:00" , 2012 , 2012 , 2012.000000);`)
 	tk.MustExec(`set tidb_index_lookup_join_concurrency=1`)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/join/testIndexHashJoinOuterWorkerErr", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexHashJoinOuterWorkerErr", "return"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/join/testIndexHashJoinOuterWorkerErr"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexHashJoinOuterWorkerErr"))
 	}()
 	err := tk.QueryToErr(`select /*+ inl_hash_join(t2) */ t1.id, t2.id from t1 join t t2 on t1.a = t2.a order by t1.a ASC limit 1;`)
 	require.EqualError(t, err, "mockIndexHashJoinOuterWorkerErr")
+}
+
+func TestIssue19410(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t, t1, t2, t3;")
+	tk.MustExec("create table t(a int, b enum('A', 'B'));")
+	tk.MustExec("create table t1(a1 int, b1 enum('B', 'A') NOT NULL, UNIQUE KEY (b1));")
+	tk.MustExec("insert into t values (1, 'A');")
+	tk.MustExec("insert into t1 values (1, 'A');")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+	tk.MustQuery("select /*+ INL_JOIN(t1) */ * from t join t1 on t.b = t1.b1;").Check(testkit.Rows("1 A 1 A"))
+
+	tk.MustExec("create table t2(a1 int, b1 enum('C', 'D') NOT NULL, UNIQUE KEY (b1));")
+	tk.MustExec("insert into t2 values (1, 'C');")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t2) */ * from t join t2 on t.b = t2.b1;").Check(testkit.Rows())
+	tk.MustQuery("select /*+ INL_JOIN(t2) */ * from t join t2 on t.b = t2.b1;").Check(testkit.Rows())
+
+	tk.MustExec("create table t3(a1 int, b1 enum('A', 'B') NOT NULL, UNIQUE KEY (b1));")
+	tk.MustExec("insert into t3 values (1, 'A');")
+	tk.MustQuery("select /*+ INL_HASH_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
+	tk.MustQuery("select /*+ INL_JOIN(t3) */ * from t join t3 on t.b = t3.b1;").Check(testkit.Rows("1 A 1 A"))
 }
 
 func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
@@ -1378,9 +1589,9 @@ func TestAnalyzeNextRawErrorNoLeak(t *testing.T) {
 	tk.MustExec("create table t1(id int, c varchar(32))")
 	tk.MustExec("set @@session.tidb_analyze_version = 2")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/distsql/mockNextRawError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/distsql/mockNextRawError", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/distsql/mockNextRawError"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/distsql/mockNextRawError"))
 	}()
 	tk.MustGetErrMsg("analyze table t1", "mockNextRawError")
 }

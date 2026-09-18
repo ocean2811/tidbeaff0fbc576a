@@ -14,7 +14,7 @@
 
 package types
 
-import ast "github.com/pingcap/tidb/pkg/parser/types"
+import ast "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/types"
 
 // EvalType indicates the specified types that arguments and result of a built-in function should be.
 type EvalType = ast.EvalType
@@ -36,6 +36,4 @@ const (
 	ETDuration = ast.ETDuration
 	// ETJson represents type JSON in evaluation.
 	ETJson = ast.ETJson
-	// ETVectorFloat32 represents type VectorFloat32 in evaluation.
-	ETVectorFloat32 = ast.ETVectorFloat32
 )

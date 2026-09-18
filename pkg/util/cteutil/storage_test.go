@@ -18,9 +18,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -61,12 +61,12 @@ func TestOpenAndClose(t *testing.T) {
 	chkSize := 1
 	storage := NewStorageRowContainer(fields, chkSize)
 
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		err := storage.OpenAndRef()
 		require.NoError(t, err)
 	}
 
-	for range 9 {
+	for i := 0; i < 9; i++ {
 		err := storage.DerefAndClose()
 		require.NoError(t, err)
 	}
@@ -84,7 +84,7 @@ func TestAddAndGetChunk(t *testing.T) {
 	storage := NewStorageRowContainer(fields, chkSize)
 
 	inChk := chunk.NewChunkWithCapacity(fields, chkSize)
-	for i := range chkSize {
+	for i := 0; i < chkSize; i++ {
 		inChk.AppendInt64(0, int64(i))
 	}
 
@@ -109,10 +109,10 @@ func TestSpillToDisk(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLong)}
 	chkSize := 10
 	storage := NewStorageRowContainer(fields, chkSize)
-	var tmp any = storage
+	var tmp interface{} = storage
 
 	inChk := chunk.NewChunkWithCapacity(fields, chkSize)
-	for i := range chkSize {
+	for i := 0; i < chkSize; i++ {
 		inChk.AppendInt64(0, int64(i))
 	}
 
@@ -168,7 +168,7 @@ func TestReopen(t *testing.T) {
 	require.NoError(t, err)
 
 	inChk := chunk.NewChunkWithCapacity(fields, chkSize)
-	for i := range chkSize {
+	for i := 0; i < chkSize; i++ {
 		inChk.AppendInt64(0, int64(i))
 	}
 	err = storage.Add(inChk)
@@ -188,7 +188,7 @@ func TestReopen(t *testing.T) {
 	out64s := outChk.Column(0).Int64s()
 	require.Equal(t, in64s, out64s)
 	// Reopen multiple times.
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		err = storage.Reopen()
 		require.NoError(t, err)
 	}
@@ -210,7 +210,7 @@ func TestSwapData(t *testing.T) {
 	err := storage1.OpenAndRef()
 	require.NoError(t, err)
 	inChk1 := chunk.NewChunkWithCapacity(tp1, chkSize)
-	for i := range chkSize {
+	for i := 0; i < chkSize; i++ {
 		inChk1.AppendInt64(0, int64(i))
 	}
 	in1 := inChk1.Column(0).Int64s()
@@ -223,11 +223,11 @@ func TestSwapData(t *testing.T) {
 	require.NoError(t, err)
 
 	inChk2 := chunk.NewChunkWithCapacity(tp2, chkSize)
-	for i := range chkSize {
+	for i := 0; i < chkSize; i++ {
 		inChk2.AppendString(0, strconv.FormatInt(int64(i), 10))
 	}
-	in2 := make([]string, 0, inChk2.NumRows())
-	for i := range inChk2.NumRows() {
+	var in2 []string
+	for i := 0; i < inChk2.NumRows(); i++ {
 		in2 = append(in2, inChk2.Column(0).GetString(i))
 	}
 	err = storage2.Add(inChk2)
@@ -241,8 +241,8 @@ func TestSwapData(t *testing.T) {
 	outChk2, err := storage2.GetChunk(0)
 	require.NoError(t, err)
 
-	out1 := make([]string, 0, outChk1.NumRows())
-	for i := range outChk1.NumRows() {
+	var out1 []string
+	for i := 0; i < outChk1.NumRows(); i++ {
 		out1 = append(out1, outChk1.Column(0).GetString(i))
 	}
 	out2 := outChk2.Column(0).Int64s()

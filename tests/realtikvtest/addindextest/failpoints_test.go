@@ -16,12 +16,15 @@ package addindextest
 
 import (
 	"testing"
-
-	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 )
 
+func initTestFailpoint(t *testing.T) *suiteContext {
+	ctx := initTest(t)
+	ctx.isFailpointsTest = true
+	return ctx
+}
+
 func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
-	enableFastAddIndexFailpoints(t)
 	if !*FullMode {
 		t.Skip()
 	}
@@ -30,12 +33,11 @@ func TestFailpointsCreateNonUniqueIndex(t *testing.T) {
 		{2, 5, 8, 11, 14, 17, 20, 23, 26},
 		{3, 6, 9, 12, 15, 18, 21, 24, 27},
 	}
-	ctx := testutils.InitTestFailpoint(t)
-	testutils.TestOneColFrame(ctx, colIDs, testutils.AddIndexNonUnique)
+	ctx := initTestFailpoint(t)
+	testOneColFrame(ctx, colIDs, addIndexNonUnique)
 }
 
 func TestFailpointsCreateUniqueIndex(t *testing.T) {
-	enableFastAddIndexFailpoints(t)
 	if !*FullMode {
 		t.Skip()
 	}
@@ -44,30 +46,27 @@ func TestFailpointsCreateUniqueIndex(t *testing.T) {
 		{2, 9, 11, 17},
 		{3, 12, 25},
 	}
-	ctx := testutils.InitTestFailpoint(t)
-	testutils.TestOneColFrame(ctx, colIDs, testutils.AddIndexUnique)
+	ctx := initTestFailpoint(t)
+	testOneColFrame(ctx, colIDs, addIndexUnique)
 }
 
 func TestFailpointsCreatePrimaryKeyFailpoints(t *testing.T) {
 	if !*FullMode {
 		t.Skip()
 	}
-	enableFastAddIndexFailpoints(t)
-	ctx := testutils.InitTest(t)
-	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
+	ctx := initTest(t)
+	testOneIndexFrame(ctx, 0, addIndexPK)
 }
 
 func TestFailpointsCreateGenColIndex(t *testing.T) {
 	if !*FullMode {
 		t.Skip()
 	}
-	enableFastAddIndexFailpoints(t)
-	ctx := testutils.InitTestFailpoint(t)
-	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
+	ctx := initTestFailpoint(t)
+	testOneIndexFrame(ctx, 29, addIndexGenCol)
 }
 
 func TestFailpointsCreateMultiColsIndex(t *testing.T) {
-	enableFastAddIndexFailpoints(t)
 	if !*FullMode {
 		t.Skip()
 	}
@@ -81,6 +80,6 @@ func TestFailpointsCreateMultiColsIndex(t *testing.T) {
 		{14, 17, 20},
 		{18, 21, 24},
 	}
-	ctx := testutils.InitTestFailpoint(t)
-	testutils.TestTwoColsFrame(ctx, coliIDs, coljIDs, testutils.AddIndexMultiCols)
+	ctx := initTestFailpoint(t)
+	testTwoColsFrame(ctx, coliIDs, coljIDs, addIndexMultiCols)
 }

@@ -1,7 +1,7 @@
 # Optimize GC Advance For Internal Transactions
 
 - Author(s): [Michael](https://github.com/TonsnakeLin) 
-- Tracking Issue: https://github.com/pingcap/tidb/issues/32725
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/32725
 
 ## Introduction
 

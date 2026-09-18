@@ -17,7 +17,7 @@ package client
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/ddl/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -51,7 +51,7 @@ func (c *etcdClient) WatchNotification(ctx context.Context, typ string) clientv3
 // NewMockNotificationClient creates a mock notification client
 func NewMockNotificationClient() NotificationClient {
 	return &mockClient{
-		store:                make(map[string]any),
+		store:                make(map[string]interface{}),
 		commandWatchers:      make([]chan *CmdRequest, 0, 1),
 		notificationWatchers: make(map[string][]chan clientv3.WatchResponse),
 	}
@@ -75,7 +75,7 @@ loop:
 			return ctx.Err()
 		case ch <- clientv3.WatchResponse{}:
 		default:
-			unsent = make([]chan clientv3.WatchResponse, len(watchers))
+			unsent = make([]chan clientv3.WatchResponse, len(watchers), 0)
 			copy(unsent, watchers[i:])
 			break loop
 		}

@@ -1,7 +1,7 @@
 # Proposal: Reduce Data inconsistencies
 
 - Author(s): [Li Su](http://github.com/lysu), [Ziqian Qin](http://github.com/ekexium)
-- Tracking Issue: https://github.com/pingcap/tidb/issues/26833
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/26833
 
 ## Table of Contents
 

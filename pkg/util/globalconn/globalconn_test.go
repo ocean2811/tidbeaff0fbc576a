@@ -20,7 +20,7 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/util/globalconn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/globalconn"
 	"github.com/stretchr/testify/assert"
 )
 

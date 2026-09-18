@@ -20,17 +20,18 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
 	"go.uber.org/zap"
 )
 
@@ -76,26 +77,14 @@ type columnMaps struct {
 // The time complexity is O(M * C + I)
 // The space complexity is O(M + C + I)
 func CheckDataConsistency(
-	txn kv.Transaction, tc types.Context, t *TableCommon,
+	txn kv.Transaction, sessVars *variable.SessionVars, t *TableCommon,
 	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
-) error {
-	return checkDataConsistency(txn, tc, t, rowToInsert, rowToRemove, memBuffer, sh, nil)
-}
-
-func checkDataConsistency(
-	txn kv.Transaction, tc types.Context, t *TableCommon,
-	rowToInsert, rowToRemove []types.Datum, memBuffer kv.MemBuffer, sh kv.StagingHandle,
-	extraIndexesLayout table.IndexesLayout,
 ) error {
 	if t.Meta().GetPartitionInfo() != nil {
-		// TODO: Support check for partitions as well
-		return nil
-	}
-	if txn.IsPipelined() {
 		return nil
 	}
 	if sh == 0 {
-		// some implementations of MemBuffer doesn't support staging, e.g. that in pkg/lightning/backend/kv
+		// some implementations of MemBuffer doesn't support staging, e.g. that in br/pkg/lightning/backend/kv
 		return nil
 	}
 	indexMutations, rowInsertion, err := collectTableMutationsFromBufferStage(t, memBuffer, sh)
@@ -123,7 +112,7 @@ func checkDataConsistency(
 	}
 
 	if err := checkIndexKeys(
-		tc, t, rowToInsert, rowToRemove, indexMutations, columnMaps.IndexIDToInfo, columnMaps.IndexIDToRowColInfos, extraIndexesLayout,
+		sessVars, t, rowToInsert, rowToRemove, indexMutations, columnMaps.IndexIDToInfo, columnMaps.IndexIDToRowColInfos,
 	); err != nil {
 		return errors.Trace(err)
 	}
@@ -213,12 +202,10 @@ func checkHandleConsistency(rowInsertion mutation, indexMutations []mutation, in
 // (a) {added indices} is a subset of {needed indices} => each index mutation is consistent with the input/row key/value
 // (b) {needed indices} is a subset of {added indices}. The check process would be exactly the same with how we generate the mutations, thus ignored.
 func checkIndexKeys(
-	tc types.Context, t *TableCommon, rowToInsert, rowToRemove []types.Datum,
+	sessVars *variable.SessionVars, t *TableCommon, rowToInsert, rowToRemove []types.Datum,
 	indexMutations []mutation, indexIDToInfo map[int64]*model.IndexInfo,
 	indexIDToRowColInfos map[int64][]rowcodec.ColInfo,
-	extraIndexesLayout table.IndexesLayout,
 ) error {
-	useNewCollate := t.encoder.UseNewCollate()
 	var indexData []types.Datum
 	for _, m := range indexMutations {
 		var value []byte
@@ -252,12 +239,11 @@ func checkIndexKeys(
 		}
 
 		// when we cannot decode the key to get the original value
-		if len(value) == 0 && NeedRestoredData(useNewCollate, indexInfo.Columns, t.Meta().Columns) {
+		if len(value) == 0 && NeedRestoredData(indexInfo.Columns, t.Meta().Columns) {
 			continue
 		}
 
-		decodedIndexValues, err := tablecodec.DecodeIndexKVWithCollate(
-			useNewCollate,
+		decodedIndexValues, err := tablecodec.DecodeIndexKV(
 			m.key, value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
 		)
 		if err != nil {
@@ -271,10 +257,9 @@ func checkIndexKeys(
 			indexData = indexData[:0]
 		}
 
-		loc := tc.Location()
 		for i, v := range decodedIndexValues {
 			fieldType := t.Columns[indexInfo.Columns[i].Offset].FieldType.ArrayType()
-			datum, err := tablecodec.DecodeColumnValue(v, fieldType, loc)
+			datum, err := tablecodec.DecodeColumnValue(v, fieldType, sessVars.Location())
 			if err != nil {
 				return errors.Trace(err)
 			}
@@ -283,9 +268,9 @@ func checkIndexKeys(
 
 		// When it is in add index new backfill state.
 		if len(value) == 0 || isTmpIdxValAndDeleted {
-			err = compareIndexData(useNewCollate, tc, t.Columns, indexData, rowToRemove, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
+			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToRemove, indexInfo, t.Meta())
 		} else {
-			err = compareIndexData(useNewCollate, tc, t.Columns, indexData, rowToInsert, indexInfo, t.Meta(), extraIndexesLayout.GetIndexLayout(idxID))
+			err = compareIndexData(sessVars.StmtCtx, t.Columns, indexData, rowToInsert, indexInfo, t.Meta())
 		}
 		if err != nil {
 			return errors.Trace(err)
@@ -315,7 +300,7 @@ func checkRowInsertionConsistency(
 
 	for columnID, decodedDatum := range decodedData {
 		inputDatum := rowToInsert[columnIDToInfo[columnID].Offset]
-		cmp, err := decodedDatum.Compare(sessVars.StmtCtx.TypeCtx(), &inputDatum, collate.GetCollator(decodedDatum.Collation()))
+		cmp, err := decodedDatum.Compare(sessVars.StmtCtx, &inputDatum, collate.GetCollator(decodedDatum.Collation()))
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -368,39 +353,32 @@ func collectTableMutationsFromBufferStage(t *TableCommon, memBuffer kv.MemBuffer
 // compareIndexData compares the decoded index data with the input data.
 // Returns error if the index data is not a subset of the input data.
 func compareIndexData(
-	useNewCollate bool,
-	tc types.Context, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
+	sc *stmtctx.StatementContext, cols []*table.Column, indexData, input []types.Datum, indexInfo *model.IndexInfo,
 	tableInfo *model.TableInfo,
-	extraIndexLayout table.IndexRowLayoutOption,
 ) error {
 	for i := range indexData {
-		offsetInRow := indexInfo.Columns[i].Offset
-		if len(extraIndexLayout) > 0 {
-			offsetInRow = extraIndexLayout[i]
-		}
-		offsetInTable := indexInfo.Columns[i].Offset
 		decodedMutationDatum := indexData[i]
-		expectedDatum := input[offsetInRow]
+		expectedDatum := input[indexInfo.Columns[i].Offset]
 
 		tablecodec.TruncateIndexValue(
 			&expectedDatum, indexInfo.Columns[i],
-			cols[offsetInTable].ColumnInfo,
+			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 		tablecodec.TruncateIndexValue(
 			&decodedMutationDatum, indexInfo.Columns[i],
-			cols[offsetInTable].ColumnInfo,
+			cols[indexInfo.Columns[i].Offset].ColumnInfo,
 		)
 
-		comparison, err := CompareIndexAndVal(tc, expectedDatum, decodedMutationDatum,
-			collate.GetCollatorWithCollate(useNewCollate, decodedMutationDatum.Collation()),
-			cols[offsetInTable].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
+		comparison, err := CompareIndexAndVal(sc, expectedDatum, decodedMutationDatum,
+			collate.GetCollator(decodedMutationDatum.Collation()),
+			cols[indexInfo.Columns[i].Offset].ColumnInfo.FieldType.IsArray() && expectedDatum.Kind() == types.KindMysqlJSON)
 		if err != nil {
 			return errors.Trace(err)
 		}
 
 		if comparison != 0 {
 			err = ErrInconsistentIndexedValue.GenWithStackByArgs(
-				tableInfo.Name.O, indexInfo.Name.O, cols[offsetInTable].ColumnInfo.Name.O,
+				tableInfo.Name.O, indexInfo.Name.O, cols[indexInfo.Columns[i].Offset].ColumnInfo.Name.O,
 				decodedMutationDatum.String(), expectedDatum.String(),
 			)
 			logutil.BgLogger().Error("inconsistent indexed value in index insertion", zap.Error(err))
@@ -411,16 +389,16 @@ func compareIndexData(
 }
 
 // CompareIndexAndVal compare index valued and row value.
-func CompareIndexAndVal(tc types.Context, rowVal types.Datum, idxVal types.Datum, collator collate.Collator, cmpMVIndex bool) (int, error) {
+func CompareIndexAndVal(sctx *stmtctx.StatementContext, rowVal types.Datum, idxVal types.Datum, collator collate.Collator, cmpMVIndex bool) (int, error) {
 	var cmpRes int
 	var err error
 	if cmpMVIndex {
 		// If it is multi-valued index, we should check the JSON contains the indexed value.
 		bj := rowVal.GetMysqlJSON()
 		count := bj.GetElemCount()
-		for elemIdx := range count {
+		for elemIdx := 0; elemIdx < count; elemIdx++ {
 			jsonDatum := types.NewJSONDatum(bj.ArrayGetElem(elemIdx))
-			cmpRes, err = jsonDatum.Compare(tc, &idxVal, collate.GetBinaryCollator())
+			cmpRes, err = jsonDatum.Compare(sctx, &idxVal, collate.GetBinaryCollator())
 			if err != nil {
 				return 0, errors.Trace(err)
 			}
@@ -429,7 +407,7 @@ func CompareIndexAndVal(tc types.Context, rowVal types.Datum, idxVal types.Datum
 			}
 		}
 	} else {
-		cmpRes, err = idxVal.Compare(tc, &rowVal, collator)
+		cmpRes, err = idxVal.Compare(sctx, &rowVal, collator)
 	}
 	return cmpRes, err
 }

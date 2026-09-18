@@ -24,12 +24,118 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestExplainPrivileges(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	se, err := session.CreateSession4Test(store)
+	require.NoError(t, err)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk := testkit.NewTestKit(t, store)
+	tk.SetSession(se)
+
+	tk.MustExec("create database explaindatabase")
+	tk.MustExec("use explaindatabase")
+	tk.MustExec("create table t (id int)")
+	tk.MustExec("create view v as select * from t")
+	tk.MustExec(`create user 'explain'@'%'`)
+
+	tk1 := testkit.NewTestKit(t, store)
+	se, err = session.CreateSession4Test(store)
+	require.NoError(t, err)
+	require.NoError(t, se.Auth(&auth.UserIdentity{Username: "explain", Hostname: "%"}, nil, nil, nil))
+	tk1.SetSession(se)
+
+	tk.MustExec(`grant select on explaindatabase.v to 'explain'@'%'`)
+	tk1.MustQuery("show databases").Check(testkit.Rows("INFORMATION_SCHEMA", "explaindatabase"))
+
+	tk1.MustExec("use explaindatabase")
+	tk1.MustQuery("select * from v")
+	err = tk1.ExecToErr("explain format = 'brief' select * from v")
+	require.Equal(t, plannercore.ErrViewNoExplain.Error(), err.Error())
+
+	tk.MustExec(`grant show view on explaindatabase.v to 'explain'@'%'`)
+	tk1.MustQuery("explain format = 'brief' select * from v")
+
+	tk.MustExec(`revoke select on explaindatabase.v from 'explain'@'%'`)
+
+	err = tk1.ExecToErr("explain format = 'brief' select * from v")
+	require.Equal(t, plannercore.ErrTableaccessDenied.GenWithStackByArgs("SELECT", "explain", "%", "v").Error(), err.Error())
+
+	// https://github.com/ocean2811/tidbeaff0fbc576a/issues/34326
+	tk.MustExec("create table t1 (i int)")
+	tk.MustExec("create table t2 (j int)")
+	tk.MustExec("create table t3 (k int, secret int)")
+
+	tk.MustExec("create view v1 as select * from t1")
+	tk.MustExec("create view v2 as select * from v1, t2")
+	tk.MustExec("create view v3 as select k from t3")
+
+	tk.MustExec("grant select, show view on explaindatabase.v2 to 'explain'@'%'")
+	tk.MustExec("grant         show view on explaindatabase.v1 to 'explain'@'%'")
+	tk.MustExec("grant select, show view on explaindatabase.t3 to 'explain'@'%'")
+	tk.MustExec("grant select, show view on explaindatabase.v3 to 'explain'@'%'")
+
+	tk1.MustGetErrMsg("explain select * from v1", "[planner:1142]SELECT command denied to user 'explain'@'%' for table 'v1'")
+	tk1.MustGetErrCode("explain select * from v2", errno.ErrViewNoExplain)
+	tk1.MustQuery("explain select * from t3")
+	tk1.MustQuery("explain select * from v3")
+}
+
+func TestExplainCartesianJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (v int)")
+
+	cases := []struct {
+		sql             string
+		isCartesianJoin bool
+	}{
+		{"explain format = 'brief' select * from t t1, t t2", true},
+		{"explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v > t1.v)", true},
+		{"explain format = 'brief' select * from t t1 where exists (select 1 from t t2 where t2.v in (t1.v+1, t1.v+2))", true},
+		{"explain format = 'brief' select * from t t1, t t2 where t1.v = t2.v", false},
+	}
+	for _, ca := range cases {
+		rows := tk.MustQuery(ca.sql).Rows()
+		ok := false
+		for _, row := range rows {
+			str := fmt.Sprintf("%v", row)
+			if strings.Contains(str, "CARTESIAN") {
+				ok = true
+			}
+		}
+
+		require.Equal(t, ca.isCartesianJoin, ok)
+	}
+}
+
+func TestExplainWrite(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int)")
+	tk.MustQuery("explain analyze insert into t select 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("1"))
+	tk.MustQuery("explain analyze update t set a=2 where a=1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
+	tk.MustQuery("explain format = 'brief' insert into t select 1")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
+	tk.MustQuery("explain analyze insert into t select 1")
+	tk.MustQuery("explain analyze replace into t values (3)")
+	tk.MustQuery("select * from t order by a").Check(testkit.Rows("1", "2", "3"))
+}
 
 func TestExplainAnalyzeMemory(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -52,15 +158,11 @@ func TestExplainAnalyzeMemory(t *testing.T) {
 	checkMemoryInfo(t, tk, "explain analyze select k from t use index(k)")
 	checkMemoryInfo(t, tk, "explain analyze select * from t use index(k)")
 	checkMemoryInfo(t, tk, "explain analyze select v+k from t")
-	for _, pipelined := range []string{"0", "1"} {
-		tk.MustExec("set @@tidb_enable_pipelined_window_function=" + pipelined)
-		checkMemoryInfo(t, tk, "explain analyze select sum(v) over () from t")
-	}
 }
 
 func checkMemoryInfo(t *testing.T, tk *testkit.TestKit, sql string) {
-	memCol := 7
-	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection", "Agg", "Window"}
+	memCol := 6
+	ops := []string{"Join", "Reader", "Top", "Sort", "LookUp", "Projection", "Selection", "Agg"}
 	rows := tk.MustQuery(sql).Rows()
 	for _, row := range rows {
 		strs := make([]string, len(row))
@@ -81,13 +183,61 @@ func checkMemoryInfo(t *testing.T, tk *testkit.TestKit, sql string) {
 
 		if shouldHasMem {
 			require.NotEqual(t, "N/A", strs[memCol])
-			if strings.Contains(strs[0], "Window") {
-				require.NotEqual(t, "0 Bytes", strs[memCol])
-			}
 		} else {
 			require.Equal(t, "N/A", strs[memCol])
 		}
 	}
+}
+
+func TestIssue47331(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec(`create table t1(
+		id1 varchar(2) DEFAULT '00',
+		id2 varchar(30) NOT NULL,
+		id3 datetime DEFAULT NULL,
+		id4 varchar(100) NOT NULL DEFAULT 'ecifdata',
+		id5 datetime NOT NULL DEFAULT CURRENT_TIMESTAMP,
+		id6 int(11) DEFAULT NULL,
+		id7 int(11) DEFAULT NULL,
+		UNIQUE KEY UI_id2 (id2),
+		KEY ix_id1 (id1)
+	)`)
+	tk.MustExec("drop table if exists t2")
+	tk.MustExec(`create table t2(
+		id10 varchar(40) NOT NULL,
+		id2 varchar(30) NOT NULL,
+		KEY IX_id2 (id2),
+		PRIMARY KEY (id10)
+	)`)
+	tk.MustExec("drop table if exists t3")
+	tk.MustExec(`create table t3(
+		id20 varchar(40) DEFAULT NULL,
+		UNIQUE KEY IX_id20 (id20)
+	)`)
+	tk.MustExec(`
+		explain
+		UPDATE t1 a
+		SET a.id1 = '04',
+			a.id3 = CURRENT_TIMESTAMP,
+			a.id4 = SUBSTRING_INDEX(USER(), '@', 1),
+			a.id5 = CURRENT_TIMESTAMP
+		WHERE a.id1 = '03'
+			AND a.id6 - IFNULL(a.id7, 0) =
+				(
+					SELECT COUNT(1)
+					FROM t2 b, t3 c
+					WHERE b.id10 = c.id20
+						AND b.id2 = a.id2
+						AND b.id2 in (
+							SELECT rn.id2
+							FROM t1 rn
+							WHERE rn.id1 = '03'
+						)
+				);
+	`)
 }
 
 func TestMemoryAndDiskUsageAfterClose(t *testing.T) {
@@ -121,13 +271,6 @@ func TestMemoryAndDiskUsageAfterClose(t *testing.T) {
 	}
 	for _, sql := range SQLs {
 		tk.MustQuery(sql)
-		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
-		require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
-		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
-	}
-	for _, pipelined := range []string{"0", "1"} {
-		tk.MustExec("set @@tidb_enable_pipelined_window_function=" + pipelined)
-		tk.MustQuery("select rank() over (order by v) from t")
 		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.MemTracker.BytesConsumed())
 		require.Greater(t, tk.Session().GetSessionVars().StmtCtx.MemTracker.MaxConsumed(), int64(0))
 		require.Equal(t, int64(0), tk.Session().GetSessionVars().StmtCtx.DiskTracker.BytesConsumed())
@@ -186,6 +329,29 @@ func checkExecutionInfo(t *testing.T, tk *testkit.TestKit, sql string) {
 	}
 }
 
+func TestExplainAnalyzeActRowsNotEmpty(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int, b int, index (a))")
+	tk.MustExec("insert into t values (1, 1)")
+
+	checkActRowsNotEmpty(t, tk, "explain analyze select * from t t1, t t2 where t1.b = t2.a and t1.b = 2333")
+}
+
+func checkActRowsNotEmpty(t *testing.T, tk *testkit.TestKit, sql string) {
+	actRowsCol := 2
+	rows := tk.MustQuery(sql).Rows()
+	for _, row := range rows {
+		strs := make([]string, len(row))
+		for i, c := range row {
+			strs[i] = c.(string)
+		}
+		require.NotEqual(t, "", strs[actRowsCol])
+	}
+}
+
 func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []string) {
 	actRowsCol := 2
 	rows := tk.MustQuery("explain analyze " + sql).Rows()
@@ -200,64 +366,6 @@ func checkActRows(t *testing.T, tk *testkit.TestKit, sql string, expected []stri
 	}
 }
 
-func checkAnalyzeRUFormat(t *testing.T, tk *testkit.TestKit, sql string, expectedActRows []string) {
-	t.Helper()
-	rows := tk.MustQuery("explain analyze format = 'ru' " + sql).Rows()
-	require.Equal(t, len(expectedActRows), len(rows))
-	for id, row := range rows {
-		require.Len(t, row, 7)
-		require.NotEmpty(t, row[0])
-		require.NotEmpty(t, row[1])
-		require.Equal(t, expectedActRows[id], row[2], fmt.Sprintf("error comparing %s", sql))
-		require.NotEmpty(t, row[3])
-		require.NotEmpty(t, row[4])
-		require.NotEmpty(t, row[5])
-		require.Equal(t, "", row[6])
-	}
-}
-
-func TestExplainAnalyzeRUFormatIgnoresLiteralLength(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.EnableCollectExecutionInfo = true
-	})
-
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_ru_literal_length")
-	tk.MustExec("create table t_ru_literal_length(a varchar(20))")
-	tk.MustExec("insert into t_ru_literal_length values ('x')")
-
-	explainAnalyzeRUTotal := func(sql string) float64 {
-		t.Helper()
-		rows := tk.MustQuery("explain analyze format = 'ru' " + sql).Rows()
-		require.NotEmpty(t, rows)
-
-		const (
-			cumRUCol    = 4
-			cumRUPctCol = 5
-		)
-		var totalRU *float64
-		for _, row := range rows {
-			require.Len(t, row, 7)
-			if row[cumRUPctCol] != "100.00%" {
-				continue
-			}
-			ru, err := strconv.ParseFloat(row[cumRUCol].(string), 64)
-			require.NoError(t, err)
-			require.Nil(t, totalRU)
-			totalRU = &ru
-		}
-		require.NotNil(t, totalRU)
-		return *totalRU
-	}
-
-	shortRU := explainAnalyzeRUTotal("select * from t_ru_literal_length where a = 'aaa'")
-	longRU := explainAnalyzeRUTotal("select * from t_ru_literal_length where a = 'aaaaaaaaaa'")
-	require.Equal(t, shortRU, longRU)
-}
-
 func TestCheckActRowsWithUnistore(t *testing.T) {
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
@@ -267,7 +375,7 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	// testSuite1 use default mockstore which is unistore
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t_unistore_act_rows")
 	tk.MustExec("create table t_unistore_act_rows(a int, b int, index(a, b))")
 	tk.MustExec("insert into t_unistore_act_rows values (1, 0), (1, 0), (2, 0), (2, 1)")
@@ -332,9 +440,6 @@ func TestCheckActRowsWithUnistore(t *testing.T) {
 	for _, test := range tests {
 		checkActRows(t, tk, test.sql, test.expected)
 	}
-
-	checkAnalyzeRUFormat(t, tk, "select * from t_unistore_act_rows", []string{"4", "4"})
-	checkAnalyzeRUFormat(t, tk, "select * from t_unistore_act_rows where b > 0", []string{"1", "1", "4"})
 }
 
 func TestExplainAnalyzeCTEMemoryAndDiskInfo(t *testing.T) {
@@ -357,6 +462,43 @@ func TestExplainAnalyzeCTEMemoryAndDiskInfo(t *testing.T) {
 
 	require.NotEqual(t, "N/A", rows[4][7].(string))
 	require.NotEqual(t, "N/A", rows[4][8].(string))
+}
+
+func TestExplainStatementsSummary(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustQuery("desc select * from information_schema.statements_summary").Check(testkit.Rows(
+		`MemTableScan_4 10000.00 root table:STATEMENTS_SUMMARY `))
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest is null").Check(testkit.RowsWithSep("|",
+		`Selection_5|8000.00|root| isnull(Column#5)`, `└─MemTableScan_6|10000.00|root|table:STATEMENTS_SUMMARY|`))
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest = 'abcdefg'").Check(testkit.RowsWithSep(" ",
+		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["abcdefg"]`))
+	tk.MustQuery("desc select * from information_schema.statements_summary where digest in ('a','b','c')").Check(testkit.RowsWithSep(" ",
+		`MemTableScan_5 10000.00 root table:STATEMENTS_SUMMARY digests: ["a","b","c"]`))
+}
+
+func TestFix29401(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists tt123;")
+	tk.MustExec(`CREATE TABLE tt123 (
+  id int(11) NOT NULL,
+  a bigint(20) DEFAULT NULL,
+  b char(20) DEFAULT NULL,
+  c datetime DEFAULT NULL,
+  d double DEFAULT NULL,
+  e json DEFAULT NULL,
+  f decimal(40,6) DEFAULT NULL,
+  PRIMARY KEY (id) /*T![clustered_index] CLUSTERED */,
+  KEY a (a),
+  KEY b (b),
+  KEY c (c),
+  KEY d (d),
+  KEY f (f)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;`)
+	tk.MustExec(" explain select /*+ inl_hash_join(t1) */ * from tt123 t1 join tt123 t2 on t1.b=t2.e;")
 }
 
 func TestIssue35296AndIssue43024(t *testing.T) {
@@ -397,8 +539,7 @@ func TestIssue35911(t *testing.T) {
 	timeStr1 := extractTime.FindStringSubmatch(rows[4][5].(string))[1]
 	time1, err := time.ParseDuration(timeStr1)
 	require.NoError(t, err)
-	extractTime2, _ := regexp.Compile("^total_time:(.*?),")
-	timeStr2 := extractTime2.FindStringSubmatch(rows[5][5].(string))[1]
+	timeStr2 := extractTime.FindStringSubmatch(rows[5][5].(string))[1]
 	time2, err := time.ParseDuration(timeStr2)
 	require.NoError(t, err)
 	// The duration of IndexLookUp should be longer than its build side child
@@ -417,46 +558,16 @@ func TestIssue35911(t *testing.T) {
 	require.EqualValues(t, 5, concurrency)
 }
 
-func TestTotalTimeCases(t *testing.T) {
+func TestIssue35105(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (c1 bigint, c2 int, c3 int, c4 int, primary key(c1, c2), index (c3));")
-	lineNum := 1000
-	for i := range lineNum {
-		tk.MustExec(fmt.Sprintf("insert into t1 values(%d, %d, %d, %d);", i, i+1, i+2, i+3))
-	}
-	tk.MustExec("analyze table t1")
-	tk.MustExec("set @@tidb_executor_concurrency = 5;")
-
-	tk.MustExec("set @@tidb_enable_parallel_apply = 0;")
-	rows := tk.MustQuery("explain analyze select (select /*+ NO_DECORRELATE() */ sum(c4) from t1 where t1.c3 = alias.c3) from t1 alias where alias.c1 = 1;").Rows()
-	require.True(t, len(rows) == 11)
-
-	// Line3 is tikv_task, others should be all walltime
-	for i := range 11 {
-		if i != 3 {
-			require.True(t, strings.HasPrefix(rows[i][5].(string), "time:"))
-		}
-	}
-
-	// use parallel_apply
-	tk.MustExec("set @@tidb_enable_parallel_apply = 1;")
-	rows = tk.MustQuery("explain analyze select (select /*+ NO_DECORRELATE() */ sum(c4) from t1 where t1.c3 = alias.c3) from t1 alias where alias.c1 = 1;").Rows()
-	require.True(t, len(rows) == 11)
-	// Line0-2 is walltime, Line3 is tikv_task, Line9 Line10 are special, they are total time in integration environment, while
-	// walltime in uts due to only one IndexLookUp executor is actually open, others should be all total_time.
-	for i := range 11 {
-		if i == 9 || i == 10 {
-			continue
-		}
-		if i < 3 {
-			require.True(t, strings.HasPrefix(rows[i][5].(string), "time:"))
-		} else if i > 3 {
-			require.True(t, strings.HasPrefix(rows[i][5].(string), "total_time:"))
-		}
-	}
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t (a int primary key)")
+	tk.MustExec("insert into t values (2)")
+	tk.MustExec("set @@tidb_constraint_check_in_place=1")
+	require.Error(t, tk.ExecToErr("explain analyze insert into t values (1), (2), (3)"))
+	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 }
 
 func flatJSONPlan(j *plannercore.ExplainInfoForEncode) (res []*plannercore.ExplainInfoForEncode) {
@@ -571,7 +682,6 @@ func TestExplainFormatInCtx(t *testing.T) {
 		types.ExplainFormatTiDBJSON,
 		types.ExplainFormatCostTrace,
 		types.ExplainFormatPlanCache,
-		types.ExplainFormatRU,
 	}
 
 	tk.MustExec("select * from t")
@@ -591,38 +701,55 @@ func TestExplainFormatInCtx(t *testing.T) {
 	}
 }
 
-func TestExplainImportFromSelect(t *testing.T) {
+func TestExplainFormatPlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int primary key)")
-	tk.MustExec("create table t_o (a int primary key)")
-	tk.MustExec("insert into t values (2)")
-	rs := tk.MustQuery("explain import into t_o from select * from t").Rows()
-	require.Contains(t, rs[0][0], "ImportInto")
-	require.Contains(t, rs[1][0], "TableReader")
-	require.Contains(t, rs[2][0], "TableFullScan")
-}
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("set @@session.tidb_enable_non_prepared_plan_cache = 1")
+	tk.MustExec("select * from t limit 1")
+	tk.MustExec("select * from t limit 1")
 
-func TestExplainFormatPlanTree(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	testKit := testkit.NewTestKit(t, store)
+	// miss
+	tk.MustExec("explain format = 'plan_cache' select * from (select * from t) t1 limit 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: queries that have sub-queries are not supported"))
+	tk.MustExec("explain format = 'plan_cache' select * from (select * from t) t1 limit 1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	testKit.MustExec("use test")
-	testKit.MustExec("drop table if exists t")
-	testKit.MustExec("create table t(a int, b int, index idx(a))")
+	tk.MustExec("explain analyze format = 'plan_cache' select * from (select * from t) t1 limit 1")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip non-prepared plan-cache: queries that have sub-queries are not supported"))
+	tk.MustExec("explain analyze format = 'plan_cache' select * from (select * from t) t1 limit 1")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 
-	// Test the new plan_tree format
-	rows := testKit.MustQuery("explain format='plan_tree' select * from t where a = 5").Rows()
+	// hit
+	tk.MustExec("explain format = 'plan_cache' select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("explain format = 'plan_cache' select * from t")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 
-	// Test that each row has exactly 4 columns
-	for i, row := range rows {
-		require.Equal(t, 4, len(row), "Row %d should have 4 columns", i)
+	tk.MustExec("explain analyze format = 'plan_cache' select * from t")
+	tk.MustQuery("show warnings").Check(testkit.Rows())
+	tk.MustExec("explain analyze format = 'plan_cache' select * from t")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	// will not use plan cache
+	explainFormats := []string{
+		types.ExplainFormatBrief,
+		types.ExplainFormatDOT,
+		types.ExplainFormatHint,
+		types.ExplainFormatROW,
+		types.ExplainFormatVerbose,
+		types.ExplainFormatTraditional,
+		types.ExplainFormatBinary,
+		types.ExplainFormatTiDBJSON,
+		types.ExplainFormatCostTrace,
 	}
 
-	// Test that explain analyze format='plan_tree' fails with an error message
-	err := testKit.ExecToErr("explain analyze format='plan_tree' select * from t")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "plan_tree")
+	tk.MustExec("explain select * from t")
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	for _, format := range explainFormats {
+		tk.MustExec(fmt.Sprintf("explain format = '%v' select * from t", format))
+		tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
+	}
 }

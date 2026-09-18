@@ -19,10 +19,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/timer/api"
-	"github.com/pingcap/tidb/pkg/timer/metrics"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/timer/api"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/timer/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"go.uber.org/zap"
 )
@@ -324,7 +324,7 @@ func (w *hookWorker) triggerEvent(hook api.Hook, req *triggerEventRequest, logge
 			})
 
 			if err != nil {
-				logger.Warn(
+				logger.Error(
 					"error occurs when invoking hook.OnPreSchedEvent",
 					zap.Error(err),
 					zap.Duration("retryAfter", workerEventDefaultRetryInterval),
@@ -358,7 +358,7 @@ func (w *hookWorker) triggerEvent(hook api.Hook, req *triggerEventRequest, logge
 				return req.TimerMetaChangedResponse(nil)
 			}
 
-			logger.Warn("error occurs to change timer to trigger state,",
+			logger.Error("error occurs to change timer to trigger state,",
 				zap.Error(err),
 				zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 			)
@@ -373,7 +373,7 @@ func (w *hookWorker) triggerEvent(hook api.Hook, req *triggerEventRequest, logge
 	}
 
 	if err != nil {
-		logger.Warn(
+		logger.Error(
 			"error occurs when getting timer record to trigger timer event",
 			zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 		)
@@ -395,8 +395,8 @@ func (w *hookWorker) triggerEvent(hook api.Hook, req *triggerEventRequest, logge
 
 		if err != nil {
 			w.onSchedEventErrCounter.Inc()
-			logger.Warn(
-				"error occurs when invoking hook.OnSchedEvent",
+			logger.Error(
+				"error occurs when invoking hook OnTimerEvent",
 				zap.Error(err),
 				zap.Duration("retryAfter", workerEventDefaultRetryInterval),
 			)

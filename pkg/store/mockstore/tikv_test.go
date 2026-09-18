@@ -17,7 +17,7 @@ package mockstore
 import (
 	"testing"
 
-	tidbcfg "github.com/pingcap/tidb/pkg/config"
+	tidbcfg "github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/config"
 )

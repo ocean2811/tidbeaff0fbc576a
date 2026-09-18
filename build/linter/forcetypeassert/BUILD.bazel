@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "forcetypeassert",
     srcs = ["analysis.go"],
-    importpath = "github.com/pingcap/tidb/build/linter/forcetypeassert",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/build/linter/forcetypeassert",
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",

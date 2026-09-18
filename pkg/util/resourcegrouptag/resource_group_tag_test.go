@@ -16,15 +16,48 @@ package resourcegrouptag
 
 import (
 	"crypto/sha256"
+	"math/rand"
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
+
+func TestResourceGroupTagEncoding(t *testing.T) {
+	sqlDigest := parser.NewDigest(nil)
+	tag := EncodeResourceGroupTag(sqlDigest, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
+	require.Len(t, tag, 2)
+
+	decodedSQLDigest, err := DecodeResourceGroupTag(tag)
+	require.NoError(t, err)
+	require.Len(t, decodedSQLDigest, 0)
+
+	sqlDigest = parser.NewDigest([]byte{'a', 'a'})
+	tag = EncodeResourceGroupTag(sqlDigest, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
+	// version(1) + prefix(1) + length(1) + content(2hex -> 1byte) + label(2)
+	require.Len(t, tag, 6)
+
+	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
+	require.NoError(t, err)
+	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
+
+	sqlDigest = parser.NewDigest(genRandHex(64))
+	tag = EncodeResourceGroupTag(sqlDigest, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
+	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
+	require.NoError(t, err)
+	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
+
+	sqlDigest = parser.NewDigest(genRandHex(510))
+	tag = EncodeResourceGroupTag(sqlDigest, nil, tipb.ResourceGroupTagLabel_ResourceGroupTagLabelUnknown)
+	decodedSQLDigest, err = DecodeResourceGroupTag(tag)
+	require.NoError(t, err)
+	require.Equal(t, sqlDigest.Bytes(), decodedSQLDigest)
+}
 
 func TestResourceGroupTagEncodingPB(t *testing.T) {
 	digest1 := genDigest("abc")
@@ -36,7 +69,7 @@ func TestResourceGroupTagEncodingPB(t *testing.T) {
 	}
 	buf, err := resourceTag.Marshal()
 	require.NoError(t, err)
-	require.Len(t, buf, 70)
+	require.Len(t, buf, 68)
 
 	tag := &tipb.ResourceGroupTag{}
 	err = tag.Unmarshal(buf)
@@ -50,7 +83,7 @@ func TestResourceGroupTagEncodingPB(t *testing.T) {
 	}
 	buf, err = resourceTag.Marshal()
 	require.NoError(t, err)
-	require.Len(t, buf, 36)
+	require.Len(t, buf, 34)
 
 	tag = &tipb.ResourceGroupTag{}
 	err = tag.Unmarshal(buf)
@@ -149,6 +182,15 @@ func TestGetFirstKeyFromRequest(t *testing.T) {
 	require.Nil(t, GetFirstKeyFromRequest(req))
 	req = &tikvrpc.Request{Req: &coprocessor.BatchRequest{Regions: []*coprocessor.RegionInfo{{Ranges: []*coprocessor.KeyRange{{Start: testK2}}}}}}
 	require.Equal(t, testK2, GetFirstKeyFromRequest(req))
+}
+
+func genRandHex(length int) []byte {
+	const chars = "0123456789abcdef"
+	res := make([]byte, length)
+	for i := 0; i < length; i++ {
+		res[i] = chars[rand.Intn(len(chars))]
+	}
+	return res
 }
 
 func genDigest(str string) []byte {

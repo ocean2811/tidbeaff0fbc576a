@@ -28,13 +28,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set"
 	"go.uber.org/zap"
 )
 
@@ -189,7 +189,7 @@ func NewHistoryReader(
 	timeRanges []*StmtTimeRange,
 	concurrent int,
 ) (*HistoryReader, error) {
-	files, err := newStmtFiles(ctx)
+	files, err := newStmtFiles(ctx, timeRanges)
 	if err != nil {
 		return nil, err
 	}
@@ -258,6 +258,7 @@ func (r *HistoryReader) Rows() ([][]types.Datum, error) {
 
 // Close ends reading and closes all files.
 func (r *HistoryReader) Close() error {
+	r.files.close()
 	if r.cancel != nil {
 		r.cancel()
 	}
@@ -296,7 +297,6 @@ func (r *HistoryReader) scheduleTasks(
 		close(rowsCh)
 		return
 	}
-	defer r.files.close()
 
 	ctx, cancel := context.WithCancel(r.ctx)
 	defer cancel()
@@ -315,8 +315,7 @@ func (r *HistoryReader) scheduleTasks(
 	}
 
 	concurrent := r.concurrent
-	// Keep this channel unbuffered so the manager cannot accumulate open file handles.
-	filesCh := make(chan *stmtFile)
+	filesCh := make(chan *os.File, concurrent)
 	linesCh := make(chan [][]byte, concurrent)
 	innerErrCh := make(chan error, concurrent)
 
@@ -331,7 +330,7 @@ func (r *HistoryReader) scheduleTasks(
 	waitParseAllDone := parseWg.Wait
 
 	// Half of workers are scheduled to scan files and then parse lines.
-	for range concurrent / 2 {
+	for i := 0; i < concurrent/2; i++ {
 		go func() {
 			scanWorker.run(filesCh, linesCh, innerErrCh)
 			scanDone()
@@ -356,42 +355,10 @@ func (r *HistoryReader) scheduleTasks(
 		defer mgrWg.Done()
 
 		func() {
-			for _, candidate := range r.files.files {
-				if isCtxDone(ctx) {
-					return
-				}
-				file := candidate
-				if file.file == nil {
-					var err error
-					file, err = openStmtFile(candidate.path)
-					if err != nil {
-						logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", candidate.path))
-						continue
-					}
-					if r.files.currentFileInfo != nil {
-						fileInfo, err := file.file.Stat()
-						if err != nil {
-							file.closeAndLogError()
-							select {
-							case innerErrCh <- err:
-							case <-ctx.Done():
-							}
-							return
-						}
-						if os.SameFile(r.files.currentFileInfo, fileInfo) {
-							file.closeAndLogError()
-							continue
-						}
-					}
-				}
-				if !r.checker.isTimeValid(file.begin, file.end) {
-					file.closeAndLogError()
-					continue
-				}
+			for _, file := range r.files.files {
 				select {
-				case filesCh <- file:
+				case filesCh <- file.file:
 				case <-ctx.Done():
-					file.closeAndLogError()
 					return
 				}
 			}
@@ -481,13 +448,7 @@ type stmtTinyRecord struct {
 	End   int64 `json:"end"`
 }
 
-type stmtPersistedRecord struct {
-	StmtRecord
-	Evicted bool `json:"evicted"`
-}
-
 type stmtFile struct {
-	path  string
 	file  *os.File
 	begin int64
 	end   int64
@@ -512,7 +473,6 @@ func openStmtFile(path string) (*stmtFile, error) {
 	}
 
 	return &stmtFile{
-		path:  path,
 		file:  file,
 		begin: begin,
 		end:   end,
@@ -572,78 +532,22 @@ func parseEndTs(file *os.File) (int64, error) {
 
 func (f *stmtFile) close() error {
 	if f.file != nil {
-		err := f.file.Close()
-		f.file = nil
-		return err
+		return f.file.Close()
 	}
 	return nil
 }
 
-func (f *stmtFile) closeAndLogError() {
-	if err := f.close(); err != nil {
-		logutil.BgLogger().Warn("failed to close statements file", zap.Error(err), zap.String("path", f.path))
-	}
-}
-
 type stmtFiles struct {
-	files           []*stmtFile
-	currentFileInfo os.FileInfo
+	files []*stmtFile
 }
 
-func (f *stmtFiles) close() {
-	for _, file := range f.files {
-		file.closeAndLogError()
-	}
-}
-
-func newStmtFiles(ctx context.Context) (*stmtFiles, error) {
-	return newStmtFilesWithReadDir(ctx, os.ReadDir)
-}
-
-func newStmtFilesWithReadDir(
-	ctx context.Context,
-	readDir func(string) ([]os.DirEntry, error),
-) (*stmtFiles, error) {
+func newStmtFiles(ctx context.Context, timeRanges []*StmtTimeRange) (*stmtFiles, error) {
 	filename := config.GetGlobalConfig().Instance.StmtSummaryFilename
 	ext := filepath.Ext(filename)
 	prefix := filename[:len(filename)-len(ext)]
-
-	if isCtxDone(ctx) {
-		return nil, ctx.Err()
-	}
-	// Pin the active inode before enumerating rotated files. If rotation happens
-	// during enumeration, the directory entry for this inode is deduplicated below.
-	currentFile, err := openStmtFile(filename)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			logutil.BgLogger().Warn("failed to snapshot current statements file", zap.Error(err), zap.String("path", filename))
-		}
-		currentFile = nil
-	}
-
 	var files []*stmtFile
-	var currentFileInfo os.FileInfo
-	if currentFile != nil {
-		currentFileInfo, err = currentFile.file.Stat()
-		if err != nil {
-			currentFile.closeAndLogError()
-			return nil, err
-		}
-		files = append(files, currentFile)
-	}
-
-	dir := filepath.Dir(filename)
-	entries, err := readDir(dir)
-	if err != nil {
-		(&stmtFiles{files: files}).close()
-		return nil, err
-	}
-	if isCtxDone(ctx) {
-		(&stmtFiles{files: files}).close()
-		return nil, ctx.Err()
-	}
-	walkFn := func(path string, entry os.DirEntry) error {
-		if entry.IsDir() {
+	walkFn := func(path string, info os.DirEntry) error {
+		if info.IsDir() {
 			return nil
 		}
 		if !strings.HasPrefix(path, prefix) {
@@ -652,33 +556,47 @@ func newStmtFilesWithReadDir(
 		if isCtxDone(ctx) {
 			return ctx.Err()
 		}
-		if path == filename {
-			if currentFile == nil {
-				files = append(files, &stmtFile{path: path})
-			}
+		file, err := openStmtFile(path)
+		if err != nil {
+			logutil.BgLogger().Warn("failed to open or parse statements file", zap.Error(err), zap.String("path", path))
 			return nil
 		}
-		if currentFileInfo != nil {
-			fileInfo, infoErr := entry.Info()
-			if infoErr == nil && os.SameFile(currentFileInfo, fileInfo) {
+		if len(timeRanges) == 0 {
+			files = append(files, file)
+			return nil
+		}
+		for _, tr := range timeRanges {
+			if timeRangeOverlap(file.begin, file.end, tr.Begin, tr.End) {
+				files = append(files, file)
 				return nil
 			}
-			// If Info fails, keep the path and deduplicate the opened inode later.
 		}
-		files = append(files, &stmtFile{path: path})
 		return nil
 	}
 
+	dir := filepath.Dir(filename)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
 	for _, entry := range entries {
 		if err := walkFn(filepath.Join(dir, entry.Name()), entry); err != nil {
-			(&stmtFiles{files: files}).close()
+			for _, f := range files {
+				_ = f.close()
+			}
 			return nil, err
 		}
 	}
 	slices.SortFunc(files, func(i, j *stmtFile) int {
-		return cmp.Compare(i.path, j.path)
+		return cmp.Compare(i.begin, j.begin)
 	})
-	return &stmtFiles{files: files, currentFileInfo: currentFileInfo}, nil
+	return &stmtFiles{files: files}, nil
+}
+
+func (f *stmtFiles) close() {
+	for _, f := range f.files {
+		_ = f.close()
+	}
 }
 
 type stmtScanWorker struct {
@@ -688,7 +606,7 @@ type stmtScanWorker struct {
 }
 
 func (w *stmtScanWorker) run(
-	fileCh <-chan *stmtFile,
+	fileCh <-chan *os.File,
 	linesCh chan<- [][]byte,
 	errCh chan<- error,
 ) {
@@ -706,16 +624,15 @@ func (w *stmtScanWorker) run(
 }
 
 func (w *stmtScanWorker) handleFile(
-	file *stmtFile,
+	file *os.File,
 	linesCh chan<- [][]byte,
 	errCh chan<- error,
 ) {
-	if file == nil || file.file == nil {
+	if file == nil {
 		return
 	}
-	defer file.closeAndLogError()
 
-	reader := bufio.NewReader(file.file)
+	reader := bufio.NewReader(file)
 	for {
 		if isCtxDone(w.ctx) {
 			return
@@ -840,12 +757,9 @@ func (w *stmtParseWorker) handleLines(
 
 	rows := make([][]types.Datum, 0, len(lines))
 	for _, line := range lines {
-		record, skipped, err := w.parse(line)
+		record, err := w.parse(line)
 		if err != nil {
 			// ignore invalid lines
-			continue
-		}
-		if skipped {
 			continue
 		}
 
@@ -876,15 +790,12 @@ func (w *stmtParseWorker) putRows(
 	}
 }
 
-func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, bool, error) {
-	var record stmtPersistedRecord
+func (*stmtParseWorker) parse(raw []byte) (*StmtRecord, error) {
+	var record StmtRecord
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return nil, false, err
+		return nil, err
 	}
-	if record.Evicted {
-		return nil, true, nil
-	}
-	return &record.StmtRecord, false, nil
+	return &record, nil
 }
 
 func (w *stmtParseWorker) needStop(record *StmtRecord) bool {

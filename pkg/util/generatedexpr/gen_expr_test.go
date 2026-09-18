@@ -17,8 +17,8 @@ package generatedexpr
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	_ "github.com/pingcap/tidb/pkg/types/parser_driver"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	_ "github.com/ocean2811/tidbeaff0fbc576a/pkg/types/parser_driver"
 	"github.com/stretchr/testify/require"
 )
 

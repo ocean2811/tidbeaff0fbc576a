@@ -17,8 +17,8 @@ package admin_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,8 +34,7 @@ func TestAdminCheckTableCorrupted(t *testing.T) {
 	txn, err := tk.Session().Txn(false)
 	require.NoError(t, err)
 	memBuffer := txn.GetMemBuffer()
-	handle := memBuffer.Staging()
-	it := memBuffer.SnapshotIter(nil, nil)
+	it, err := memBuffer.Iter(nil, nil)
 	require.NoError(t, err)
 	for it.Valid() {
 		if tablecodec.IsRecordKey(it.Key()) && len(it.Value()) > 0 {
@@ -49,7 +48,6 @@ func TestAdminCheckTableCorrupted(t *testing.T) {
 		err = it.Next()
 		require.NoError(t, err)
 	}
-	memBuffer.Release(handle)
 
 	tk.MustExec("commit")
 	err = tk.ExecToErr("admin check table t")

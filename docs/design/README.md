@@ -16,20 +16,20 @@ A hastily-proposed design document can hurt its chances of acceptance. Low-quali
 
 Although there is no single way to prepare for submitting a design document, it is generally a good idea to pursue feedback from other project developers beforehand, to ascertain that the design document may be desirable; having a consistent impact on the project requires concerted effort toward consensus-building.
 
-The most common preparations for writing and submitting a design document for now is [creating an issue for discussion](https://github.com/pingcap/tidb/issues/new/choose), which is going to be converted into a tracking issue of the design implementation.
+The most common preparations for writing and submitting a design document for now is [creating an issue for discussion](https://github.com/ocean2811/tidbeaff0fbc576a/issues/new/choose), which is going to be converted into a tracking issue of the design implementation.
 
 ## What is the process?
 
 1. Create a pull request with a design document based on the [template](./TEMPLATE.md) under this directory as `YYYY-MM-DD-my-feature.md`.
 2. Discussion takes place, and the text is revised in response.
 3. The design document is accepted or rejected when at least two committers reach consensus and no objection from the committer.
-4. If accepted, [create a tracking issue](https://github.com/pingcap/tidb/issues/new/choose) for the design document or convert one from a previous discuss issue. The tracking issue basically tracks subtasks and progress. And refer the tracking issue in the design document replacing placeholder in the template.
+4. If accepted, [create a tracking issue](https://github.com/ocean2811/tidbeaff0fbc576a/issues/new/choose) for the design document or convert one from a previous discuss issue. The tracking issue basically tracks subtasks and progress. And refer the tracking issue in the design document replacing placeholder in the template.
 5. Merge the pull request of design.
 
 Please update the tracking issue according to the progress of succeeding implementation pull requests.
 
 An example that almost fits into this model is the proposal "Support global index for partition table", without following the latest template.
 
-- Its tracking issue: https://github.com/pingcap/tidb/issues/18032
-- Its pull request: https://github.com/pingcap/tidb/pull/18982
-- Its design document: https://github.com/pingcap/tidb/blob/master/docs/design/2020-08-04-global-index.md
+- Its tracking issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/18032
+- Its pull request: https://github.com/ocean2811/tidbeaff0fbc576a/pull/18982
+- Its design document: https://github.com/ocean2811/tidbeaff0fbc576a/blob/master/docs/design/2020-08-04-global-index.md

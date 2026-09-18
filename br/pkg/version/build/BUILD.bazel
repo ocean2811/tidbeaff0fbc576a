@@ -3,10 +3,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "build",
     srcs = ["info.go"],
-    importpath = "github.com/pingcap/tidb/br/pkg/version/build",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version/build",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config/kerneltype",
         "//pkg/parser/mysql",
         "//pkg/util/israce",
         "//pkg/util/versioninfo",
@@ -21,6 +20,5 @@ go_test(
     srcs = ["info_test.go"],
     embed = [":build"],
     flaky = True,
-    shard_count = 2,
     deps = ["@com_github_stretchr_testify//require"],
 )

@@ -20,8 +20,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/execdetails"
 )
 
 type slowQueryHeap struct {
@@ -32,11 +32,11 @@ func (h *slowQueryHeap) Len() int           { return len(h.data) }
 func (h *slowQueryHeap) Less(i, j int) bool { return h.data[i].Duration < h.data[j].Duration }
 func (h *slowQueryHeap) Swap(i, j int)      { h.data[i], h.data[j] = h.data[j], h.data[i] }
 
-func (h *slowQueryHeap) Push(x any) {
+func (h *slowQueryHeap) Push(x interface{}) {
 	h.data = append(h.data, x.(*SlowQueryInfo))
 }
 
-func (h *slowQueryHeap) Pop() any {
+func (h *slowQueryHeap) Pop() interface{} {
 	old := h.data
 	n := len(old)
 	x := old[n-1]
@@ -47,7 +47,7 @@ func (h *slowQueryHeap) Pop() any {
 func (h *slowQueryHeap) RemoveExpired(now time.Time, period time.Duration) {
 	// Remove outdated slow query element.
 	idx := 0
-	for i := range h.data {
+	for i := 0; i < len(h.data); i++ {
 		outdateTime := h.data[i].Start.Add(period)
 		if outdateTime.After(now) {
 			h.data[idx] = h.data[i]

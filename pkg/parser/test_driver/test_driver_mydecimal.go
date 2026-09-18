@@ -12,6 +12,7 @@
 // limitations under the License.
 
 //go:build !codes
+// +build !codes
 
 package test_driver
 
@@ -184,7 +185,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
-	for i := range str {
+	for i := 0; i < len(str); i++ {
 		if !isSpace(str[i]) {
 			str = str[i:]
 			break
@@ -272,7 +273,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 		panic(panicInfo)
 	}
 	allZero := true
-	for i := range wordBufLen {
+	for i := 0; i < wordBufLen; i++ {
 		if d.wordBuf[i] != 0 {
 			allZero = false
 			break

@@ -22,21 +22,16 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfork"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testfork"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -45,7 +40,6 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -54,38 +48,19 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
-type txnContextPathCheckModeKey string
-
-func (k txnContextPathCheckModeKey) String() string {
-	return string(k)
-}
-
-const allowTxnContextPathCheckFallback txnContextPathCheckModeKey = "allowTxnContextPathCheckFallback"
-
-func newTxnContextTestKit(t testing.TB, store kv.Storage) *testkit.TestKit {
-	if intest.InTest && intest.EnableAssert {
-		tk := testkit.NewTestKit(t, store)
-		tk.Session().SetValue(allowTxnContextPathCheckFallback, false)
-		return tk
-	}
-	tk := testkit.NewTestKitWithSession(t, store, testkit.NewSession(t, store))
-	tk.Session().SetValue(allowTxnContextPathCheckFallback, true)
-	return tk
-}
-
 func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerInCompile", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerInRebuildPlan", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerAfterBuildExecutor", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerAfterPessimisticLockErrorRetry", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerInShortPointGetPlan", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/assertTxnManagerInRunStmt", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/assertTxnManagerInCachedPlanExec", "return"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/assertTxnManagerForUpdateTSEqual", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertTxnManagerInCompile", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertTxnManagerInRebuildPlan", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertTxnManagerAfterBuildExecutor", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertTxnManagerAfterPessimisticLockErrorRetry", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertTxnManagerInShortPointGetPlan", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/assertTxnManagerInRunStmt", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/assertTxnManagerInCachedPlanExec", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/assertTxnManagerForUpdateTSEqual", "return"))
 
 	store, do := testkit.CreateMockStoreAndDomain(t)
 
-	tk := newTxnContextTestKit(t, store)
+	tk := testkit.NewTestKit(t, store)
 	tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
 	tk.Session().SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 
@@ -101,14 +76,14 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 	tk.MustExec("insert into tmp values(10)")
 
 	t.Cleanup(func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerInCompile"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerInRebuildPlan"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerAfterBuildExecutor"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerAfterPessimisticLockErrorRetry"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertTxnManagerInShortPointGetPlan"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/assertTxnManagerInRunStmt"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/assertTxnManagerInCachedPlanExec"))
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/assertTxnManagerForUpdateTSEqual"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertTxnManagerInCompile"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertTxnManagerInRebuildPlan"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertTxnManagerAfterBuildExecutor"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertTxnManagerAfterPessimisticLockErrorRetry"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertTxnManagerInShortPointGetPlan"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/assertTxnManagerInRunStmt"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/assertTxnManagerInCachedPlanExec"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/assertTxnManagerForUpdateTSEqual"))
 
 		tk.Session().SetValue(sessiontxn.AssertRecordsKey, nil)
 		tk.Session().SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
@@ -118,59 +93,15 @@ func setupTxnContextTest(t *testing.T) (kv.Storage, *domain.Domain) {
 }
 
 func checkAssertRecordExits(t *testing.T, se sessionctx.Context, name string) {
-	records, ok := se.Value(sessiontxn.AssertRecordsKey).(map[string]any)
+	records, ok := se.Value(sessiontxn.AssertRecordsKey).(map[string]interface{})
 	require.True(t, ok, fmt.Sprintf("'%s' not in record, maybe failpoint not enabled?", name))
 	_, ok = records[name]
 	require.True(t, ok, fmt.Sprintf("'%s' not in record", name))
 }
 
-func checkTxnManagerStateWithoutFailpoints(t *testing.T, se sessionctx.Context) {
-	expectedIS, _ := se.Value(sessiontxn.AssertTxnInfoSchemaKey).(infoschema.InfoSchema)
-	if expectedIS != nil {
-		requireSnapshotInfoSchemaVersion(t, se, expectedIS.SchemaMetaVersion())
-	}
-
-	require.False(t, se.GetSessionVars().StmtCtx.IsStaleness && se.GetSessionVars().TxnCtx.IsExplicit)
-}
-
-func checkPreparedStmtSnapshotState(t *testing.T, stmt any, expectedSchemaVersion int64, expectSnapshotEvaluator bool) {
-	prepared, ok := stmt.(*plannercore.PlanCacheStmt)
-	require.True(t, ok)
-	require.Equal(t, expectSnapshotEvaluator, prepared.SnapshotTSEvaluator != nil)
-	if expectSnapshotEvaluator {
-		require.Equal(t, expectedSchemaVersion, prepared.SchemaVersion)
-	}
-}
-
-func requirePreparedStmtByIDSnapshotState(t *testing.T, se sessionctx.Context, stmtID uint32, expectedSchemaVersion int64, expectSnapshotEvaluator bool) {
-	stmt, err := se.GetSessionVars().GetPreparedStmtByID(stmtID)
-	require.NoError(t, err)
-	checkPreparedStmtSnapshotState(t, stmt, expectedSchemaVersion, expectSnapshotEvaluator)
-}
-
-func requirePreparedStmtByNameSnapshotState(t *testing.T, se sessionctx.Context, name string, expectedSchemaVersion int64, expectSnapshotEvaluator bool) {
-	stmt, err := se.GetSessionVars().GetPreparedStmtByName(name)
-	require.NoError(t, err)
-	checkPreparedStmtSnapshotState(t, stmt, expectedSchemaVersion, expectSnapshotEvaluator)
-}
-
-func requireSnapshotInfoSchemaVersion(t *testing.T, se sessionctx.Context, expectedSchemaVersion int64) {
-	snapshotIS, ok := se.GetSessionVars().SnapshotInfoschema.(infoschema.InfoSchema)
-	require.True(t, ok)
-	require.Equal(t, expectedSchemaVersion, snapshotIS.SchemaMetaVersion())
-}
-
 func doWithCheckPath(t *testing.T, se sessionctx.Context, names []string, do func()) {
 	se.SetValue(sessiontxn.AssertRecordsKey, nil)
 	do()
-	_, ok := se.Value(sessiontxn.AssertRecordsKey).(map[string]any)
-	if fallbackAllowed, _ := se.Value(allowTxnContextPathCheckFallback).(bool); fallbackAllowed && !ok {
-		// Plain `go test` validation is not failpoint-transformed, so keep checking the same
-		// txn-manager invariants directly on that explicitly marked execution surface.
-		checkTxnManagerStateWithoutFailpoints(t, se)
-		return
-	}
-	require.True(t, ok, "txn-manager path records missing in strict path-check mode")
 	for _, name := range names {
 		checkAssertRecordExits(t, se, name)
 	}
@@ -218,9 +149,6 @@ func TestTxnContextForSimpleCases(t *testing.T) {
 }
 
 func TestTxnContextInExplicitTxn(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("MDL is always enabled and read only in nextgen")
-	}
 	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -322,9 +250,6 @@ func TestTxnContextBeginInUnfinishedTxn(t *testing.T) {
 }
 
 func TestTxnContextWithAutocommitFalse(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("MDL is always enabled and read only in nextgen")
-	}
 	store, do := setupTxnContextTest(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -431,6 +356,35 @@ func TestTxnContextInPessimisticKeyConflict(t *testing.T) {
 	})
 
 	tk.MustExec("rollback")
+}
+
+func TestTxnContextInOptimisticRetry(t *testing.T) {
+	store, do := setupTxnContextTest(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_disable_txn_auto_retry=0")
+	se := tk.Session()
+	is1 := do.InfoSchema()
+
+	tk.MustExec("begin optimistic")
+
+	// trigger retry
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("update t1 set v=11 where id=1")
+	tk2.MustExec("alter table t2 add column(c1 int)")
+
+	tk.MustExec("update t1 set v=12 where id=1")
+
+	// check retry context
+	path := append([]string{"assertTxnManagerInRebuildPlan"}, normalPathRecords...)
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
+	se.SetValue(sessiontxn.AssertTxnInfoSchemaAfterRetryKey, do.InfoSchema())
+	doWithCheckPath(t, se, path, func() {
+		tk.MustExec("commit")
+	})
+
+	tk.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 12"))
 }
 
 func TestTxnContextForHistoricalRead(t *testing.T) {
@@ -579,12 +533,12 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustExec("prepare s from 'select * from t1 where id=1'")
 	})
-	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustQuery("execute s").Check(testkit.Rows("1 10"))
 	})
 
 	// Test ExecutePreparedStmt
-	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
@@ -601,7 +555,7 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("begin")
 
-	// change schema
+	//change schema
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk2.MustExec("alter table t2 add column(c1 int)")
@@ -623,53 +577,15 @@ func TestTxnContextForPrepareExecute(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-func TestStaleReadInPrepare(t *testing.T) {
+func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	store, _ := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	se := tk.Session()
 
-	tk.MustExec(`create table tt (id int primary key, v int)`)
-	tk.MustExec(`insert into tt values(1, 10)`)
+	is1 := se.GetDomainInfoSchema()
 	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("set @a=now(6)")
-	tk.MustExec("do sleep(0.1)")
-
-	st, _, _, err := se.PrepareStmt("select v from tt where id=1")
-	require.NoError(t, err)
-
-	tk.MustExec(`update tt set v=11 where id=1`)
-	rs, err := se.ExecutePreparedStmt(context.TODO(), st, nil)
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("11"))
-
-	tk.MustExec("set @@tx_read_ts=@a")
-	rs, err = se.ExecutePreparedStmt(context.TODO(), st, nil)
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("10"))
-
-	tk.MustExec("update tt set v=12 where id=1")
-	tk.MustExec("set @@tx_read_ts=''")
-	rs, err = se.ExecutePreparedStmt(context.TODO(), st, nil)
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("12"))
-	rs, err = se.ExecutePreparedStmt(context.TODO(), st, nil)
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("12"))
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-}
-
-func TestTxnContextForStaleReadInPrepare(t *testing.T) {
-	store, _ := setupTxnContextTest(t)
-	tk := newTxnContextTestKit(t, store)
-	tk.MustExec("use test")
-	se := tk.Session()
-
-	is1 := se.GetLatestInfoSchema()
-	// Use a PD-backed TS so the stale-read prepare path doesn't depend on wall clock staying behind currentTS.
-	tk.MustExec("begin")
-	tk.MustExec("set @a=tidb_parse_tso(@@tidb_current_ts)")
-	tk.MustExec("commit")
 	tk.MustExec("prepare s1 from 'select * from t1 where id=1'")
 	tk.MustExec("prepare s2 from 'select * from t1 as of timestamp @a where id=1 '")
 
@@ -678,12 +594,8 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 
 	stmtID2, _, _, err := se.PrepareStmt("select * from t1 as of timestamp @a where id=1 ")
 	require.NoError(t, err)
-	requirePreparedStmtByIDSnapshotState(t, se, stmtID1, 0, false)
-	requirePreparedStmtByIDSnapshotState(t, se, stmtID2, is1.SchemaMetaVersion(), true)
-	requirePreparedStmtByNameSnapshotState(t, se, "s1", 0, false)
-	requirePreparedStmtByNameSnapshotState(t, se, "s2", is1.SchemaMetaVersion(), true)
 
-	// change schema
+	//change schema
 	tk.MustExec("use test")
 	tk.MustExec("alter table t2 add column(c1 int)")
 	tk.MustExec("update t1 set v=11 where id=1")
@@ -696,12 +608,9 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	tk.MustExec("set @@tx_read_ts=@a")
 	tk.MustExec("prepare s3 from 'select * from t1 where id=1 '")
 	tk.MustExec("set @@tx_read_ts=''")
-	requirePreparedStmtByIDSnapshotState(t, se, stmtID3, is1.SchemaMetaVersion(), true)
-	requirePreparedStmtByNameSnapshotState(t, se, "s3", is1.SchemaMetaVersion(), true)
 
 	// tx_read_ts
 	tk.MustExec("set @@tx_read_ts=@a")
-	requireSnapshotInfoSchemaVersion(t, se, is1.SchemaMetaVersion())
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
@@ -712,7 +621,6 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	tk.MustExec("set @@tx_read_ts=''")
 
 	tk.MustExec("set @@tx_read_ts=@a")
-	requireSnapshotInfoSchemaVersion(t, se, is1.SchemaMetaVersion())
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is1)
 	doWithCheckPath(t, se, normalPathRecords, func() {
 		tk.MustExec("execute s1")
@@ -744,16 +652,15 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 
 	// stale read should not use plan cache
-	is2 := se.GetLatestInfoSchema()
+	is2 := se.GetDomainInfoSchema()
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, nil)
 	tk.MustExec("set @@tx_read_ts=''")
-	tk.MustExec("begin")
-	tk.MustExec("set @b=tidb_parse_tso(@@tidb_current_ts)")
-	tk.MustExec("commit")
+	tk.MustExec("do sleep(0.1)")
+	tk.MustExec("set @b=now(6)")
+	tk.MustExec("do sleep(0.1)")
 	tk.MustExec("update t1 set v=v+1 where id=1")
 	se.SetValue(sessiontxn.AssertTxnInfoSchemaKey, is2)
-	doWithCheckPath(t, se, []string{"assertTxnManagerInCompile", "assertTxnManagerInShortPointGetPlan"}, func() {
-		// stale-read is not used since `tx_read_ts` is empty, so the plan cache should be used in this case.
+	doWithCheckPath(t, se, normalPathRecords, func() {
 		rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID1, nil)
 		require.NoError(t, err)
 		tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 12"))
@@ -771,9 +678,6 @@ func TestTxnContextForStaleReadInPrepare(t *testing.T) {
 }
 
 func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("MDL is always enabled and read only in nextgen")
-	}
 	store, do := setupTxnContextTest(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set global tidb_enable_metadata_lock=0")
@@ -787,7 +691,7 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 	tk.MustExec("prepare s from 'select * from t1 where id=1 for update'")
 	tk.MustExec("begin pessimistic")
 
-	// change schema
+	//change schema
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	tk2.MustExec("alter table t1 add column(c int default 100)")
@@ -812,7 +716,7 @@ func TestTxnContextPreparedStmtWithForUpdate(t *testing.T) {
 	tk.MustExec("rollback")
 }
 
-// See issue: https://github.com/pingcap/tidb/issues/35459
+// See issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/35459
 func TestStillWriteConflictAfterRetry(t *testing.T) {
 	store, _ := setupTxnContextTest(t)
 
@@ -890,10 +794,6 @@ func TestStillWriteConflictAfterRetry(t *testing.T) {
 }
 
 func TestOptimisticTxnRetryInPessimisticMode(t *testing.T) {
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
-	})
 	store, _ := setupTxnContextTest(t)
 
 	queries := []string{
@@ -983,9 +883,9 @@ func TestTSOCmdCountForPrepareExecute(t *testing.T) {
 	// After the bug fix, the tso request count recovers, so we use this workload to record the current tso request count
 	// to reject future works that accidentally causes tso request increasing.
 	// Note, we do not record all tso requests but some typical requests.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/requestTsoFromPD", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation/requestTsoFromPD", "return"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/requestTsoFromPD"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation/requestTsoFromPD"))
 	}()
 	store := testkit.CreateMockStore(t)
 
@@ -1037,9 +937,9 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 	// After the bug fix, the tso request count recovers, so we use this workload to record the current tso request count
 	// to reject future works that accidentally causes tso request increasing.
 	// Note, we do not record all tso requests but some typical requests.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/requestTsoFromPD", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation/requestTsoFromPD", "return"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/requestTsoFromPD"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation/requestTsoFromPD"))
 	}()
 	store := testkit.CreateMockStore(t)
 
@@ -1068,152 +968,4 @@ func TestTSOCmdCountForTextSql(t *testing.T) {
 	}
 	count := sctx.Value(sessiontxn.TsoRequestCount)
 	require.Equal(t, uint64(99), count)
-}
-
-func TestStaleReadTxnWithAutocommitOff(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int primary key, v int)")
-	tk.MustExec("insert into t values (1, 10)")
-
-	time.Sleep(1200 * time.Millisecond)
-
-	se := tk.Session()
-	sessVars := se.GetSessionVars()
-
-	// Test 1: autocommit=0 should activate a stale-read txn with snapshot isolation
-	tk.MustExec("set @@tidb_read_staleness = -1")
-	tk.MustExec("set @@autocommit = 0")
-
-	// First SELECT should activate a stale-read transaction
-	require.False(t, sessVars.InTxn(), "should not be in txn before first SELECT")
-	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 10"))
-	require.True(t, sessVars.InTxn(), "should be in txn after first SELECT with autocommit=0")
-	require.True(t, sessVars.TxnCtx.IsStaleness, "txn should be staleness")
-	startTS1 := sessVars.TxnCtx.StartTS
-	require.Greater(t, startTS1, uint64(0), "StartTS should be set")
-
-	// Second SELECT should reuse the same snapshot
-	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 10"))
-	startTS2 := sessVars.TxnCtx.StartTS
-	require.Equal(t, startTS1, startTS2, "second SELECT should reuse the same StartTS")
-
-	// Update data in another session while stale-read txn is active
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("update t set v = 99 where id = 1")
-
-	// Current stale-read txn should still see the same value as before
-	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 10"))
-	startTS3 := sessVars.TxnCtx.StartTS
-	require.Equal(t, startTS1, startTS3, "StartTS should remain unchanged after external update")
-
-	// COMMIT should end the transaction
-	tk.MustExec("commit")
-	require.False(t, sessVars.InTxn(), "should not be in txn after COMMIT")
-
-	// Test 2: Write statements are rejected in stale-read txn
-	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 10"))
-	require.True(t, sessVars.InTxn(), "should be in txn")
-
-	tk.MustGetErrMsg("insert into t values (2, 20)",
-		"only support read-only statement during read-only staleness transactions")
-	tk.MustGetErrMsg("update t set v = 11 where id = 1",
-		"only support read-only statement during read-only staleness transactions")
-	tk.MustGetErrMsg("delete from t where id = 1",
-		"only support read-only statement during read-only staleness transactions")
-
-	// Txn should still be valid after failed write
-	require.True(t, sessVars.InTxn(), "should still be in txn after failed write")
-	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 10"))
-	tk.MustExec("rollback")
-
-	// Test 3: tidb_read_staleness should be ignored when txn is started by a write
-	tk.MustExec("update t set v = 200 where id = 1")
-	require.True(t, sessVars.InTxn(), "should be in txn after UPDATE")
-	require.False(t, sessVars.TxnCtx.IsStaleness, "txn started by write should not be staleness")
-	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 200"))
-	tk.MustExec("rollback")
-	// Verify rollback worked
-	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 10"))
-
-	// Test 4: SELECT ... FOR UPDATE is also rejected
-	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 10"))
-	tk.MustGetErrMsg("select * from t where id = 1 for update",
-		"select lock hasn't been supported in stale read yet")
-	tk.MustExec("rollback")
-
-	// Test 5: Prepared statement in stale-read txn should NOT use plan cache
-	tk.MustExec("set tidb_enable_prepared_plan_cache=ON")
-	tk.MustExec("set @@tidb_read_staleness = ''")
-	tk.MustExec("set @@autocommit = 1")
-	stmtID, _, _, err := se.PrepareStmt("select * from t where id = ?")
-	require.NoError(t, err)
-
-	// Verify plan cache works in normal mode (need two executions: first generates plan, second uses cache)
-	rs, err := se.ExecutePreparedStmt(context.TODO(), stmtID, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	require.NoError(t, rs.Close())
-	rs, err = se.ExecutePreparedStmt(context.TODO(), stmtID, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	require.NoError(t, rs.Close())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	// Enter stale-read mode with autocommit=0
-	tk.MustExec("set @@tidb_read_staleness = -1")
-	tk.MustExec("set @@autocommit = 0")
-
-	// Activate stale-read transaction
-	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 10"))
-	require.True(t, sessVars.InTxn())
-	require.True(t, sessVars.TxnCtx.IsStaleness)
-
-	// Execute prepared statement in stale-read txn
-	rs, err = se.ExecutePreparedStmt(context.TODO(), stmtID, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	tk.MustExec("commit")
-
-	// Test 5b: PreparedStmt can activate stale-read transaction directly
-	tk.MustExec("set @@tidb_read_staleness = -1")
-	tk.MustExec("set @@autocommit = 0")
-	require.False(t, sessVars.InTxn(), "should not be in txn before PreparedStmt")
-
-	// ExecutePreparedStmt should activate the stale-read transaction
-	rs, err = se.ExecutePreparedStmt(context.TODO(), stmtID, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	tk.ResultSetToResult(rs, fmt.Sprintf("%v", rs)).Check(testkit.Rows("1 10"))
-
-	// Verify stale-read transaction is now active
-	require.True(t, sessVars.InTxn(), "PreparedStmt should activate stale-read txn")
-	require.True(t, sessVars.TxnCtx.IsStaleness, "txn should be staleness")
-
-	tk.MustExec("commit")
-
-	// Test 6: After exiting stale-read txn, plan cache should work normally
-	tk.MustExec("set @@tidb_read_staleness = ''")
-	tk.MustExec("set @@autocommit = 1")
-
-	rs, err = se.ExecutePreparedStmt(context.TODO(), stmtID, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	require.NoError(t, rs.Close())
-	rs, err = se.ExecutePreparedStmt(context.TODO(), stmtID, expression.Args2Expressions4Test(1))
-	require.NoError(t, err)
-	require.NoError(t, rs.Close())
-	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	tk.MustExec("set @@tidb_read_staleness = -1")
-	tk.MustExec("set @@autocommit = 0")
-
-	// Test 7: DDL implicitly ends the current stale read transaction
-	tk.MustQuery("select * from t where id = 1").Check(testkit.Rows("1 10"))
-	require.True(t, sessVars.InTxn(), "should be in stale-read txn")
-	require.True(t, sessVars.TxnCtx.IsStaleness, "txn should be staleness")
-	tk.MustExec("create table t2 (id int)")
-	require.False(t, sessVars.InTxn(), "DDL should implicitly end the stale-read txn")
-	tk.MustExec("drop table t2")
 }

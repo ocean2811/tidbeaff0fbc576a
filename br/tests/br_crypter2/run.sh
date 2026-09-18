@@ -14,12 +14,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# disable global ENCRYPTION_ARGS and ENABLE_ENCRYPTION_CHECK for this script
-ENCRYPTION_ARGS=""
-ENABLE_ENCRYPTION_CHECK=false
-export ENCRYPTION_ARGS
-export ENABLE_ENCRYPTION_CHECK
-
 set -eu
 DB="$TEST_NAME"
 TABLE="usertable"
@@ -71,7 +65,7 @@ done
 CRYPTER_METHOD=aes128-ctr
 CRYPTER_KEY="0123456789abcdef0123456789abcdef"
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/br/pkg/backup/noop-backup=100*return(1)"
+export GO_FAILPOINTS="github.com/ocean2811/tidbeaff0fbc576a/br/pkg/backup/noop-backup=100*return(1)"
 run_br --pd $PD_ADDR backup full -s "local://$TEST_DIR/$DB/${CRYPTER_METHOD}_file" \
         --use-backupmeta-v2=true --check-requirements=false --crypter.method $CRYPTER_METHOD  --crypter.key $CRYPTER_KEY
 

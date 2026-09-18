@@ -15,14 +15,11 @@
 package privileges
 
 import (
-	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
 	"fmt"
 	"math"
-	"net/url"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -30,27 +27,22 @@ import (
 
 	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/lestrrat-go/jwx/v2/jwt/openid"
-	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/privilege/conn"
-	"github.com/pingcap/tidb/pkg/privilege/privileges/ldap"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/sessionstates"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	tlsutil "github.com/pingcap/tidb/pkg/util/tls"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/extension"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/privilege"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/privilege/conn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/privilege/privileges/ldap"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/sessionstates"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sem"
 	"go.uber.org/zap"
 )
 
@@ -73,25 +65,10 @@ var dynamicPrivs = []string{
 	"RESTRICTED_USER_ADMIN",           // User can not have their access revoked by SUPER users.
 	"RESTRICTED_CONNECTION_ADMIN",     // Can not be killed by PROCESS/CONNECTION_ADMIN privilege
 	"RESTRICTED_REPLICA_WRITER_ADMIN", // Can write to the sever even when tidb_restriced_read_only is turned on.
-	"RESTRICTED_PRIV_ADMIN",           // Can grant the restricted priv to others
-	"RESTRICTED_SQL_ADMIN",            // Can execute restricted SQL statements
 	"RESOURCE_GROUP_ADMIN",            // Create/Drop/Alter RESOURCE GROUP
-	"RESOURCE_GROUP_USER",             // Can change the resource group of current session.
-	"TRAFFIC_CAPTURE_ADMIN",           // Can capture traffic
-	"TRAFFIC_REPLAY_ADMIN",            // Can replay traffic
-	"APPLICATION_PASSWORD_ADMIN",      // Self-service RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD; cross-user retain/discard requires CREATE USER.
 }
 var dynamicPrivLock sync.Mutex
 var defaultTokenLife = 15 * time.Minute
-
-// dualPasswordFallbackLogger rate-limits the "authenticated using retained
-// (secondary) password" info log so a partially-rotated high-churn service
-// doesn't flood logs. One entry per minute per process is enough for an
-// operator to confirm a rotation is in progress; auth events themselves are
-// recorded separately.
-var dualPasswordFallbackLogger = logutil.SampleLoggerFactory(
-	time.Minute, 1, zap.String(logutil.LogFieldCategory, "auth"),
-)
 
 // UserPrivileges implements privilege.Manager interface.
 // This is used to check privilege for the current user.
@@ -100,10 +77,6 @@ type UserPrivileges struct {
 	host string
 	*Handle
 	extensionAccessCheckFuncs []extension.AccessCheckFunc
-	authPlugins               map[string]*extension.AuthPlugin
-
-	authPluginRequestVerification        func(user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool
-	authPluginRequestDynamicVerification func(activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool
 }
 
 // NewUserPrivileges creates a new UserPrivileges
@@ -111,12 +84,11 @@ func NewUserPrivileges(handle *Handle, extension *extension.Extensions) *UserPri
 	return &UserPrivileges{
 		Handle:                    handle,
 		extensionAccessCheckFuncs: extension.GetAccessCheckFuncs(),
-		authPlugins:               extension.GetAuthPlugins(),
 	}
 }
 
 // RequestDynamicVerificationWithUser implements the Manager interface.
-func (p *UserPrivileges) RequestDynamicVerificationWithUser(ctx context.Context, privName string, grantable bool, user *auth.UserIdentity) bool {
+func (p *UserPrivileges) RequestDynamicVerificationWithUser(privName string, grantable bool, user *auth.UserIdentity) bool {
 	if SkipWithGrant {
 		return true
 	}
@@ -125,7 +97,6 @@ func (p *UserPrivileges) RequestDynamicVerificationWithUser(ctx context.Context,
 		return false
 	}
 
-	terror.Log(p.Handle.ensureActiveUser(ctx, user.Username))
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
 	return mysqlPriv.RequestDynamicVerification(roles, user.Username, user.Hostname, privName, grantable)
@@ -155,10 +126,7 @@ func (p *UserPrivileges) RequestDynamicVerification(activeRoles []*auth.RoleIden
 	}
 
 	mysqlPriv := p.Handle.Get()
-	if !mysqlPriv.RequestDynamicVerification(activeRoles, p.user, p.host, privName, grantable) {
-		return false
-	}
-	return p.authPluginRequestDynamicVerification == nil || p.authPluginRequestDynamicVerification(activeRoles, p.user, p.host, privName, grantable)
+	return mysqlPriv.RequestDynamicVerification(activeRoles, p.user, p.host, privName, grantable)
 }
 
 // RequestVerification implements the Manager interface.
@@ -183,7 +151,7 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		if sem.IsInvisibleTable(dbLowerName, tblLowerName) {
 			return false
 		}
-		if metadef.IsMemOrSysDB(dbLowerName) {
+		if util.IsMemOrSysDB(dbLowerName) {
 			switch priv {
 			case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
 				mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv:
@@ -192,16 +160,16 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 		}
 	}
 
-	if metadef.IsMemDB(dbLowerName) {
+	if util.IsMemDB(dbLowerName) {
 		switch priv {
 		case mysql.CreatePriv, mysql.AlterPriv, mysql.DropPriv, mysql.IndexPriv, mysql.CreateViewPriv,
 			mysql.InsertPriv, mysql.UpdatePriv, mysql.DeletePriv, mysql.ReferencesPriv, mysql.ExecutePriv,
 			mysql.ShowViewPriv, mysql.LockTablesPriv:
 			return false
 		}
-		if dbLowerName == metadef.InformationSchemaName.L {
+		if dbLowerName == util.InformationSchemaName.L {
 			return true
-		} else if dbLowerName == metadef.MetricSchemaName.L {
+		} else if dbLowerName == util.MetricSchemaName.L {
 			// PROCESS is the same with SELECT for metrics_schema.
 			if priv == mysql.SelectPriv && infoschema.IsMetricTable(table) {
 				priv |= mysql.ProcessPriv
@@ -218,14 +186,11 @@ func (p *UserPrivileges) RequestVerification(activeRoles []*auth.RoleIdentity, d
 	}
 
 	mysqlPriv := p.Handle.Get()
-	if !mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv) {
-		return false
-	}
-	return p.authPluginRequestVerification == nil || p.authPluginRequestVerification(p.user, p.host, activeRoles, db, table, column, priv)
+	return mysqlPriv.RequestVerification(activeRoles, p.user, p.host, db, table, column, priv)
 }
 
 // RequestVerificationWithUser implements the Manager interface.
-func (p *UserPrivileges) RequestVerificationWithUser(ctx context.Context, db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool {
+func (p *UserPrivileges) RequestVerificationWithUser(db, table, column string, priv mysql.PrivilegeType, user *auth.UserIdentity) bool {
 	if SkipWithGrant {
 		return true
 	}
@@ -238,72 +203,19 @@ func (p *UserPrivileges) RequestVerificationWithUser(ctx context.Context, db, ta
 
 	// Skip check for INFORMATION_SCHEMA database.
 	// See https://dev.mysql.com/doc/refman/5.7/en/information-schema.html
-	if strings.EqualFold(db, metadef.InformationSchemaName.O) {
+	if strings.EqualFold(db, "INFORMATION_SCHEMA") {
 		return true
 	}
 
-	terror.Log(p.Handle.ensureActiveUser(ctx, user.Username))
 	mysqlPriv := p.Handle.Get()
 	roles := mysqlPriv.getDefaultRoles(user.Username, user.Hostname)
 	return mysqlPriv.RequestVerification(roles, user.Username, user.Hostname, db, table, column, priv)
-}
-
-func (p *UserPrivileges) authenticateWithPlugin(user *auth.UserIdentity, authentication, salt []byte, sessionVars *variable.SessionVars, authConn conn.AuthConn, authPlugin *extension.AuthPlugin, pwd string) error {
-	authRequest := extension.AuthenticateRequest{
-		User:             user.Username,
-		StoredAuthString: pwd,
-		InputAuthString:  authentication,
-		Salt:             salt,
-		ConnState:        sessionVars.TLSConnectionState,
-		AuthConn:         authConn,
-	}
-	if err := authPlugin.AuthenticateUser(authRequest); err != nil {
-		logutil.BgLogger().Warn("verify through extension auth plugin failed",
-			zap.String("plugin", authPlugin.Name), zap.String("username", user.Username), zap.Error(err))
-		hasPassword := "YES"
-		if len(authentication) == 0 {
-			hasPassword = "NO"
-		}
-		return ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-	}
-
-	// If the user is authenticated using extension auth plugin, populate the plugin request verification funcs
-	if authPlugin.VerifyPrivilege != nil {
-		p.authPluginRequestVerification = func(user, host string, activeRoles []*auth.RoleIdentity, db, table, column string, priv mysql.PrivilegeType) bool {
-			return authPlugin.VerifyPrivilege(extension.VerifyStaticPrivRequest{
-				User:        user,
-				Host:        host,
-				DB:          db,
-				Table:       table,
-				Column:      column,
-				StaticPriv:  priv,
-				ConnState:   sessionVars.TLSConnectionState,
-				ActiveRoles: activeRoles,
-			})
-		}
-	}
-	if authPlugin.VerifyDynamicPrivilege != nil {
-		p.authPluginRequestDynamicVerification = func(activeRoles []*auth.RoleIdentity, user, host, privName string, grantable bool) bool {
-			return authPlugin.VerifyDynamicPrivilege(extension.VerifyDynamicPrivRequest{
-				User:        user,
-				Host:        host,
-				DynamicPriv: privName,
-				ConnState:   sessionVars.TLSConnectionState,
-				ActiveRoles: activeRoles,
-				WithGrant:   grantable,
-			})
-		}
-	}
-	return nil
 }
 
 func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	pwd := record.AuthenticationString
 	if pwd == "" {
 		return true
-	}
-	if authPlugin, ok := p.authPlugins[record.AuthPlugin]; ok {
-		return authPlugin.ValidateAuthString(pwd)
 	}
 	switch record.AuthPlugin {
 	case mysql.AuthNativePassword:
@@ -336,39 +248,31 @@ func (p *UserPrivileges) isValidHash(record *UserRecord) bool {
 	return false
 }
 
-// GetUserResources gets the maximum number of connections for the current user
-func (p *UserPrivileges) GetUserResources(user, host string) (int64, error) {
-	if SkipWithGrant {
-		return 0, nil
-	}
-	terror.Log(p.Handle.ensureActiveUser(context.Background(), user))
+// GetEncodedPassword implements the Manager interface.
+func (p *UserPrivileges) GetEncodedPassword(user, host string) string {
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
 		logutil.BgLogger().Error("get user privilege record fail",
 			zap.String("user", user), zap.String("host", host))
-		return 0, errors.New("Failed to get user record")
+		return ""
 	}
 	if p.isValidHash(record) {
-		return record.MaxUserConnections, nil
+		return record.AuthenticationString
 	}
-	return 0, errors.New("Failed to get max user connections")
+	return ""
 }
 
 // GetAuthPluginForConnection gets the authentication plugin used in connection establishment.
-func (p *UserPrivileges) GetAuthPluginForConnection(ctx context.Context, user, host string) (string, error) {
+func (p *UserPrivileges) GetAuthPluginForConnection(user, host string) (string, error) {
 	if SkipWithGrant {
 		return mysql.AuthNativePassword, nil
 	}
 
-	terror.Log(p.Handle.ensureActiveUser(ctx, user))
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.connectionVerification(user, host)
 	if record == nil {
 		return "", errors.New("Failed to get user record")
-	}
-	if authPlugin, ok := p.authPlugins[record.AuthPlugin]; ok {
-		return authPlugin.Name, nil
 	}
 	switch record.AuthPlugin {
 	case mysql.AuthTiDBAuthToken, mysql.AuthLDAPSASL, mysql.AuthLDAPSimple:
@@ -387,14 +291,26 @@ func (p *UserPrivileges) GetAuthPluginForConnection(ctx context.Context, user, h
 	return "", errors.New("Failed to get plugin for user")
 }
 
+// GetAuthPlugin gets the authentication plugin for the account identified by the user and host
+func (p *UserPrivileges) GetAuthPlugin(user, host string) (string, error) {
+	if SkipWithGrant {
+		return mysql.AuthNativePassword, nil
+	}
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.connectionVerification(user, host)
+	if record == nil {
+		return "", errors.New("Failed to get user record")
+	}
+	if !p.isValidHash(record) {
+		return "", errors.New("Failed to get plugin for user")
+	}
+	return record.AuthPlugin, nil
+}
+
 // MatchIdentity implements the Manager interface.
-func (p *UserPrivileges) MatchIdentity(ctx context.Context, user, host string, skipNameResolve bool) (u string, h string, success bool) {
+func (p *UserPrivileges) MatchIdentity(user, host string, skipNameResolve bool) (u string, h string, success bool) {
 	if SkipWithGrant {
 		return user, host, true
-	}
-	if err := p.Handle.ensureActiveUser(ctx, user); err != nil {
-		logutil.BgLogger().Error("ensure user data fail",
-			zap.String("user", user))
 	}
 	mysqlPriv := p.Handle.Get()
 	record := mysqlPriv.matchIdentity(user, host, skipNameResolve)
@@ -405,16 +321,11 @@ func (p *UserPrivileges) MatchIdentity(ctx context.Context, user, host string, s
 }
 
 // MatchUserResourceGroupName implements the Manager interface.
-func (p *UserPrivileges) MatchUserResourceGroupName(exec sqlexec.RestrictedSQLExecutor, resourceGroupName string) (u string, success bool) {
-	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
-	sql := "SELECT user FROM mysql.user WHERE json_extract(user_attributes, '$.resource_group') = %? LIMIT 1"
-	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, sql, resourceGroupName)
-	if err != nil {
-		logutil.BgLogger().Error("execute sql error", zap.String("sql", sql), zap.Error(err))
-		return "", false
-	}
-	if len(rows) > 0 {
-		return rows[0].GetString(0), true
+func (p *UserPrivileges) MatchUserResourceGroupName(resourceGroupName string) (u string, success bool) {
+	mysqlPriv := p.Handle.Get()
+	record := mysqlPriv.matchResoureGroup(resourceGroupName)
+	if record != nil {
+		return record.User, true
 	}
 	return "", false
 }
@@ -442,7 +353,7 @@ func (p *UserPrivileges) GetAuthWithoutVerification(user, host string) (success 
 	return
 }
 
-func checkAuthTokenClaims(claims map[string]any, record *UserRecord, tokenLife time.Duration) error {
+func checkAuthTokenClaims(claims map[string]interface{}, record *UserRecord, tokenLife time.Duration) error {
 	if sub, ok := claims[jwtRepo.SubjectKey]; !ok {
 		return errors.New("lack 'sub'")
 	} else if sub != record.User {
@@ -487,7 +398,7 @@ func checkAuthTokenClaims(claims map[string]any, record *UserRecord, tokenLife t
 
 // CheckPasswordExpired checks whether the password has been expired.
 func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, record *UserRecord) (bool, error) {
-	isSandBoxModeEnabled := vardef.IsSandBoxModeEnabled.Load()
+	isSandBoxModeEnabled := variable.IsSandBoxModeEnabled.Load()
 	if record.PasswordExpired {
 		if isSandBoxModeEnabled {
 			return true, nil
@@ -497,7 +408,7 @@ func (*UserPrivileges) CheckPasswordExpired(sessionVars *variable.SessionVars, r
 	if record.PasswordLifeTime != 0 {
 		lifeTime := record.PasswordLifeTime
 		if lifeTime == -1 {
-			pwdLifeTimeStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(vardef.DefaultPasswordLifetime)
+			pwdLifeTimeStr, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.DefaultPasswordLifetime)
 			if err != nil {
 				return false, err
 			}
@@ -601,33 +512,6 @@ func BuildPasswordLockingJSON(failedLoginAttempts int64,
 	return newAttributesStr
 }
 
-// checkPasswordForPlugin verifies the client-supplied `authentication` scramble
-// against a single stored hash `storedHash` for a password-based auth plugin
-// (mysql_native_password / caching_sha2_password / tidb_sm3_password). It is the
-// single source of truth used for BOTH the primary authentication_string and the
-// retained secondary (additional_password) in ConnectionVerification, so the two
-// can never drift as plugins or hash handling evolve.
-//
-// It returns (false, nil) when storedHash is empty or the password simply does
-// not match; a non-nil error indicates a malformed stored hash (the caller
-// decides how to log/treat it). An unrecognized plugin returns (false, nil).
-func checkPasswordForPlugin(plugin, storedHash string, salt, authentication []byte) (bool, error) {
-	if len(storedHash) == 0 {
-		return false, nil
-	}
-	switch plugin {
-	case mysql.AuthNativePassword:
-		hpwd, err := auth.DecodePassword(storedHash)
-		if err != nil {
-			return false, err
-		}
-		return auth.CheckScrambledPassword(salt, hpwd, authentication), nil
-	case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-		return auth.CheckHashingPassword([]byte(storedHash), string(authentication), plugin)
-	}
-	return false, nil
-}
-
 // ConnectionVerification implements the Manager interface.
 func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUser, authHost string, authentication, salt []byte, sessionVars *variable.SessionVars, authConn conn.AuthConn) (info privilege.VerificationInfo, err error) {
 	if SkipWithGrant {
@@ -645,7 +529,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	record := mysqlPriv.connectionVerification(authUser, authHost)
 
 	if record == nil {
-		logutil.BgLogger().Warn("get authUser privilege record fail",
+		logutil.BgLogger().Error("get authUser privilege record fail",
 			zap.String("authUser", authUser), zap.String("authHost", authHost))
 		return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 	}
@@ -653,7 +537,7 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 	globalPriv := mysqlPriv.matchGlobalPriv(authUser, authHost)
 	if globalPriv != nil {
 		if !p.checkSSL(globalPriv, sessionVars.TLSConnectionState) {
-			logutil.BgLogger().Warn("global priv check ssl fail",
+			logutil.BgLogger().Error("global priv check ssl fail",
 				zap.String("authUser", authUser), zap.String("authHost", authHost))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
@@ -672,19 +556,19 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 		}
 	} else if record.AuthPlugin == mysql.AuthTiDBAuthToken {
 		if len(authentication) == 0 {
-			logutil.BgLogger().Warn("empty authentication")
+			logutil.BgLogger().Error("empty authentication")
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 		tokenString := string(hack.String(authentication[:len(authentication)-1]))
 		var (
-			claims map[string]any
+			claims map[string]interface{}
 		)
 		if claims, err = GlobalJWKS.checkSigWithRetry(tokenString, 1); err != nil {
-			logutil.BgLogger().Warn("verify JWT failed", zap.Error(err))
+			logutil.BgLogger().Error("verify JWT failed", zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 		if err = checkAuthTokenClaims(claims, record, defaultTokenLife); err != nil {
-			logutil.BgLogger().Warn("check claims failed", zap.Error(err))
+			logutil.BgLogger().Error("check claims failed", zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	} else if record.AuthPlugin == mysql.AuthLDAPSASL {
@@ -699,71 +583,53 @@ func (p *UserPrivileges) ConnectionVerification(user *auth.UserIdentity, authUse
 			logutil.BgLogger().Warn("verify through LDAP Simple failed", zap.String("username", user.Username), zap.Error(err))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
-	} else if record.AuthPlugin == mysql.AuthSocket {
-		if string(authentication) != authUser && string(authentication) != pwd {
-			logutil.BgLogger().Warn("Failed socket auth", zap.String("authUser", authUser),
-				zap.String("socket_user", string(authentication)),
-				zap.String("authentication_string", pwd))
-			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-		}
-	} else if authPlugin, ok := p.authPlugins[record.AuthPlugin]; ok {
-		if err = p.authenticateWithPlugin(user, authentication, salt, sessionVars, authConn, authPlugin, pwd); err != nil {
-			return info, err
-		}
-	} else if len(pwd) > 0 || len(authentication) > 0 {
-		// Password-based plugins (native / caching_sha2 / sm3); non-password
-		// plugins (LDAP, socket, token, extension) were handled above.
-		// Deliberately reachable with an EMPTY stored primary when the client
-		// supplied a password, so a secondary retained before the primary was
-		// blanked can still authenticate. A passwordless login (empty primary
-		// AND empty client auth) never enters here and keeps authenticating
-		// via the no-password success path below.
-		secondaryAccepted := false
+	} else if len(pwd) > 0 && len(authentication) > 0 {
 		switch record.AuthPlugin {
 		// NOTE: If the checking of the clear-text password fails, please set `info.FailedDueToWrongPassword = true`.
-		case mysql.AuthNativePassword, mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
-			primaryOK, perr := checkPasswordForPlugin(record.AuthPlugin, pwd, salt, authentication)
-			if perr != nil {
-				// A malformed stored primary hash: keep the historical,
-				// error-log-review-stable log lines (native warns; the hashing
-				// plugins log Error and continue treating the check as failed).
-				if record.AuthPlugin == mysql.AuthNativePassword {
-					logutil.BgLogger().Warn("decode password string failed", zap.Error(perr))
-					info.FailedDueToWrongPassword = true
-					return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-				}
-				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(perr))
+		case mysql.AuthNativePassword:
+			hpwd, err := auth.DecodePassword(pwd)
+			if err != nil {
+				logutil.BgLogger().Error("decode password string failed", zap.Error(err))
+				info.FailedDueToWrongPassword = true
+				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
-			if !primaryOK {
-				// MySQL-compatible dual-password fallback: try the retained
-				// secondary hash with the same per-plugin routine.
-				secondaryOK, _ := checkPasswordForPlugin(record.AuthPlugin, record.AdditionalAuthString, salt, authentication)
-				if !secondaryOK {
-					info.FailedDueToWrongPassword = true
-					return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
-				}
-				secondaryAccepted = true
+
+			if !auth.CheckScrambledPassword(salt, hpwd, authentication) {
+				info.FailedDueToWrongPassword = true
+				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+		case mysql.AuthCachingSha2Password, mysql.AuthTiDBSM3Password:
+			authok, err := auth.CheckHashingPassword([]byte(pwd), string(authentication), record.AuthPlugin)
+			if err != nil {
+				logutil.BgLogger().Error("Failed to check caching_sha2_password", zap.Error(err))
+			}
+
+			if !authok {
+				info.FailedDueToWrongPassword = true
+				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
+			}
+		case mysql.AuthSocket:
+			if string(authentication) != authUser && string(authentication) != pwd {
+				logutil.BgLogger().Error("Failed socket auth", zap.String("authUser", authUser),
+					zap.String("socket_user", string(authentication)),
+					zap.String("authentication_string", pwd))
+				return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 			}
 		default:
-			logutil.BgLogger().Warn("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
+			logutil.BgLogger().Error("unknown authentication plugin", zap.String("authUser", authUser), zap.String("plugin", record.AuthPlugin))
 			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
-		if secondaryAccepted {
-			// Surface fallback logins so operators can tell which accounts
-			// have finished rotating and can safely DISCARD OLD PASSWORD.
-			// Sampled to avoid log flooding on high-churn services that
-			// are mid-rotation.
-			dualPasswordFallbackLogger().Info("authenticated using retained (secondary) password",
-				zap.String("auth_user", authUser),
-				zap.String("auth_host", authHost),
-				zap.String("auth_plugin", record.AuthPlugin))
+	} else if len(pwd) > 0 || len(authentication) > 0 {
+		if record.AuthPlugin != mysql.AuthSocket {
+			info.FailedDueToWrongPassword = true
+			return info, ErrAccessDenied.FastGenByArgs(user.Username, user.Hostname, hasPassword)
 		}
 	}
 
 	// Login a locked account is not allowed.
 	locked := record.AccountLocked
 	if locked {
-		logutil.BgLogger().Info(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
+		logutil.BgLogger().Error(fmt.Sprintf("Access denied for authUser '%s'@'%s'. Account is locked.", authUser, authHost))
 		return info, errAccountHasBeenLocked.FastGenByArgs(user.Username, user.Hostname)
 	}
 
@@ -833,9 +699,9 @@ func (p *UserPrivileges) checkSSL(priv *globalPrivRecord, tlsState *tls.Connecti
 				zap.String("user", priv.User), zap.String("host", priv.Host))
 			return false
 		}
-		if len(priv.Priv.SSLCipher) > 0 && priv.Priv.SSLCipher != tlsutil.CipherSuiteName(tlsState.CipherSuite) {
+		if len(priv.Priv.SSLCipher) > 0 && priv.Priv.SSLCipher != util.TLSCipher2String(tlsState.CipherSuite) {
 			logutil.BgLogger().Info("ssl check failure for cipher", zap.String("user", priv.User), zap.String("host", priv.Host),
-				zap.String("require", priv.Priv.SSLCipher), zap.String("given", tlsutil.CipherSuiteName(tlsState.CipherSuite)))
+				zap.String("require", priv.Priv.SSLCipher), zap.String("given", util.TLSCipher2String(tlsState.CipherSuite)))
 			return false
 		}
 		var (
@@ -918,15 +784,11 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 		}
 		var givenMatchOne bool
 		for _, req := range requireOr {
-			if typ == util.URI && slices.ContainsFunc(given, func(san string) bool {
-				return matchURIWithWildcard(req, san)
-			}) {
-				givenMatchOne = true
-				break
-			}
-			if typ != util.URI && slices.Contains(given, req) {
-				givenMatchOne = true
-				break
+			for _, give := range given {
+				if req == give {
+					givenMatchOne = true
+					break
+				}
 			}
 		}
 		if !givenMatchOne {
@@ -937,50 +799,6 @@ func checkCertSAN(priv *globalPrivRecord, cert *x509.Certificate, sans map[util.
 		}
 	}
 	return
-}
-
-// matchURIWithWildcard matches URI SANs while allowing a required path segment
-// that is exactly "*" to match one non-empty path segment.
-func matchURIWithWildcard(required, given string) bool {
-	if !strings.Contains(required, "*") {
-		return required == given
-	}
-	requiredURI, err := url.Parse(required)
-	if err != nil {
-		return false
-	}
-	givenURI, err := url.Parse(given)
-	if err != nil {
-		return false
-	}
-	if requiredURI.Scheme != givenURI.Scheme ||
-		requiredURI.Opaque != givenURI.Opaque ||
-		(requiredURI.User == nil) != (givenURI.User == nil) ||
-		requiredURI.User.String() != givenURI.User.String() ||
-		requiredURI.Host != givenURI.Host ||
-		requiredURI.OmitHost != givenURI.OmitHost ||
-		requiredURI.ForceQuery != givenURI.ForceQuery ||
-		requiredURI.RawQuery != givenURI.RawQuery ||
-		requiredURI.EscapedFragment() != givenURI.EscapedFragment() {
-		return false
-	}
-	requiredSegments := strings.Split(requiredURI.EscapedPath(), "/")
-	givenSegments := strings.Split(givenURI.EscapedPath(), "/")
-	if len(requiredSegments) != len(givenSegments) {
-		return false
-	}
-	for i := range requiredSegments {
-		if requiredSegments[i] == "*" {
-			if givenSegments[i] == "" {
-				return false
-			}
-			continue
-		}
-		if requiredSegments[i] != givenSegments[i] {
-			return false
-		}
-	}
-	return true
 }
 
 // DBIsVisible implements the Manager interface.
@@ -1015,21 +833,18 @@ func (p *UserPrivileges) UserPrivilegesTable(activeRoles []*auth.RoleIdentity, u
 }
 
 // ShowGrants implements privilege.Manager ShowGrants interface.
-func (p *UserPrivileges) ShowGrants(ctx context.Context, sctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
+func (p *UserPrivileges) ShowGrants(ctx sessionctx.Context, user *auth.UserIdentity, roles []*auth.RoleIdentity) (grants []string, err error) {
 	if SkipWithGrant {
 		return nil, ErrNonexistingGrant.GenWithStackByArgs("root", "%")
 	}
+	mysqlPrivilege := p.Handle.Get()
 	u := user.Username
 	h := user.Hostname
 	if len(user.AuthUsername) > 0 && len(user.AuthHostname) > 0 {
 		u = user.AuthUsername
 		h = user.AuthHostname
 	}
-	if err := p.Handle.ensureActiveUser(ctx, u); err != nil {
-		return nil, err
-	}
-	mysqlPrivilege := p.Handle.Get()
-	grants = mysqlPrivilege.showGrants(sctx, u, h, roles)
+	grants = mysqlPrivilege.showGrants(ctx, u, h, roles)
 	if len(grants) == 0 {
 		err = ErrNonexistingGrant.GenWithStackByArgs(u, h)
 	}
@@ -1038,29 +853,31 @@ func (p *UserPrivileges) ShowGrants(ctx context.Context, sctx sessionctx.Context
 }
 
 // ActiveRoles implements privilege.Manager ActiveRoles interface.
-func (p *UserPrivileges) ActiveRoles(ctx context.Context, sctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
+func (p *UserPrivileges) ActiveRoles(ctx sessionctx.Context, roleList []*auth.RoleIdentity) (bool, string) {
 	if SkipWithGrant {
 		return true, ""
 	}
+	mysqlPrivilege := p.Handle.Get()
 	u := p.user
 	h := p.host
 	for _, r := range roleList {
-		ok := findRole(ctx, p.Handle, u, h, r)
+		ok := mysqlPrivilege.FindRole(u, h, r)
 		if !ok {
 			logutil.BgLogger().Error("find role failed", zap.Stringer("role", r))
 			return false, r.String()
 		}
 	}
-	sctx.GetSessionVars().ActiveRoles = roleList
+	ctx.GetSessionVars().ActiveRoles = roleList
 	return true, ""
 }
 
 // FindEdge implements privilege.Manager FindRelationship interface.
-func (p *UserPrivileges) FindEdge(ctx context.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool {
+func (p *UserPrivileges) FindEdge(ctx sessionctx.Context, role *auth.RoleIdentity, user *auth.UserIdentity) bool {
 	if SkipWithGrant {
 		return false
 	}
-	ok := findRole(ctx, p.Handle, user.Username, user.Hostname, role)
+	mysqlPrivilege := p.Handle.Get()
+	ok := mysqlPrivilege.FindRole(user.Username, user.Hostname, role)
 	if !ok {
 		logutil.BgLogger().Error("find role failed", zap.Stringer("role", role))
 		return false
@@ -1069,11 +886,10 @@ func (p *UserPrivileges) FindEdge(ctx context.Context, role *auth.RoleIdentity, 
 }
 
 // GetDefaultRoles returns all default roles for certain user.
-func (p *UserPrivileges) GetDefaultRoles(ctx context.Context, user, host string) []*auth.RoleIdentity {
+func (p *UserPrivileges) GetDefaultRoles(user, host string) []*auth.RoleIdentity {
 	if SkipWithGrant {
 		return make([]*auth.RoleIdentity, 0, 10)
 	}
-	terror.Log(p.Handle.ensureActiveUser(ctx, user))
 	mysqlPrivilege := p.Handle.Get()
 	ret := mysqlPrivilege.getDefaultRoles(user, host)
 	return ret
@@ -1092,7 +908,12 @@ func (p *UserPrivileges) GetAllRoles(user, host string) []*auth.RoleIdentity {
 // IsDynamicPrivilege returns true if the DYNAMIC privilege is built-in or has been registered by a plugin
 func (p *UserPrivileges) IsDynamicPrivilege(privName string) bool {
 	privNameInUpper := strings.ToUpper(privName)
-	return slices.Contains(dynamicPrivs, privNameInUpper)
+	for _, priv := range dynamicPrivs {
+		if privNameInUpper == priv {
+			return true
+		}
+	}
+	return false
 }
 
 // RegisterDynamicPrivilege is used by plugins to add new privileges to TiDB
@@ -1107,8 +928,10 @@ func RegisterDynamicPrivilege(privName string) error {
 	}
 	dynamicPrivLock.Lock()
 	defer dynamicPrivLock.Unlock()
-	if slices.Contains(dynamicPrivs, privNameInUpper) {
-		return errors.New("privilege is already registered")
+	for _, priv := range dynamicPrivs {
+		if privNameInUpper == priv {
+			return errors.New("privilege is already registered")
+		}
 	}
 	dynamicPrivs = append(dynamicPrivs, privNameInUpper)
 	return nil
@@ -1132,7 +955,7 @@ func RemoveDynamicPrivilege(privName string) bool {
 	defer dynamicPrivLock.Unlock()
 	for idx, priv := range dynamicPrivs {
 		if privNameInUpper == priv {
-			dynamicPrivs = slices.Delete(dynamicPrivs, idx, idx+1)
+			dynamicPrivs = append(dynamicPrivs[:idx], dynamicPrivs[idx+1:]...)
 			return true
 		}
 	}
@@ -1163,16 +986,16 @@ func (passwordLocking *PasswordLocking) ParseJSON(passwordLockingJSON types.Bina
 	if err != nil {
 		return err
 	}
-	passwordLocking.FailedLoginAttempts = min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
-	passwordLocking.FailedLoginAttempts = max(passwordLocking.FailedLoginAttempts, 0)
+	passwordLocking.FailedLoginAttempts = mathutil.Min(passwordLocking.FailedLoginAttempts, math.MaxInt16)
+	passwordLocking.FailedLoginAttempts = mathutil.Max(passwordLocking.FailedLoginAttempts, 0)
 
 	passwordLocking.PasswordLockTimeDays, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.password_lock_time_days")
 	if err != nil {
 		return err
 	}
-	passwordLocking.PasswordLockTimeDays = min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
-	passwordLocking.PasswordLockTimeDays = max(passwordLocking.PasswordLockTimeDays, -1)
+	passwordLocking.PasswordLockTimeDays = mathutil.Min(passwordLocking.PasswordLockTimeDays, math.MaxInt16)
+	passwordLocking.PasswordLockTimeDays = mathutil.Max(passwordLocking.PasswordLockTimeDays, -1)
 
 	passwordLocking.FailedLoginCount, err =
 		extractInt64FromJSON(passwordLockingJSON, "$.Password_locking.failed_login_count")

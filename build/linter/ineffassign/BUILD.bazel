@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "ineffassign",
     srcs = ["analyzer.go"],
-    importpath = "github.com/pingcap/tidb/build/linter/ineffassign",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/build/linter/ineffassign",
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",

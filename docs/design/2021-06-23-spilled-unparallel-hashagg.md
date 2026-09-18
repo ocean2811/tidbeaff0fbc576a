@@ -1,8 +1,8 @@
 # Proposal: Support Spilling Unparalleled HashAgg
 
 - Author(s): [@wshwsh12](https://github.com/wshwsh12)
-- Discussion PR: https://github.com/pingcap/tidb/pull/25792
-- Tracking Issue: https://github.com/pingcap/tidb/issues/25882
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/pull/25792
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/25882
 
 ## Table of Contents
 

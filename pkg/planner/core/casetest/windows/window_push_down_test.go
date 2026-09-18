@@ -19,9 +19,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/internal"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testdata"
 	"github.com/stretchr/testify/require"
 )
 
@@ -55,59 +56,72 @@ func testWithData(t *testing.T, tk *testkit.TestKit, input Input, output Output)
 
 // Test WindowFuncDesc.CanPushDownToTiFlash
 func TestWindowFunctionDescCanPushDown(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists employee")
-		tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
-		testkit.SetTiFlashReplica(t, dom, "test", "employee")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
 
-		var input Input
-		var output Output
-		suiteData := getWindowPushDownSuiteData()
-		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		testWithData(t, tk, input, output)
-	})
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
+	internal.SetTiFlashReplica(t, dom, "test", "employee")
+
+	var input Input
+	var output Output
+	suiteData := getWindowPushDownSuiteData()
+	suiteData.LoadTestCases(t, &input, &output)
+	testWithData(t, tk, input, output)
 }
 
 func TestWindowPushDownPlans(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists employee")
-		tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
-		testkit.SetTiFlashReplica(t, dom, "test", "employee")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
 
-		var input Input
-		var output Output
-		suiteData := getWindowPushDownSuiteData()
-		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		testWithData(t, tk, input, output)
-	})
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
+	internal.SetTiFlashReplica(t, dom, "test", "employee")
+
+	var input Input
+	var output Output
+	suiteData := getWindowPushDownSuiteData()
+	suiteData.LoadTestCases(t, &input, &output)
+	testWithData(t, tk, input, output)
 }
 
 func TestWindowPlanWithOtherOperators(t *testing.T) {
-	testkit.RunTestUnderCascadesWithDomain(t, func(t *testing.T, tk *testkit.TestKit, dom *domain.Domain, cascades, caller string) {
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists employee")
-		tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
-		testkit.SetTiFlashReplica(t, dom, "test", "employee")
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
 
-		var input Input
-		var output Output
-		suiteData := getWindowPushDownSuiteData()
-		suiteData.LoadTestCases(t, &input, &output, cascades, caller)
-		testWithData(t, tk, input, output)
+	tk.MustExec("use test")
+	tk.MustExec("set tidb_cost_model_version=2")
+	tk.MustExec("drop table if exists employee")
+	tk.MustExec("create table employee (empid int, deptid int, salary decimal(10,2))")
+	internal.SetTiFlashReplica(t, dom, "test", "employee")
 
-		tk.MustExec("drop table if exists t1, t2")
-		tk.MustExec("create table t1(c1 varchar(32), c2 datetime, c3 bigint, c4 varchar(64));")
-		tk.MustExec("create table t2(b2 varchar(64));")
-		tk.MustExec("set tidb_enforce_mpp=1;")
-		testkit.SetTiFlashReplica(t, dom, "test", "t1")
-		testkit.SetTiFlashReplica(t, dom, "test", "t2")
+	var input Input
+	var output Output
+	suiteData := getWindowPushDownSuiteData()
+	suiteData.LoadTestCases(t, &input, &output)
+	testWithData(t, tk, input, output)
+}
 
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/CheckMPPWindowSchemaLength", "return"))
-		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/CheckMPPWindowSchemaLength"))
-		}()
-		tk.MustExec("explain format = 'plan_tree' select /* issue:34765 */ count(*) from (select row_number() over (partition by c1 order by c2) num from (select * from t1 left join t2 on t1.c4 = t2.b2) tem2 ) tx where num = 1;")
-	})
+func TestIssue34765(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	dom := domain.GetDomain(tk.Session())
+
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(c1 varchar(32), c2 datetime, c3 bigint, c4 varchar(64));")
+	tk.MustExec("create table t2(b2 varchar(64));")
+	tk.MustExec("set tidb_enforce_mpp=1;")
+	internal.SetTiFlashReplica(t, dom, "test", "t1")
+	internal.SetTiFlashReplica(t, dom, "test", "t2")
+
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/CheckMPPWindowSchemaLength", "return"))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/CheckMPPWindowSchemaLength"))
+	}()
+	tk.MustExec("explain select count(*) from (select row_number() over (partition by c1 order by c2) num from (select * from t1 left join t2 on t1.c4 = t2.b2) tem2 ) tx where num = 1;")
 }

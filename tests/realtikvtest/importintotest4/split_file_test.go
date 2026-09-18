@@ -22,21 +22,20 @@ import (
 	"strconv"
 
 	"github.com/fsouza/fake-gcs-server/fakestorage"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/importinto"
-	"github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/lightning/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/disttask/framework/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/disttask/importinto"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/tikv/client-go/v2/util"
 )
 
 func (s *mockGCSSuite) TestSplitFile() {
 	ctx := context.Background()
 	ctx = util.WithInternalSourceType(ctx, "taskManager")
-	allData := make([]string, 0, 500)
-	content := make([]byte, 0, 500)
-	for j := range 500 {
-		content = append(content, fmt.Appendf(nil, "%d,test-%d\n", j, j)...)
+	var allData []string
+	var content []byte
+	for j := 0; j < 500; j++ {
+		content = append(content, []byte(fmt.Sprintf("%d,test-%d\n", j, j))...)
 		allData = append(allData, fmt.Sprintf("%d test-%d", j, j))
 	}
 	slices.Sort(allData)
@@ -59,14 +58,14 @@ func (s *mockGCSSuite) TestSplitFile() {
 	s.Len(result, 1)
 	jobID, err := strconv.Atoi(result[0][0].(string))
 	s.NoError(err)
-	taskManager, err := storage.GetTaskManager()
+	globalTaskManager, err := storage.GetTaskManager()
 	s.NoError(err)
 	taskKey := importinto.TaskKey(int64(jobID))
 	s.NoError(err)
-	task, err2 := taskManager.GetTaskByKeyWithHistory(ctx, taskKey)
+	globalTask, err2 := globalTaskManager.GetGlobalTaskByKeyWithHistory(ctx, taskKey)
 	s.NoError(err2)
 
-	subtasks, err2 := taskManager.GetSubtasksWithHistory(ctx, task.ID, proto.ImportStepImport)
+	subtasks, err2 := globalTaskManager.GetSubtasksForImportInto(ctx, globalTask.ID, importinto.StepImport)
 	s.NoError(err2)
 	s.Len(subtasks, 3)
 	s.tk.MustQuery("select * from t").Sort().Check(testkit.Rows(allData...))

@@ -19,8 +19,8 @@ import (
 	"fmt"
 	"runtime"
 
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	topsqlstate "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
 
@@ -100,12 +100,8 @@ func getReqStartKey(req *tikvrpc.Request) ([]byte, error) {
 		// Ignore mpp requests.
 		return nil, nil
 	case tikvrpc.CmdResolveLock, tikvrpc.CmdCheckTxnStatus, tikvrpc.CmdPessimisticRollback:
-		// TODO: add resource tag for those request. https://github.com/pingcap/tidb/issues/33621
+		// TODO: add resource tag for those request. https://github.com/ocean2811/tidbeaff0fbc576a/issues/33621
 		return nil, nil
-	case tikvrpc.CmdFlush:
-		return req.Flush().GetMutations()[0].GetKey(), nil
-	case tikvrpc.CmdBufferBatchGet:
-		return req.BufferBatchGet().GetKeys()[0], nil
 	default:
 		return nil, errors.New("unknown request, check the new type RPC request here")
 	}

@@ -14,8 +14,8 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/import_sstpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -86,7 +86,7 @@ func TestFiles(t *testing.T) {
 
 	for _, cs := range cases {
 		ranges := make([]*backuppb.File, cs.count)
-		for j := range cs.count {
+		for j := 0; j < cs.count; j++ {
 			ranges[j] = newFile(j)
 		}
 		assertTrimEqual(t, logutil.Files(ranges), cs.expect)
@@ -117,8 +117,8 @@ func TestKeys(t *testing.T) {
 
 	for _, cs := range cases {
 		keys := make([][]byte, cs.count)
-		for j := range cs.count {
-			keys[j] = fmt.Appendf(nil, "%04d", j)
+		for j := 0; j < cs.count; j++ {
+			keys[j] = []byte(fmt.Sprintf("%04d", j))
 		}
 		assertTrimEqual(t, logutil.Keys(keys), cs.expect)
 	}

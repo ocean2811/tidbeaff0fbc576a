@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "globalconfigsync",
     srcs = ["globalconfig.go"],
-    importpath = "github.com/pingcap/tidb/pkg/domain/globalconfigsync",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/globalconfigsync",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/logutil",
@@ -17,12 +17,10 @@ go_test(
     timeout = "short",
     srcs = ["globalconfig_test.go"],
     flaky = True,
-    shard_count = 2,
     deps = [
         ":globalconfigsync",
         "//pkg/kv",
         "//pkg/session",
-        "//pkg/sessionctx/vardef",
         "//pkg/store/mockstore",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",

@@ -22,22 +22,23 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/gcutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	ddlutil "github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/external"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 )
 
 // TestModifyColumnTypeArgs test job raw args won't be updated when error occurs in `updateVersionAndTableInfo`.
 func TestModifyColumnTypeArgs(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(2)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockUpdateVersionAndTableInfoErr", `return(2)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockUpdateVersionAndTableInfoErr"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockUpdateVersionAndTableInfoErr"))
 	}()
 
 	store := testkit.CreateMockStore(t)
@@ -47,7 +48,7 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 	tk.MustExec("drop table if exists t_modify_column_args")
 	tk.MustExec("create table t_modify_column_args(a int, unique(a))")
 
-	err := tk.ExecToErr("alter table t_modify_column_args modify column a varchar(16)")
+	err := tk.ExecToErr("alter table t_modify_column_args modify column a tinyint")
 	require.Error(t, err)
 	// error goes like `mock update version and tableInfo error,jobID=xx`
 	strs := strings.Split(err.Error(), ",")
@@ -64,20 +65,28 @@ func TestModifyColumnTypeArgs(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, historyJob)
 
-	args, err := model.GetModifyColumnArgs(historyJob)
+	var (
+		newCol                *model.ColumnInfo
+		oldColName            *model.CIStr
+		modifyColumnTp        byte
+		updatedAutoRandomBits uint64
+		changingCol           *model.ColumnInfo
+		changingIdxs          []*model.IndexInfo
+	)
+	pos := &ast.ColumnPosition{}
+	err = historyJob.DecodeArgs(&newCol, &oldColName, pos, &modifyColumnTp, &updatedAutoRandomBits, &changingCol, &changingIdxs)
 	require.NoError(t, err)
-	require.NoError(t, err)
-	require.Nil(t, args.ChangingColumn)
-	require.Nil(t, args.ChangingIdxs)
+	require.Nil(t, changingCol)
+	require.Nil(t, changingIdxs)
 }
 
 func TestParallelUpdateTableReplica(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockTiFlashStoreCount"))
 	}()
 
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
@@ -86,7 +95,8 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 	tk.MustExec("create table t1 (a int);")
 	tk.MustExec("alter table t1 set tiflash replica 3 location labels 'a','b';")
 
-	tk1, tk2, ch := prepareTestControlParallelExecSQL(t, store)
+	tk1, tk2, ch, originalCallback := prepareTestControlParallelExecSQL(t, store, dom)
+	defer dom.DDL().SetHook(originalCallback)
 
 	t1 := external.GetTableByName(t, tk, "test_db_state", "t1")
 
@@ -95,12 +105,12 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 	var wg util.WaitGroupWrapper
 	wg.Run(func() {
 		// Mock for table tiflash replica was available.
-		err1 = domain.GetDomain(tk1.Session()).DDLExecutor().UpdateTableReplicaInfo(tk1.Session(), t1.Meta().ID, true)
+		err1 = domain.GetDomain(tk1.Session()).DDL().UpdateTableReplicaInfo(tk1.Session(), t1.Meta().ID, true)
 	})
 	wg.Run(func() {
 		<-ch
 		// Mock for table tiflash replica was available.
-		err2 = domain.GetDomain(tk2.Session()).DDLExecutor().UpdateTableReplicaInfo(tk2.Session(), t1.Meta().ID, true)
+		err2 = domain.GetDomain(tk2.Session()).DDL().UpdateTableReplicaInfo(tk2.Session(), t1.Meta().ID, true)
 	})
 	wg.Wait()
 	require.NoError(t, err1)
@@ -109,9 +119,9 @@ func TestParallelUpdateTableReplica(t *testing.T) {
 
 // TestParallelFlashbackTable tests parallel flashback table.
 func TestParallelFlashbackTable(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func(originGC bool) {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDChange"))
 		if originGC {
 			ddlutil.EmulatorGCEnable()
 		} else {
@@ -123,7 +133,7 @@ func TestParallelFlashbackTable(t *testing.T) {
 	// Disable emulator GC, otherwise, emulator GC will delete table record as soon as possible after executing drop table DDL.
 	ddlutil.EmulatorGCDisable()
 	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - 48*time.Hour).Format(gcTimeFormat)
+	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
 	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`

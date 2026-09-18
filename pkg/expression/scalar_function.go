@@ -16,112 +16,68 @@ package expression
 
 import (
 	"bytes"
+	"fmt"
 	"slices"
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
 )
-
-var _ base.HashEquals = &ScalarFunction{}
 
 // ScalarFunction is the function that returns a value.
 type ScalarFunction struct {
-	FuncName ast.CIStr
+	FuncName model.CIStr
 	// RetType is the type that ScalarFunction returns.
 	// TODO: Implement type inference here, now we use ast's return type temporarily.
-	RetType           *types.FieldType `plan-cache-clone:"shallow"`
+	RetType           *types.FieldType
 	Function          builtinFunc
 	hashcode          []byte
 	canonicalhashcode []byte
 }
 
-// SafeToShareAcrossSession returns if the function can be shared across different sessions.
-func (sf *ScalarFunction) SafeToShareAcrossSession() bool {
-	return sf.Function.SafeToShareAcrossSession()
-}
-
 // VecEvalInt evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.vecEvalInt(ctx, input, result)
+func (sf *ScalarFunction) VecEvalInt(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalInt(input, result)
 }
 
 // VecEvalReal evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.vecEvalReal(ctx, input, result)
+func (sf *ScalarFunction) VecEvalReal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalReal(input, result)
 }
 
 // VecEvalString evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.vecEvalString(ctx, input, result)
+func (sf *ScalarFunction) VecEvalString(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalString(input, result)
 }
 
 // VecEvalDecimal evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.vecEvalDecimal(ctx, input, result)
+func (sf *ScalarFunction) VecEvalDecimal(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalDecimal(input, result)
 }
 
 // VecEvalTime evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalTime(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.vecEvalTime(ctx, input, result)
+func (sf *ScalarFunction) VecEvalTime(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalTime(input, result)
 }
 
 // VecEvalDuration evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalDuration(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.vecEvalDuration(ctx, input, result)
+func (sf *ScalarFunction) VecEvalDuration(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalDuration(input, result)
 }
 
 // VecEvalJSON evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalJSON(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.vecEvalJSON(ctx, input, result)
-}
-
-// VecEvalVectorFloat32 evaluates this expression in a vectorized manner.
-func (sf *ScalarFunction) VecEvalVectorFloat32(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.vecEvalVectorFloat32(ctx, input, result)
+func (sf *ScalarFunction) VecEvalJSON(ctx sessionctx.Context, input *chunk.Chunk, result *chunk.Column) error {
+	return sf.Function.vecEvalJSON(input, result)
 }
 
 // GetArgs gets arguments of function.
@@ -134,21 +90,40 @@ func (sf *ScalarFunction) Vectorized() bool {
 	return sf.Function.vectorized() && sf.Function.isChildrenVectorized()
 }
 
-// StringWithCtx implements Expression interface.
-func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
-	buffer := bytes.NewBuffer(make([]byte, 0, len(sf.FuncName.L)+8+16*len(sf.GetArgs())))
-	buffer.WriteString(sf.FuncName.L)
-	buffer.WriteByte('(')
+// SupportReverseEval returns if this expression supports reversed evaluation.
+func (sf *ScalarFunction) SupportReverseEval() bool {
+	switch sf.RetType.GetType() {
+	case mysql.TypeShort, mysql.TypeLong, mysql.TypeLonglong,
+		mysql.TypeFloat, mysql.TypeDouble, mysql.TypeNewDecimal:
+		return sf.Function.supportReverseEval() && sf.Function.isChildrenReversed()
+	}
+	return false
+}
+
+// ReverseEval evaluates the only one column value with given function result.
+func (sf *ScalarFunction) ReverseEval(sc *stmtctx.StatementContext, res types.Datum, rType types.RoundingType) (val types.Datum, err error) {
+	return sf.Function.reverseEval(sc, res, rType)
+}
+
+// GetCtx gets the context of function.
+func (sf *ScalarFunction) GetCtx() sessionctx.Context {
+	return sf.Function.getCtx()
+}
+
+// String implements fmt.Stringer interface.
+func (sf *ScalarFunction) String() string {
+	var buffer bytes.Buffer
+	fmt.Fprintf(&buffer, "%s(", sf.FuncName.L)
 	switch sf.FuncName.L {
 	case ast.Cast:
 		for _, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.StringWithCtx(ctx, redact))
+			buffer.WriteString(arg.String())
 			buffer.WriteString(", ")
 			buffer.WriteString(sf.RetType.String())
 		}
 	default:
 		for i, arg := range sf.GetArgs() {
-			buffer.WriteString(arg.StringWithCtx(ctx, redact))
+			buffer.WriteString(arg.String())
 			if i+1 != len(sf.GetArgs()) {
 				buffer.WriteString(", ")
 			}
@@ -158,14 +133,14 @@ func (sf *ScalarFunction) StringWithCtx(ctx ParamValues, redact string) string {
 	return buffer.String()
 }
 
-// String returns the string representation of the function
-func (sf *ScalarFunction) String() string {
-	return sf.StringWithCtx(exprctx.EmptyParamValues, errors.RedactLogDisable)
+// MarshalJSON implements json.Marshaler interface.
+func (sf *ScalarFunction) MarshalJSON() ([]byte, error) {
+	return []byte(fmt.Sprintf("%q", sf)), nil
 }
 
 // typeInferForNull infers the NULL constants field type and set the field type
 // of NULL constant same as other non-null operands.
-func typeInferForNull(ctx EvalContext, args []Expression) {
+func typeInferForNull(args []Expression) {
 	if len(args) < 2 {
 		return
 	}
@@ -179,7 +154,7 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	for i := len(args) - 1; i >= 0; i-- {
 		isNullArg := isNull(args[i])
 		if !isNullArg && retFieldTp == nil {
-			retFieldTp = args[i].GetType(ctx)
+			retFieldTp = args[i].GetType()
 		}
 		hasNullArg = hasNullArg || isNullArg
 		// Break if there are both NULL and non-NULL expression
@@ -190,13 +165,10 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 	if !hasNullArg || retFieldTp == nil {
 		return
 	}
-	for i, arg := range args {
-		argflags := arg.GetType(ctx)
-		if isNull(arg) && !(argflags.Equals(retFieldTp) && mysql.HasNotNullFlag(retFieldTp.GetFlag())) {
-			newarg := arg.Clone()
-			*newarg.GetType(ctx) = *retFieldTp.Clone()
-			newarg.GetType(ctx).DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
-			args[i] = newarg
+	for _, arg := range args {
+		if isNull(arg) {
+			*arg.GetType() = *retFieldTp
+			arg.GetType().DelFlag(mysql.NotNullFlag) // Remove NotNullFlag of NullConst
 		}
 	}
 }
@@ -204,7 +176,14 @@ func typeInferForNull(ctx EvalContext, args []Expression) {
 // newFunctionImpl creates a new scalar function or constant.
 // fold: 1 means folding constants, while 0 means not,
 // -1 means try to fold constants if without errors/warnings, otherwise not.
-func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
+func newFunctionImpl(ctx sessionctx.Context, fold int, funcName string, retType *types.FieldType, checkOrInit ScalarFunctionCallBack, args ...Expression) (ret Expression, err error) {
+	defer func() {
+		if err == nil && ret != nil && checkOrInit != nil {
+			if sf, ok := ret.(*ScalarFunction); ok {
+				ret, err = checkOrInit(sf)
+			}
+		}
+	}()
 	if retType == nil {
 		return nil, errors.Errorf("RetType cannot be nil for ScalarFunction")
 	}
@@ -218,7 +197,7 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	case InternalFuncToBinary:
 		return BuildToBinaryFunction(ctx, args[0]), nil
 	case ast.Sysdate:
-		if ctx.GetSysdateIsNow() {
+		if ctx.GetSessionVars().SysdateIsNow {
 			funcName = ast.Now
 		}
 	}
@@ -231,33 +210,30 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 	}
 
 	if !ok {
-		db := ctx.GetEvalCtx().CurrentDB()
+		db := ctx.GetSessionVars().CurrentDB
 		if db == "" {
-			return nil, errors.Trace(plannererrors.ErrNoDB)
+			return nil, errors.Trace(ErrNoDB)
 		}
 		return nil, ErrFunctionNotExists.GenWithStackByArgs("FUNCTION", db+"."+funcName)
 	}
-	noopFuncsMode := ctx.GetNoopFuncsMode()
+	noopFuncsMode := ctx.GetSessionVars().NoopFuncsMode
 	if noopFuncsMode != variable.OnInt {
 		if _, ok := noopFuncs[funcName]; ok {
-			err := ErrFunctionsNoopImpl.FastGenByArgs(funcName)
+			err := ErrFunctionsNoopImpl.GenWithStackByArgs(funcName)
 			if noopFuncsMode == variable.OffInt {
-				return nil, errors.Trace(err)
+				return nil, err
 			}
 			// NoopFuncsMode is Warn, append an error
-			ctx.GetEvalCtx().AppendWarning(err)
+			ctx.GetSessionVars().StmtCtx.AppendWarning(err)
 		}
 	}
-	funcArgs := slices.Clone(args)
+	funcArgs := make([]Expression, len(args))
+	copy(funcArgs, args)
 	switch funcName {
 	case ast.If, ast.Ifnull, ast.Nullif:
 		// Do nothing. Because it will call InferType4ControlFuncs.
-	case ast.RowFunc:
-		// Do nothing. Because it shouldn't use ROW's args to infer null type.
-		// For example, expression ('abc', 1) = (null, 0). Null's type should be STRING, not INT.
-		// The type infer happens when converting the expression to ('abc' = null) and (1 = 0).
 	default:
-		typeInferForNull(ctx.GetEvalCtx(), funcArgs)
+		typeInferForNull(funcArgs)
 	}
 
 	f, err := fc.getFunction(ctx, funcArgs)
@@ -268,27 +244,20 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 		retType = builtinRetTp
 	}
 	sf := &ScalarFunction{
-		FuncName: ast.NewCIStr(funcName),
+		FuncName: model.NewCIStr(funcName),
 		RetType:  retType,
 		Function: f,
 	}
-	if checkOrInit != nil {
-		sf2, err := checkOrInit(sf)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		sf = sf2
-	}
 	if fold == 1 {
-		return FoldConstant(ctx, sf), nil
+		return FoldConstant(sf), nil
 	} else if fold == -1 {
 		// try to fold constants, and return the original function if errors/warnings occur
-		evalCtx := ctx.GetEvalCtx()
-		beforeWarns := evalCtx.WarningCount()
-		newSf := FoldConstant(ctx, sf)
-		afterWarns := evalCtx.WarningCount()
+		sc := ctx.GetSessionVars().StmtCtx
+		beforeWarns := sc.WarningCount()
+		newSf := FoldConstant(sf)
+		afterWarns := sc.WarningCount()
 		if afterWarns > beforeWarns {
-			evalCtx.TruncateWarnings(beforeWarns)
+			sc.TruncateWarnings(int(beforeWarns))
 			return sf, nil
 		}
 		return newSf, nil
@@ -297,9 +266,9 @@ func newFunctionImpl(ctx BuildContext, fold int, funcName string, retType *types
 }
 
 // ScalarFunctionCallBack is the definition of callback of calling a newFunction.
-type ScalarFunctionCallBack func(function *ScalarFunction) (*ScalarFunction, error)
+type ScalarFunctionCallBack func(function *ScalarFunction) (Expression, error)
 
-func defaultScalarFunctionCheck(function *ScalarFunction) (*ScalarFunction, error) {
+func defaultScalarFunctionCheck(function *ScalarFunction) (Expression, error) {
 	// todo: more scalar function init actions can be added here, or setting up with customized init callback.
 	if function.FuncName.L == ast.Grouping {
 		if !function.Function.(*BuiltinGroupingImplSig).isMetaInited {
@@ -310,22 +279,22 @@ func defaultScalarFunctionCheck(function *ScalarFunction) (*ScalarFunction, erro
 }
 
 // NewFunctionWithInit creates a new scalar function with callback init function.
-func NewFunctionWithInit(ctx BuildContext, funcName string, retType *types.FieldType, init ScalarFunctionCallBack, args ...Expression) (Expression, error) {
+func NewFunctionWithInit(ctx sessionctx.Context, funcName string, retType *types.FieldType, init ScalarFunctionCallBack, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, 1, funcName, retType, init, args...)
 }
 
 // NewFunction creates a new scalar function or constant via a constant folding.
-func NewFunction(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+func NewFunction(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, 1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionBase creates a new scalar function with no constant folding.
-func NewFunctionBase(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+func NewFunctionBase(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, 0, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
 // NewFunctionTryFold creates a new scalar function with trying constant folding.
-func NewFunctionTryFold(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
+func NewFunctionTryFold(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) (Expression, error) {
 	return newFunctionImpl(ctx, -1, funcName, retType, defaultScalarFunctionCheck, args...)
 }
 
@@ -335,7 +304,7 @@ func NewFunctionTryFold(ctx BuildContext, funcName string, retType *types.FieldT
 // error, collation derivation error, special function with meta doesn't be initialized error and so on.
 // only threw the these internal error out, then we can debug and dig it out quickly rather than in a confusion
 // of index out of range / nil pointer error / function execution error.
-func NewFunctionInternal(ctx BuildContext, funcName string, retType *types.FieldType, args ...Expression) Expression {
+func NewFunctionInternal(ctx sessionctx.Context, funcName string, retType *types.FieldType, args ...Expression) Expression {
 	expr, err := NewFunction(ctx, funcName, retType, args...)
 	terror.Log(errors.Trace(err))
 	return expr
@@ -356,10 +325,7 @@ func (sf *ScalarFunction) Clone() Expression {
 		FuncName: sf.FuncName,
 		RetType:  sf.RetType,
 		Function: sf.Function.Clone(),
-	}
-	// An implicit assumption: ScalarFunc.RetType == ScalarFunc.builtinFunc.RetType
-	if sf.canonicalhashcode != nil {
-		c.canonicalhashcode = slices.Clone(sf.canonicalhashcode)
+		hashcode: sf.hashcode,
 	}
 	c.SetCharsetAndCollation(sf.CharsetAndCollation())
 	c.SetCoercibility(sf.Coercibility())
@@ -368,50 +334,20 @@ func (sf *ScalarFunction) Clone() Expression {
 }
 
 // GetType implements Expression interface.
-func (sf *ScalarFunction) GetType(_ EvalContext) *types.FieldType {
-	return sf.GetStaticType()
-}
-
-// GetStaticType returns the static type of the scalar function.
-func (sf *ScalarFunction) GetStaticType() *types.FieldType {
+func (sf *ScalarFunction) GetType() *types.FieldType {
 	return sf.RetType
 }
 
 // Equal implements Expression interface.
-func (sf *ScalarFunction) Equal(ctx EvalContext, e Expression) bool {
-	intest.Assert(ctx != nil)
+func (sf *ScalarFunction) Equal(ctx sessionctx.Context, e Expression) bool {
 	fun, ok := e.(*ScalarFunction)
 	if !ok {
 		return false
 	}
-	// If they are the same object, they must be equal.
-	if sf == fun {
-		return true
-	}
 	if sf.FuncName.L != fun.FuncName.L {
 		return false
 	}
-	if !sf.RetType.Equal(fun.RetType) {
-		return false
-	}
-	if len(sf.hashcode) > 0 && len(fun.hashcode) > 0 {
-		if intest.InTest {
-			assertCheckHashCode(sf)
-			assertCheckHashCode(fun)
-		}
-		return bytes.Equal(sf.hashcode, fun.hashcode)
-	}
-	return sf.Function.equal(ctx, fun.Function)
-}
-
-func assertCheckHashCode(sf *ScalarFunction) {
-	intest.Assert(intest.InTest)
-	copyhashcode := make([]byte, len(sf.hashcode))
-	copy(copyhashcode, sf.hashcode)
-	// avoid data race in the plan cache
-	s := sf.Clone().(*ScalarFunction)
-	ReHashCode(s)
-	intest.Assert(bytes.Equal(s.hashcode, copyhashcode), "HashCode should not change after ReHashCode is called")
+	return sf.Function.equal(fun.Function)
 }
 
 // IsCorrelated implements Expression interface.
@@ -424,31 +360,24 @@ func (sf *ScalarFunction) IsCorrelated() bool {
 	return false
 }
 
-// ConstLevel returns the const level for the expression
-func (sf *ScalarFunction) ConstLevel() ConstLevel {
+// ConstItem implements Expression interface.
+func (sf *ScalarFunction) ConstItem(sc *stmtctx.StatementContext) bool {
 	// Note: some unfoldable functions are deterministic, we use unFoldableFunctions here for simplification.
 	if _, ok := unFoldableFunctions[sf.FuncName.L]; ok {
-		return ConstNone
+		return false
 	}
 
 	if _, ok := sf.Function.(*extensionFuncSig); ok {
-		// we should return `ConstNone` for extension functions for safety, because it may have a side effect.
-		return ConstNone
+		// we should return false for extension functions for safety, because it may have a side effect.
+		return false
 	}
 
-	level := ConstStrict
 	for _, arg := range sf.GetArgs() {
-		argLevel := arg.ConstLevel()
-		if argLevel == ConstNone {
-			return ConstNone
-		}
-
-		if argLevel < level {
-			level = argLevel
+		if !arg.ConstItem(sc) {
+			return false
 		}
 	}
-
-	return level
+	return true
 }
 
 // Decorrelate implements Expression interface.
@@ -456,7 +385,6 @@ func (sf *ScalarFunction) Decorrelate(schema *Schema) Expression {
 	for i, arg := range sf.GetArgs() {
 		sf.GetArgs()[i] = arg.Decorrelate(schema)
 	}
-	sf.CleanHashCode()
 	return sf
 }
 
@@ -466,40 +394,40 @@ func (sf *ScalarFunction) Traverse(action TraverseAction) Expression {
 }
 
 // Eval implements Expression interface.
-func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, err error) {
+func (sf *ScalarFunction) Eval(row chunk.Row) (d types.Datum, err error) {
 	var (
-		res    any
+		res    interface{}
 		isNull bool
 	)
-	intest.AssertNotNil(ctx)
-	switch tp, evalType := sf.GetType(ctx), sf.GetType(ctx).EvalType(); evalType {
+	switch tp, evalType := sf.GetType(), sf.GetType().EvalType(); evalType {
 	case types.ETInt:
 		var intRes int64
-		intRes, isNull, err = sf.EvalInt(ctx, row)
+		intRes, isNull, err = sf.EvalInt(sf.GetCtx(), row)
 		if mysql.HasUnsignedFlag(tp.GetFlag()) {
 			res = uint64(intRes)
 		} else {
 			res = intRes
 		}
 	case types.ETReal:
-		res, isNull, err = sf.EvalReal(ctx, row)
+		res, isNull, err = sf.EvalReal(sf.GetCtx(), row)
 	case types.ETDecimal:
-		res, isNull, err = sf.EvalDecimal(ctx, row)
+		res, isNull, err = sf.EvalDecimal(sf.GetCtx(), row)
 	case types.ETDatetime, types.ETTimestamp:
-		res, isNull, err = sf.EvalTime(ctx, row)
+		res, isNull, err = sf.EvalTime(sf.GetCtx(), row)
 	case types.ETDuration:
-		res, isNull, err = sf.EvalDuration(ctx, row)
+		res, isNull, err = sf.EvalDuration(sf.GetCtx(), row)
 	case types.ETJson:
-		res, isNull, err = sf.EvalJSON(ctx, row)
-	case types.ETVectorFloat32:
-		res, isNull, err = sf.EvalVectorFloat32(ctx, row)
+		res, isNull, err = sf.EvalJSON(sf.GetCtx(), row)
 	case types.ETString:
 		var str string
-		str, isNull, err = sf.EvalString(ctx, row)
+		str, isNull, err = sf.EvalString(sf.GetCtx(), row)
 		if !isNull && err == nil && tp.GetType() == mysql.TypeEnum {
 			res, err = types.ParseEnum(tp.GetElems(), str, tp.GetCollate())
-			tc := typeCtx(ctx)
-			err = tc.HandleTruncate(err)
+			if ctx := sf.GetCtx(); ctx != nil {
+				if sc := ctx.GetSessionVars().StmtCtx; sc != nil {
+					err = sc.HandleTruncate(err)
+				}
+			}
 		} else {
 			res = str
 		}
@@ -514,113 +442,71 @@ func (sf *ScalarFunction) Eval(ctx EvalContext, row chunk.Row) (d types.Datum, e
 }
 
 // EvalInt implements Expression interface.
-func (sf *ScalarFunction) EvalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
+func (sf *ScalarFunction) EvalInt(ctx sessionctx.Context, row chunk.Row) (int64, bool, error) {
+	if f, ok := sf.Function.(builtinFuncNew); ok {
+		return f.evalIntWithCtx(ctx, row)
 	}
-	return sf.Function.evalInt(ctx, row)
+	return sf.Function.evalInt(row)
 }
 
 // EvalReal implements Expression interface.
-func (sf *ScalarFunction) EvalReal(ctx EvalContext, row chunk.Row) (float64, bool, error) {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.evalReal(ctx, row)
+func (sf *ScalarFunction) EvalReal(ctx sessionctx.Context, row chunk.Row) (float64, bool, error) {
+	return sf.Function.evalReal(row)
 }
 
 // EvalDecimal implements Expression interface.
-func (sf *ScalarFunction) EvalDecimal(ctx EvalContext, row chunk.Row) (*types.MyDecimal, bool, error) {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.evalDecimal(ctx, row)
+func (sf *ScalarFunction) EvalDecimal(ctx sessionctx.Context, row chunk.Row) (*types.MyDecimal, bool, error) {
+	return sf.Function.evalDecimal(row)
 }
 
 // EvalString implements Expression interface.
-func (sf *ScalarFunction) EvalString(ctx EvalContext, row chunk.Row) (string, bool, error) {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.evalString(ctx, row)
+func (sf *ScalarFunction) EvalString(ctx sessionctx.Context, row chunk.Row) (string, bool, error) {
+	return sf.Function.evalString(row)
 }
 
 // EvalTime implements Expression interface.
-func (sf *ScalarFunction) EvalTime(ctx EvalContext, row chunk.Row) (types.Time, bool, error) {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.evalTime(ctx, row)
+func (sf *ScalarFunction) EvalTime(ctx sessionctx.Context, row chunk.Row) (types.Time, bool, error) {
+	return sf.Function.evalTime(row)
 }
 
 // EvalDuration implements Expression interface.
-func (sf *ScalarFunction) EvalDuration(ctx EvalContext, row chunk.Row) (types.Duration, bool, error) {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.evalDuration(ctx, row)
+func (sf *ScalarFunction) EvalDuration(ctx sessionctx.Context, row chunk.Row) (types.Duration, bool, error) {
+	return sf.Function.evalDuration(row)
 }
 
 // EvalJSON implements Expression interface.
-func (sf *ScalarFunction) EvalJSON(ctx EvalContext, row chunk.Row) (types.BinaryJSON, bool, error) {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.evalJSON(ctx, row)
-}
-
-// EvalVectorFloat32 implements Expression interface.
-func (sf *ScalarFunction) EvalVectorFloat32(ctx EvalContext, row chunk.Row) (types.VectorFloat32, bool, error) {
-	intest.Assert(ctx != nil)
-	if intest.EnableAssert {
-		ctx = wrapEvalAssert(ctx, sf.Function)
-	}
-	return sf.Function.evalVectorFloat32(ctx, row)
+func (sf *ScalarFunction) EvalJSON(ctx sessionctx.Context, row chunk.Row) (types.BinaryJSON, bool, error) {
+	return sf.Function.evalJSON(row)
 }
 
 // HashCode implements Expression interface.
-func (sf *ScalarFunction) HashCode() []byte {
-	if len(sf.hashcode) > 0 {
-		if intest.InTest {
-			assertCheckHashCode(sf)
+func (sf *ScalarFunction) HashCode(sc *stmtctx.StatementContext) []byte {
+	if sc != nil && sc.CanonicalHashCode {
+		if len(sf.canonicalhashcode) > 0 {
+			return sf.canonicalhashcode
 		}
+		simpleCanonicalizedHashCode(sf, sc)
+		return sf.canonicalhashcode
+	}
+	if len(sf.hashcode) > 0 {
 		return sf.hashcode
 	}
-	ReHashCode(sf)
+	ReHashCode(sf, sc)
 	return sf.hashcode
 }
 
-// CanonicalHashCode implements Expression interface.
-func (sf *ScalarFunction) CanonicalHashCode() []byte {
-	if len(sf.canonicalhashcode) > 0 {
-		return sf.canonicalhashcode
-	}
-	simpleCanonicalizedHashCode(sf)
-	return sf.canonicalhashcode
-}
-
-// CleanHashCode cleans the cached hashcode and canonical hashcode.
-// It should be called after the function is mutated in-place (e.g. rewriting args)
-// to avoid keeping stale hash keys.
-func (sf *ScalarFunction) CleanHashCode() {
-	sf.hashcode = sf.hashcode[:0]
-	sf.canonicalhashcode = sf.canonicalhashcode[:0]
-}
-
 // ExpressionsSemanticEqual is used to judge whether two expression tree is semantic equivalent.
-func ExpressionsSemanticEqual(expr1, expr2 Expression) bool {
-	return bytes.Equal(expr1.CanonicalHashCode(), expr2.CanonicalHashCode())
+func ExpressionsSemanticEqual(ctx sessionctx.Context, expr1, expr2 Expression) bool {
+	sc := ctx.GetSessionVars().StmtCtx
+	sc.CanonicalHashCode = true
+	defer func() {
+		sc.CanonicalHashCode = false
+	}()
+	return bytes.Equal(expr1.HashCode(sc), expr2.HashCode(sc))
 }
 
 // simpleCanonicalizedHashCode is used to judge whether two expression is semantically equal.
-func simpleCanonicalizedHashCode(sf *ScalarFunction) {
+func simpleCanonicalizedHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
 	if sf.canonicalhashcode != nil {
 		sf.canonicalhashcode = sf.canonicalhashcode[:0]
 	}
@@ -628,7 +514,7 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 
 	argsHashCode := make([][]byte, 0, len(sf.GetArgs()))
 	for _, arg := range sf.GetArgs() {
-		argsHashCode = append(argsHashCode, arg.CanonicalHashCode())
+		argsHashCode = append(argsHashCode, arg.HashCode(sc))
 	}
 	switch sf.FuncName.L {
 	case ast.Plus, ast.Mul, ast.EQ, ast.In, ast.LogicOr, ast.LogicAnd:
@@ -678,7 +564,7 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 		} else {
 			childArgsHashCode := make([][]byte, 0, len(child.GetArgs()))
 			for _, arg := range child.GetArgs() {
-				childArgsHashCode = append(childArgsHashCode, arg.CanonicalHashCode())
+				childArgsHashCode = append(childArgsHashCode, arg.HashCode(sc))
 			}
 			switch child.FuncName.L {
 			case ast.GT: // not GT  ==> LE  ==> use GE and switch args
@@ -718,81 +604,19 @@ func simpleCanonicalizedHashCode(sf *ScalarFunction) {
 	}
 }
 
-// Hash64 implements HashEquals.<0th> interface.
-func (sf *ScalarFunction) Hash64(h base.Hasher) {
-	h.HashByte(scalarFunctionFlag)
-	h.HashString(sf.FuncName.L)
-	if sf.RetType == nil {
-		h.HashByte(base.NilFlag)
-	} else {
-		h.HashByte(base.NotNilFlag)
-		sf.RetType.Hash64(h)
-	}
-	// hash the arg length to avoid hash collision.
-	h.HashInt(len(sf.GetArgs()))
-	for _, arg := range sf.GetArgs() {
-		arg.Hash64(h)
-	}
-}
-
-// Equals implements HashEquals.<1th> interface.
-func (sf *ScalarFunction) Equals(other any) bool {
-	sf2, ok := other.(*ScalarFunction)
-	if !ok {
-		return false
-	}
-	if sf == nil {
-		return sf2 == nil
-	}
-	if sf2 == nil {
-		return false
-	}
-	ok = sf.FuncName.L == sf2.FuncName.L
-	ok = ok && (sf.RetType == nil && sf2.RetType == nil || sf.RetType != nil && sf2.RetType != nil && sf.RetType.Equals(sf2.RetType))
-	if len(sf.GetArgs()) != len(sf2.GetArgs()) {
-		return false
-	}
-	for i, arg := range sf.GetArgs() {
-		ok = ok && arg.Equals(sf2.GetArgs()[i])
-		if !ok {
-			return false
-		}
-	}
-	return ok
-}
-
 // ReHashCode is used after we change the argument in place.
-func ReHashCode(sf *ScalarFunction) {
+func ReHashCode(sf *ScalarFunction, sc *stmtctx.StatementContext) {
 	sf.hashcode = sf.hashcode[:0]
-	sf.canonicalhashcode = sf.canonicalhashcode[:0]
-	sf.hashcode = slices.Grow(sf.hashcode, 1+len(sf.FuncName.L)+len(sf.GetArgs())*8+1)
 	sf.hashcode = append(sf.hashcode, scalarFunctionFlag)
 	sf.hashcode = codec.EncodeCompactBytes(sf.hashcode, hack.Slice(sf.FuncName.L))
 	for _, arg := range sf.GetArgs() {
-		sf.hashcode = append(sf.hashcode, arg.HashCode()...)
+		sf.hashcode = append(sf.hashcode, arg.HashCode(sc)...)
 	}
 	// Cast is a special case. The RetType should also be considered as an argument.
 	// Please see `newFunctionImpl()` for detail.
 	if sf.FuncName.L == ast.Cast {
 		evalTp := sf.RetType.EvalType()
 		sf.hashcode = append(sf.hashcode, byte(evalTp))
-	}
-	if sf.FuncName.L == ast.Grouping {
-		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(sf.Function.(*BuiltinGroupingImplSig).GetGroupingMode()))
-		marks := sf.Function.(*BuiltinGroupingImplSig).GetMetaGroupingMarks()
-		sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(marks)))
-		for _, mark := range marks {
-			sf.hashcode = codec.EncodeInt(sf.hashcode, int64(len(mark)))
-			// we need to sort map keys to ensure the hashcode is deterministic.
-			keys := make([]uint64, 0, len(mark))
-			for k := range mark {
-				keys = append(keys, k)
-			}
-			slices.Sort(keys)
-			for _, k := range keys {
-				sf.hashcode = codec.EncodeInt(sf.hashcode, int64(k))
-			}
-		}
 	}
 }
 
@@ -814,15 +638,15 @@ func (sf *ScalarFunction) resolveIndices(schema *Schema) error {
 }
 
 // ResolveIndicesByVirtualExpr implements Expression interface.
-func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) (Expression, bool) {
+func (sf *ScalarFunction) ResolveIndicesByVirtualExpr(schema *Schema) (Expression, bool) {
 	newSf := sf.Clone()
-	isOK := newSf.resolveIndicesByVirtualExpr(ctx, schema)
+	isOK := newSf.resolveIndicesByVirtualExpr(schema)
 	return newSf, isOK
 }
 
-func (sf *ScalarFunction) resolveIndicesByVirtualExpr(ctx EvalContext, schema *Schema) bool {
+func (sf *ScalarFunction) resolveIndicesByVirtualExpr(schema *Schema) bool {
 	for _, arg := range sf.GetArgs() {
-		isOk := arg.resolveIndicesByVirtualExpr(ctx, schema)
+		isOk := arg.resolveIndicesByVirtualExpr(schema)
 		if !isOk {
 			return false
 		}
@@ -843,7 +667,8 @@ func (sf *ScalarFunction) RemapColumn(m map[int64]*Column) (Expression, error) {
 		}
 		newSf.GetArgs()[i] = newArg
 	}
-	newSf.CleanHashCode()
+	// clear hash code
+	newSf.hashcode = nil
 	return newSf, nil
 }
 
@@ -949,16 +774,6 @@ func (sf *ScalarFunction) Repertoire() Repertoire {
 // SetRepertoire sets a specified repertoire for this expression.
 func (sf *ScalarFunction) SetRepertoire(r Repertoire) {
 	sf.Function.SetRepertoire(r)
-}
-
-// IsExplicitCharset return the charset is explicit set or not.
-func (sf *ScalarFunction) IsExplicitCharset() bool {
-	return sf.Function.IsExplicitCharset()
-}
-
-// SetExplicitCharset set the charset is explicit or not.
-func (sf *ScalarFunction) SetExplicitCharset(explicit bool) {
-	sf.Function.SetExplicitCharset(explicit)
 }
 
 const emptyScalarFunctionSize = int64(unsafe.Sizeof(ScalarFunction{}))

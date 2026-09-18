@@ -19,7 +19,7 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
 )
 
 var (

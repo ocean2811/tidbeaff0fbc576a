@@ -15,14 +15,13 @@
 package ddlhelper
 
 import (
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/meta/metabuild"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
 )
 
-// BuildTableInfoFromASTForTest builds model.TableInfo from a SQL statement.
+// BuildTableInfoFromAST builds model.TableInfo from a SQL statement.
 // Note: TableID and PartitionID are left as uninitialized value.
-func BuildTableInfoFromASTForTest(s *ast.CreateTableStmt) (*model.TableInfo, error) {
-	return ddl.BuildTableInfoFromAST(metabuild.NewContext(), s)
+func BuildTableInfoFromAST(s *ast.CreateTableStmt) (*model.TableInfo, error) {
+	return ddl.BuildTableInfoFromAST(s)
 }

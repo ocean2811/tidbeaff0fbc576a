@@ -16,27 +16,27 @@ package ast_test
 import (
 	"testing"
 
-	. "github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	. "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
 type checkVisitor struct{}
 
-func (v checkVisitor) Enter(in Node) bool {
+func (v checkVisitor) Enter(in Node) (Node, bool) {
 	if e, ok := in.(*checkExpr); ok {
 		e.enterCnt++
-		return true
+		return in, true
 	}
-	return false
+	return in, false
 }
 
-func (v checkVisitor) Leave(in Node) bool {
+func (v checkVisitor) Leave(in Node) (Node, bool) {
 	if e, ok := in.(*checkExpr); ok {
 		e.leaveCnt++
 	}
-	return true
+	return in, true
 }
 
 type checkExpr struct {
@@ -52,11 +52,6 @@ func (n *checkExpr) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*checkExpr)
-	return v.Leave(n)
-}
-
-func (n *checkExpr) AcceptInPlace(v InPlaceVisitor) bool {
-	v.Enter(n)
 	return v.Leave(n)
 }
 
@@ -98,10 +93,10 @@ func TestExpresionsVisitorCover(t *testing.T) {
 
 	for _, v := range stmts {
 		ce.reset()
-		Walk(v.node, checkVisitor{})
+		v.node.Accept(checkVisitor{})
 		require.Equal(t, v.expectedEnterCnt, ce.enterCnt)
 		require.Equal(t, v.expectedLeaveCnt, ce.leaveCnt)
-		Walk(v.node, visitor1{})
+		v.node.Accept(visitor1{})
 	}
 }
 

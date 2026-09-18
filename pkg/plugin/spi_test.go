@@ -18,8 +18,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/plugin"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/plugin"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 

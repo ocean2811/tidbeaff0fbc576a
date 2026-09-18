@@ -15,7 +15,6 @@
 package metrics
 
 import (
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -30,13 +29,12 @@ var (
 	SetSchemaDiff    = "set_schema_diff"
 	GetHistoryDDLJob = "get_history_ddl_job"
 
-	MetaHistogram          *prometheus.HistogramVec
-	ResetAutoIDConnCounter prometheus.Counter
+	MetaHistogram *prometheus.HistogramVec
 )
 
 // InitMetaMetrics initializes meta metrics.
 func InitMetaMetrics() {
-	AutoIDHistogram = metricscommon.NewHistogramVec(
+	AutoIDHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "autoid",
@@ -45,7 +43,7 @@ func InitMetaMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblResult})
 
-	MetaHistogram = metricscommon.NewHistogramVec(
+	MetaHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "meta",
@@ -53,12 +51,4 @@ func InitMetaMetrics() {
 			Help:      "Bucketed histogram of processing time (s) of tidb meta data operations.",
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblResult})
-
-	ResetAutoIDConnCounter = metricscommon.NewCounter(
-		prometheus.CounterOpts{
-			Namespace: "tidb",
-			Subsystem: "meta",
-			Name:      "autoid_client_conn_reset_total",
-			Help:      "Counter of resetting autoid client connection.",
-		})
 }

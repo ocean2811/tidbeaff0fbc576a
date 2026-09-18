@@ -10,16 +10,15 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/backup"
-	"github.com/pingcap/tidb/br/pkg/conn"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/backup"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/glue"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/metautil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/rtree"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/summary"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -49,7 +48,6 @@ func DefineRawBackupFlags(command *cobra.Command) {
 	command.Flags().StringP(flagTiKVColumnFamily, "", "default", "backup specify cf, correspond to tikv cf")
 	command.Flags().StringP(flagStartKey, "", "", "backup raw kv start key, key is inclusive")
 	command.Flags().StringP(flagEndKey, "", "", "backup raw kv end key, key is exclusive")
-	command.Flags().String(flagKeyspaceName, "", "keyspace name for backup")
 	command.Flags().String(flagCompressionType, "zstd",
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	command.Flags().Bool(flagRemoveSchedulers, false,
@@ -100,10 +98,6 @@ func (cfg *RawKvConfig) ParseBackupConfigFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	cfg.KeyspaceName, err = flags.GetString(flagKeyspaceName)
-	if err != nil {
-		return errors.Trace(err)
-	}
 
 	compressionCfg, err := parseCompressionFlags(flags)
 	if err != nil {
@@ -138,20 +132,20 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	u, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Backup raw does not need domain.
 	needDomain := false
-	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
 
 	client := backup.NewBackupClient(ctx, mgr)
-	opts := storeapi.Options{
+	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
 		CheckS3ObjectLockOptions: true,
@@ -160,7 +154,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		return errors.Trace(err)
 	}
 
-	backupRange := rtree.KeyRange{StartKey: cfg.StartKey, EndKey: cfg.EndKey}
+	backupRange := rtree.Range{StartKey: cfg.StartKey, EndKey: cfg.EndKey}
 
 	if cfg.RemoveSchedulers {
 		restore, e := mgr.RemoveSchedulers(ctx)
@@ -198,7 +192,7 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
 
 	progressCallBack := func(unit backup.ProgressUnit) {
-		if unit == backup.UnitRange {
+		if unit == backup.RangeUnit {
 			return
 		}
 		updateCh.Inc()
@@ -219,13 +213,18 @@ func RunBackupRaw(c context.Context, g glue.Glue, cmdName string, cfg *RawKvConf
 		CompressionLevel: cfg.CompressionLevel,
 		CipherInfo:       &cfg.CipherInfo,
 	}
-	rg := rtree.KeyRange{
+	rg := rtree.Range{
 		StartKey: backupRange.StartKey,
 		EndKey:   backupRange.EndKey,
 	}
+	progressRange := &rtree.ProgressRange{
+		Res:        rtree.NewRangeTree(),
+		Incomplete: []rtree.Range{rg},
+		Origin:     rg,
+	}
 	metaWriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, &cfg.CipherInfo)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	_, err = client.BackupRanges(ctx, []rtree.KeyRange{rg}, req, 1, backup.RangesSentThreshold, nil, metaWriter, progressCallBack)
+	err = client.BackupRange(ctx, req, map[string]string{}, progressRange, metaWriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}

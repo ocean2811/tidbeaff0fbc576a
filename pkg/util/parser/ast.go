@@ -17,16 +17,16 @@ package parser
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // GetDefaultDB checks if all tables in the AST have explicit DBName. If not, return specified DBName.
 func GetDefaultDB(sel ast.StmtNode, dbName string) string {
 	implicitDB := &implicitDatabase{}
-	ast.Walk(sel, implicitDB)
+	sel.Accept(implicitDB)
 	if implicitDB.hasImplicit {
 		return dbName
 	}
@@ -37,20 +37,20 @@ type implicitDatabase struct {
 	hasImplicit bool
 }
 
-func (i *implicitDatabase) Enter(in ast.Node) (skipChildren bool) {
+func (i *implicitDatabase) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch x := in.(type) {
 	case *ast.TableName:
 		if x.Schema.L == "" {
 			i.hasImplicit = true
 		}
-		return true
+		return in, true
 	default:
-		return i.hasImplicit
+		return in, i.hasImplicit
 	}
 }
 
-func (*implicitDatabase) Leave(ast.Node) bool {
-	return true
+func (*implicitDatabase) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, true
 }
 
 func findTablePos(s, t string) int {
@@ -70,7 +70,7 @@ func findTablePos(s, t string) int {
 }
 
 // SimpleCases captures simple SQL statements and uses string replacement instead of `restore` to improve performance.
-// See https://github.com/pingcap/tidb/issues/22398.
+// See https://github.com/ocean2811/tidbeaff0fbc576a/issues/22398.
 func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool) {
 	if len(origin) == 0 {
 		return "", false
@@ -79,7 +79,7 @@ func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool
 	if !ok {
 		return "", false
 	}
-	if insert.Select != nil || insert.Setlist || insert.OnDuplicate != nil || len(insert.TableHints) != 0 {
+	if insert.Select != nil || insert.Setlist || insert.OnDuplicate != nil || (insert.TableHints != nil && len(insert.TableHints) != 0) {
 		return "", false
 	}
 	join := insert.Table.TableRefs
@@ -118,17 +118,6 @@ func SimpleCases(node ast.StmtNode, defaultDB, origin string) (s string, ok bool
 	return builder.String(), true
 }
 
-// Flags for restore with default DB:
-// 1. RestoreStringSingleQuotes specifies to use single quotes to surround the string;
-// 2. RestoreSpacesAroundBinaryOperation specifies to add space around binary operation;
-// 3. RestoreStringWithoutCharset specifies to not print charset before string;
-// 4. RestoreNameBackQuotes specifies to use back quotes to surround the name;
-const defaultRestoreFlag = format.RestoreStringSingleQuotes | format.RestoreSpacesAroundBinaryOperation | format.RestoreStringWithoutCharset | format.RestoreNameBackQuotes
-
-// bindingRestoreFlag skips redundant expression parentheses only for binding
-// normalization, leaving general SQL restore behavior unchanged.
-const bindingRestoreFlag = defaultRestoreFlag | format.RestoreSkipRedundantParentheses
-
 // RestoreWithDefaultDB returns restore strings for StmtNode with defaultDB
 // This function is customized for SQL bind usage.
 func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
@@ -136,20 +125,13 @@ func RestoreWithDefaultDB(node ast.StmtNode, defaultDB, origin string) string {
 		return s
 	}
 	var sb strings.Builder
-	ctx := format.NewRestoreCtx(bindingRestoreFlag, &sb)
+	// Three flags for restore with default DB:
+	// 1. RestoreStringSingleQuotes specifies to use single quotes to surround the string;
+	// 2. RestoreSpacesAroundBinaryOperation specifies to add space around binary operation;
+	// 3. RestoreStringWithoutCharset specifies to not print charset before string;
+	// 4. RestoreNameBackQuotes specifies to use back quotes to surround the name;
+	ctx := format.NewRestoreCtx(format.RestoreStringSingleQuotes|format.RestoreSpacesAroundBinaryOperation|format.RestoreStringWithoutCharset|format.RestoreNameBackQuotes, &sb)
 	ctx.DefaultDB = defaultDB
-	if err := node.Restore(ctx); err != nil {
-		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
-		return ""
-	}
-	return sb.String()
-}
-
-// RestoreWithoutDB returns restore strings for StmtNode without schema name.
-// This function is customized for universal SQL binding.
-func RestoreWithoutDB(node ast.StmtNode) string {
-	var sb strings.Builder
-	ctx := format.NewRestoreCtx(bindingRestoreFlag|format.RestoreWithoutSchemaName, &sb)
 	if err := node.Restore(ctx); err != nil {
 		logutil.BgLogger().Debug("restore SQL failed", zap.String("category", "sql-bind"), zap.Error(err))
 		return ""

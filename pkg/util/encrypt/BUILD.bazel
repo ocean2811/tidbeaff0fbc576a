@@ -7,7 +7,7 @@ go_library(
         "aes_layer.go",
         "crypt.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/encrypt",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/encrypt",
     visibility = ["//visibility:public"],
     deps = ["@com_github_pingcap_errors//:errors"],
 )

@@ -7,9 +7,9 @@ import (
 	"fmt"
 
 	"github.com/google/btree"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 )
 
 // Value is the value type of stored in the span tree.

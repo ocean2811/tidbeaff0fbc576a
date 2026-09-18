@@ -86,7 +86,7 @@
           },
           "fontSize": "100%",
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 0,
             "y": 1
@@ -253,8 +253,6 @@
               "refId": "M"
             }
           ],
-          "title": "Probe Success",
-          "description": "probe success",
           "timeFrom": "1s",
           "transform": "timeseries_aggregations",
           "type": "table-old"
@@ -273,7 +271,7 @@
           },
           "fontSize": "100%",
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 12,
             "y": 1
@@ -440,8 +438,6 @@
               "refId": "M"
             }
           ],
-          "title": "Probe Success-2",
-          "description": "probe success 2",
           "timeFrom": "1s",
           "transform": "timeseries_aggregations",
           "type": "table-old"
@@ -528,8 +524,7 @@
             }
           ],
           "thresholds": "0,2",
-          "title": "PD Role",
-          "description": "PD Role",
+          "title": "PD role",
           "type": "singlestat",
           "valueFontSize": "50%",
           "valueMaps": [
@@ -615,7 +610,7 @@
           "tableColumn": "",
           "targets": [
             {
-              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"storage_capacity\"})",
+              "expr": "pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\",type=\"storage_capacity\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "refId": "A",
@@ -623,7 +618,7 @@
             }
           ],
           "thresholds": "",
-          "title": "Storage Capacity",
+          "title": "Storage capacity",
           "type": "singlestat",
           "valueFontSize": "80%",
           "valueMaps": [
@@ -700,14 +695,14 @@
           "tableColumn": "",
           "targets": [
             {
-              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"storage_size\"})",
+              "expr": "pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\",type=\"storage_size\"}",
               "intervalFactor": 2,
               "refId": "A",
               "step": 60
             }
           ],
           "thresholds": "",
-          "title": "Current Storage Size",
+          "title": "Current storage size",
           "type": "singlestat",
           "valueFontSize": "80%",
           "valueMaps": [
@@ -780,14 +775,14 @@
           "tableColumn": "",
           "targets": [
             {
-              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"leader_count\"})",
+              "expr": "pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\", type=\"leader_count\"}",
               "intervalFactor": 2,
               "refId": "A",
               "step": 60
             }
           ],
           "thresholds": "",
-          "title": "Number Of Regions",
+          "title": "Number of Regions",
           "type": "singlestat",
           "valueFontSize": "80%",
           "valueMaps": [
@@ -860,7 +855,7 @@
           "tableColumn": "",
           "targets": [
             {
-              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"store_up_count\"})",
+              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\", type=\"store_up_count\"})",
               "format": "time_series",
               "interval": "15s",
               "intervalFactor": 2,
@@ -868,7 +863,7 @@
             }
           ],
           "thresholds": "",
-          "title": "Normal Stores",
+          "title": "Normal stores",
           "type": "singlestat",
           "valueFontSize": "80%",
           "valueMaps": [
@@ -935,68 +930,56 @@
           ],
           "targets": [
             {
-              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"store_disconnected_count\"})",
+              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\", type=\"store_disconnected_count\"})",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Disconnect Stores",
               "refId": "B",
-              "step": 20,
-              "instant": true,
-              "range": false
+              "step": 20
             },
             {
-              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"store_unhealth_count\"})",
+              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\", type=\"store_unhealth_count\"})",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Unhealth Stores",
               "refId": "C",
-              "step": 20,
-              "instant": true,
-              "range": false
+              "step": 20
             },
             {
-              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"store_low_space_count\"})",
+              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\", type=\"store_low_space_count\"})",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "LowSpace Stores",
               "refId": "D",
-              "step": 20,
-              "instant": true,
-              "range": false
+              "step": 20
             },
             {
-              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"store_down_count\"})",
+              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\", type=\"store_down_count\"})",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Down Stores",
               "refId": "E",
-              "step": 20,
-              "instant": true,
-              "range": false
+              "step": 20
             },
             {
-              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"store_offline_count\"})",
+              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\", type=\"store_offline_count\"})",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Offline Stores",
               "refId": "F",
-              "step": 20,
-              "instant": true,
-              "range": false
+              "step": 20
             },
             {
-              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"store_tombstone_count\"})",
+              "expr": "sum(pd_cluster_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\", type=\"store_tombstone_count\"})",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "Tombstone Stores",
               "refId": "G",
-              "step": 20,
-              "instant": true,
-              "range": false
+              "step": 20
             }
           ],
           "timeFrom": "1s",
-          "title": "Abnormal Stores",
+          "title": "Abnormal stores",
           "transform": "timeseries_aggregations",
           "type": "table-old"
         },
@@ -1268,7 +1251,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "99% Completed Cmds Duration Seconds",
+          "title": "99% completed cmds duration seconds",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -1369,7 +1352,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Handle Requests Duration Seconds",
+          "title": "Handle requests duration seconds",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1466,7 +1449,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Region Health",
+          "title": "Region health",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1545,7 +1528,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "pd_hotspot_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"hot_write_region_as_leader\"}",
+              "expr": "pd_hotspot_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\",type=\"hot_write_region_as_leader\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "store-{{store}}",
@@ -1556,7 +1539,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Hot Write Region's Leader Distribution",
+          "title": "Hot write Region's leader distribution",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1636,7 +1619,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "pd_hotspot_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", type=\"hot_read_region_as_leader\"}",
+              "expr": "pd_hotspot_status{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=\"$instance\",type=\"hot_read_region_as_leader\"}",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "store-{{store}}",
@@ -1647,7 +1630,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Hot Read Region's Leader Distribution",
+          "title": "Hot read Region's leader distribution",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1739,7 +1722,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Region Heartbeat Report",
+          "title": "Region heartbeat report",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -1829,7 +1812,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "99% Region Heartbeat Latency",
+          "title": "99% Region heartbeat latency",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -2320,7 +2303,7 @@
               "expr": "tidb_server_connections{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}",
               "format": "time_series",
               "intervalFactor": 2,
-              "legendFormat": "{{instance}} {{resource_group}}",
+              "legendFormat": "{{instance}}",
               "refId": "A",
               "step": 10
             },
@@ -2429,14 +2412,6 @@
               "intervalFactor": 2,
               "legendFormat": "HeapInuse-{{instance}}",
               "refId": "B",
-              "step": 10
-            },
-            {
-              "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", job=\"tidb\"}",
-              "format": "time_series",
-              "intervalFactor": 2,
-              "legendFormat": "quota-{{instance}}",
-              "refId": "C",
               "step": 10
             }
           ],
@@ -3448,7 +3423,7 @@
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 0,
             "y": 4
@@ -3511,7 +3486,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Leader",
+          "title": "leader",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -3566,7 +3541,7 @@
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 12,
             "y": 4
@@ -3614,7 +3589,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Region",
+          "title": "region",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -3666,7 +3641,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 0,
             "y": 12
@@ -3763,7 +3738,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 12,
             "y": 12
@@ -3861,7 +3836,7 @@
           "fill": 5,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 0,
             "y": 20
@@ -3876,6 +3851,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": 250,
             "total": false,
             "values": true
           },
@@ -3909,7 +3885,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Store Size",
+          "title": "store size",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -3960,7 +3936,7 @@
           "fill": 1,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 12,
             "y": 20
@@ -4007,7 +3983,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "CF Size",
+          "title": "cf size",
           "tooltip": {
             "shared": true,
             "sort": 2,
@@ -4061,7 +4037,7 @@
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 0,
             "y": 28
@@ -4113,7 +4089,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Channel Full",
+          "title": "channel full",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -4168,7 +4144,7 @@
           "fillGradient": 0,
           "grid": {},
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 12,
             "y": 28
@@ -4185,6 +4161,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": 250,
             "sort": "max",
             "sortDesc": true,
             "total": false,
@@ -4221,7 +4198,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Server Report Failures",
+          "title": "server report failures",
           "tooltip": {
             "msResolution": false,
             "shared": true,
@@ -4273,7 +4250,7 @@
           "fill": 1,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 0,
             "y": 36
@@ -4321,7 +4298,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Scheduler Pending Commands",
+          "title": "scheduler pending commands",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -4372,7 +4349,7 @@
           "fill": 1,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 12,
             "y": 36
@@ -4422,7 +4399,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Coprocessor Executor Count",
+          "title": "coprocessor executor count",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -4472,7 +4449,7 @@
           },
           "fill": 1,
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 0,
             "y": 44
@@ -4540,7 +4517,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Coprocessor Request Duration",
+          "title": "coprocessor  request duration",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -4590,7 +4567,7 @@
           },
           "fill": 0,
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 12,
             "y": 44
@@ -4623,7 +4600,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tikv_thread_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", name=~\"(raftstore|rs|rfstore)_.*\"}[1m])) by (instance)",
+              "expr": "sum(rate(tikv_thread_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", name=~\"raftstore_.*\"}[1m])) by (instance)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}}",
@@ -4635,7 +4612,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Raft Store CPU",
+          "title": "raft store CPU",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -4685,7 +4662,7 @@
           },
           "fill": 0,
           "gridPos": {
-            "h": 7,
+            "h": 8,
             "w": 12,
             "x": 0,
             "y": 52
@@ -4718,7 +4695,7 @@
           "steppedLine": false,
           "targets": [
             {
-              "expr": "sum(rate(tikv_thread_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", name=~\"unified_read_po.*\"}[1m])) by (instance)",
+              "expr": "sum(rate(tikv_thread_cpu_seconds_total{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", name=~\"cop_.*\"}[1m])) by (instance)",
               "format": "time_series",
               "intervalFactor": 2,
               "legendFormat": "{{instance}}",
@@ -4731,7 +4708,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Unified Read Pool CPU",
+          "title": "Coprocessor CPU",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -4793,7 +4770,7 @@
           },
           "fontSize": "100%",
           "gridPos": {
-            "h": 7,
+            "h": 5,
             "w": 6,
             "x": 0,
             "y": 5
@@ -4888,7 +4865,7 @@
           },
           "fontSize": "100%",
           "gridPos": {
-            "h": 7,
+            "h": 5,
             "w": 6,
             "x": 6,
             "y": 5
@@ -5014,7 +4991,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 5,
             "w": 12,
             "x": 12,
             "y": 5
@@ -5029,6 +5006,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": 250,
             "sort": "current",
             "sortDesc": true,
             "total": false,
@@ -5118,7 +5096,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 5,
             "w": 12,
             "x": 0,
             "y": 10
@@ -5133,6 +5111,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": 250,
             "sort": "current",
             "sortDesc": true,
             "total": false,
@@ -5169,7 +5148,7 @@
           "timeFrom": null,
           "timeRegions": [],
           "timeShift": null,
-          "title": "Load-[1m]",
+          "title": "Load [1m]",
           "tooltip": {
             "shared": true,
             "sort": 0,
@@ -5219,7 +5198,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 5,
             "w": 12,
             "x": 12,
             "y": 10
@@ -5234,6 +5213,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": 250,
             "sort": "current",
             "sortDesc": true,
             "total": false,
@@ -5319,7 +5299,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 5,
             "w": 12,
             "x": 0,
             "y": 15
@@ -5334,6 +5314,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": 250,
             "sort": "current",
             "sortDesc": true,
             "total": false,
@@ -5431,7 +5412,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 5,
             "w": 12,
             "x": 12,
             "y": 15
@@ -5446,6 +5427,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": 250,
             "sort": "current",
             "sortDesc": true,
             "total": false,
@@ -5535,7 +5517,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 5,
             "w": 12,
             "x": 0,
             "y": 20
@@ -5550,6 +5532,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": 250,
             "sort": "current",
             "sortDesc": true,
             "total": false,
@@ -5638,7 +5621,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 5,
             "w": 12,
             "x": 12,
             "y": 20
@@ -5653,6 +5636,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": 250,
             "sort": "current",
             "sortDesc": true,
             "total": false,
@@ -5741,7 +5725,7 @@
           "fill": 0,
           "fillGradient": 0,
           "gridPos": {
-            "h": 7,
+            "h": 5,
             "w": 12,
             "x": 0,
             "y": 25
@@ -5756,6 +5740,7 @@
             "min": false,
             "rightSide": true,
             "show": true,
+            "sideWidth": 250,
             "sort": "current",
             "sortDesc": true,
             "total": false,

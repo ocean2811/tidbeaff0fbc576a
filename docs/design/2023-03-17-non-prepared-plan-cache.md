@@ -1,7 +1,7 @@
 # Proposal: Non-Prepared Plan Cache
 
 * Author: [qw4990](https://github.com/qw4990)
-* Tracking issue: https://github.com/pingcap/tidb/issues/36598
+* Tracking issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/36598
 
 ## Background
 TP queries can get lots of performance benefits from Plan Cache, but the current [TiDB Plan Cache](https://docs.pingcap.com/tidb/dev/sql-prepared-plan-cache) can only support Prepare/Execute Statements. Most of our users are still using general(non-prepared) queries to access TiDB instead of Prepare/Execute. So if Plan Cache can support general queries, these users can gain some performance benefits as well.

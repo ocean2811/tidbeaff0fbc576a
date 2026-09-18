@@ -25,14 +25,13 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/infoschema/perfschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/perfschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client/http"
 	"go.opencensus.io/stats/view"
 )
 
@@ -50,6 +49,14 @@ func TestPerfSchemaTables(t *testing.T) {
 	tk.MustQuery("select * from session_status where variable_name = 'Ssl_verify_mode'").Check(testkit.Rows())
 	tk.MustQuery("select * from setup_actors").Check(testkit.Rows())
 	tk.MustQuery("select * from events_stages_history_long").Check(testkit.Rows())
+}
+
+func TestSessionVariables(t *testing.T) {
+	store := newMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	res := tk.MustQuery("select variable_value from performance_schema.session_variables order by variable_name limit 10;")
+	tk.MustQuery("select variable_value from information_schema.session_variables order by variable_name limit 10;").Check(res.Rows())
 }
 
 func TestTiKVProfileCPU(t *testing.T) {
@@ -81,7 +88,7 @@ func TestTiKVProfileCPU(t *testing.T) {
 		strings.Join([]string{"pd", mockAddr, mockAddr}, ","),
 	}
 	fpExpr := strings.Join(servers, ";")
-	fpName := "github.com/pingcap/tidb/pkg/infoschema/perfschema/mockRemoteNodeStatusAddress"
+	fpName := "github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/perfschema/mockRemoteNodeStatusAddress"
 	require.NoError(t, failpoint.Enable(fpName, fmt.Sprintf(`return("%s")`, fpExpr)))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
@@ -144,12 +151,12 @@ func TestTiKVProfileCPU(t *testing.T) {
 	}
 
 	// mock PD profile
-	router.HandleFunc(pd.PProfProfile, copyHandler("testdata/test.pprof"))
-	router.HandleFunc(pd.PProfHeap, handlerFactory("heap"))
-	router.HandleFunc(pd.PProfMutex, handlerFactory("mutex"))
-	router.HandleFunc(pd.PProfAllocs, handlerFactory("allocs"))
-	router.HandleFunc(pd.PProfBlock, handlerFactory("block"))
-	router.HandleFunc(pd.PProfGoroutine, handlerFactory("goroutine", 2))
+	router.HandleFunc("/pd/api/v1/debug/pprof/profile", copyHandler("testdata/test.pprof"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/heap", handlerFactory("heap"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/mutex", handlerFactory("mutex"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/allocs", handlerFactory("allocs"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/block", handlerFactory("block"))
+	router.HandleFunc("/pd/api/v1/debug/pprof/goroutine", handlerFactory("goroutine", 2))
 
 	tk.MustQuery("select * from pd_profile_cpu where depth < 3")
 	warnings = tk.Session().GetSessionVars().StmtCtx.GetWarnings()

@@ -2,7 +2,7 @@
 
 - Author(s):     [Yisaer](https://github.com/Yisaer) (Song Gao)
 - Last updated:  2020-05-11
-- Discussion at: https://github.com/pingcap/tidb/pull/16777
+- Discussion at: https://github.com/ocean2811/tidbeaff0fbc576a/pull/16777
 
 ## Abstract
 
@@ -10,7 +10,7 @@
 
 ## Background
 
-Currently, we have support memory usage and disk usage tracker for `Executor`. In [#15407](https://github.com/pingcap/tidb/issues/15407), we are going to support the `Global Memory Tracker`.
+Currently, we have support memory usage and disk usage tracker for `Executor`. In [#15407](https://github.com/ocean2811/tidbeaff0fbc576a/issues/15407), we are going to support the `Global Memory Tracker`.
 However, it would be too much work to realize calculating the memory usage of each Implementation of `Plan` and it might also causing much cpu consuming. To track the memory usage of `SimpleLRUCache`, we are trying to search the memory usage from `runtime/pprof`.
 
 ## Proposal
@@ -25,14 +25,14 @@ And `runtime.MemProfileRate` controls the fraction of memory allocations that ar
 To verify whether `kvcache.(*SimpleLRUCache).Put` would reflect the real heap usage, I use following test to ensure it:
 
 1. fulfill the `SimpleLRUCache` by `set @randomString = ? with 20000 times`.
-2. profile the heap Usage of `github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put` and the result is 2.55 MB
+2. profile the heap Usage of `github.com/ocean2811/tidbeaff0fbc576a/util/kvcache.(*SimpleLRUCache).Put` and the result is 2.55 MB
 
 Let's dig into the Put then we can find the where the heap consumed:
 
 ```sh
 (pprof) list Put
 Total: 52.23MB
-ROUTINE ======================== github.com/pingcap/tidb/util/kvcache.(*SimpleLRUCache).Put in /Users/yisa/Downloads/Github/GoProject/src/github.com/pingcap/tidb/util/kvcache/simple_lru.go
+ROUTINE ======================== github.com/ocean2811/tidbeaff0fbc576a/util/kvcache.(*SimpleLRUCache).Put in /Users/yisa/Downloads/Github/GoProject/src/github.com/ocean2811/tidbeaff0fbc576a/util/kvcache/simple_lru.go
     2.55MB     3.05MB (flat, cum)  5.85% of Total
          .          .     91:   return element.Value.(*cacheEntry).value, true
          .          .     92:}

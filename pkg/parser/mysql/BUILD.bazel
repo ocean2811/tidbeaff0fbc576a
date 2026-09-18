@@ -14,11 +14,10 @@ go_library(
         "type.go",
         "util.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/parser/mysql",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/format",
-        "@com_github_coreos_go_semver//semver",
         "@com_github_pingcap_errors//:errors",
     ],
 )
@@ -34,6 +33,6 @@ go_test(
     ],
     embed = [":mysql"],
     flaky = True,
-    shard_count = 11,
+    shard_count = 8,
     deps = ["@com_github_stretchr_testify//require"],
 )

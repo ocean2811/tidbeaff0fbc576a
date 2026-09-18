@@ -19,19 +19,19 @@ import (
 	"fmt"
 	"runtime/trace"
 
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/tracing"
 )
 
 // UnionScanExec merges the rows from dirty table and the rows from distsql request.
@@ -63,9 +63,6 @@ type UnionScanExec struct {
 	// used with dynamic prune mode
 	// < 0 if not used.
 	physTblIDIdx int
-
-	// partitionIDMap are only required by union scan with global index.
-	partitionIDMap map[int64]struct{}
 
 	keepOrder bool
 	compareExec
@@ -156,9 +153,8 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 		}
 		mutableRow.SetDatums(row...)
 
-		sctx := us.Ctx()
 		for _, idx := range us.virtualColumnIndex {
-			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(sctx.GetExprCtx().GetEvalCtx(), mutableRow.ToRow())
+			datum, err := us.Schema().Columns[idx].EvalVirtualColumn(mutableRow.ToRow())
 			if err != nil {
 				return err
 			}
@@ -175,7 +171,7 @@ func (us *UnionScanExec) Next(ctx context.Context, req *chunk.Chunk) error {
 			mutableRow.SetDatum(idx, castDatum)
 		}
 
-		matched, _, err := expression.EvalBool(us.Ctx().GetExprCtx().GetEvalCtx(), us.conditionsWithVirCol, mutableRow.ToRow())
+		matched, _, err := expression.EvalBool(us.Ctx(), us.conditionsWithVirCol, mutableRow.ToRow())
 		if err != nil {
 			return err
 		}
@@ -191,10 +187,7 @@ func (us *UnionScanExec) Close() error {
 	us.cursor4AddRows = nil
 	us.cursor4SnapshotRows = 0
 	us.snapshotRows = us.snapshotRows[:0]
-	if us.addedRowsIter != nil {
-		us.addedRowsIter.Close()
-	}
-	return exec.Close(us.Children(0))
+	return us.Children(0).Close()
 }
 
 // getOneRow gets one result row from dirty table or child.
@@ -258,7 +251,7 @@ func (us *UnionScanExec) getSnapshotRow(ctx context.Context) ([]types.Datum, err
 		iter := chunk.NewIterator4Chunk(us.snapshotChunkBuffer)
 		for row := iter.Begin(); row != iter.End(); row = iter.Next() {
 			var snapshotHandle kv.Handle
-			snapshotHandle, err = us.handleCols.BuildHandle(us.Ctx().GetSessionVars().StmtCtx, row)
+			snapshotHandle, err = us.handleCols.BuildHandle(row)
 			if err != nil {
 				return nil, err
 			}
@@ -296,15 +289,8 @@ type compareExec struct {
 	// usedIndex is the column offsets of the index which Src executor has used.
 	usedIndex []int
 	desc      bool
-	// needExtraSorting means if an extra sorting is needed to satisfy the keepOrder requirement.
-	// In the simplest case, we only need to return data in the order of the original kv ranges to satisfy it.
-	// However, in some new and more complex cases, the required order is not the same as the order of the kv ranges.
-	// For example, when we require keepOrder on a partitioned table, or in the PropMatchedNeedMergeSort case decided by
-	// the planner, the corresponding executor use an extra merge sort to satisfy the order requirement. In such cases,
-	// for UnionScan, we need to do an extra sorting to satisfy the order requirement.
-	needExtraSorting bool
 	// handleCols is the handle's position of the below scan plan.
-	handleCols plannerutil.HandleCols
+	handleCols plannercore.HandleCols
 }
 
 func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum) (ret int, err error) {
@@ -312,7 +298,7 @@ func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum
 	for _, colOff := range ce.usedIndex {
 		aColumn := a[colOff]
 		bColumn := b[colOff]
-		cmp, err = aColumn.Compare(sctx.TypeCtx(), &bColumn, ce.collators[colOff])
+		cmp, err = aColumn.Compare(sctx, &bColumn, ce.collators[colOff])
 		if err != nil {
 			return 0, err
 		}
@@ -324,7 +310,7 @@ func (ce compareExec) compare(sctx *stmtctx.StatementContext, a, b []types.Datum
 		}
 		return cmp, nil
 	}
-	cmp, err = ce.handleCols.Compare(a, b, ce.collators, sctx.TypeCtx())
+	cmp, err = ce.handleCols.Compare(a, b, ce.collators)
 	if ce.desc {
 		return -cmp, err
 	}

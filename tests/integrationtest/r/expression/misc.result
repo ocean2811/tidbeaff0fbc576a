@@ -14,11 +14,11 @@ select timestamp '2017@01@0001 00~00~00.333';
 timestamp '2017@01@0001 00~00~00.333'
 2017-01-01 00:00:00.333
 select timestamp '00:00:00';
-Error 1525 (HY000): Incorrect datetime value: '00:00:00'
+Error 1292 (22007): Incorrect datetime value: '00:00:00'
 select timestamp '1992-01-03';
-Error 1525 (HY000): Incorrect datetime value: '1992-01-03'
+Error 1292 (22007): Incorrect datetime value: '1992-01-03'
 select timestamp '20171231235959.999999';
-Error 1525 (HY000): Incorrect datetime value: '20171231235959.999999'
+Error 1292 (22007): Incorrect datetime value: '20171231235959.999999'
 select time '117:01:12';
 time '117:01:12'
 117:01:12
@@ -119,7 +119,8 @@ OR Variable_name = 'character_set' OR Variable_name = 'character_set_server' OR 
 OR Variable_name = 'transaction_isolation' OR Variable_name = 'character_set_results' OR Variable_name = 'timezone'
 OR Variable_name = 'time_zone' OR Variable_name = 'system_time_zone'
 OR Variable_name = 'lower_case_table_names' OR Variable_name = 'max_allowed_packet' OR Variable_name = 'net_buffer_length'
-OR Variable_name = 'sql_mode' OR Variable_name = 'license' OR Variable_name = 'init_connect';
+OR Variable_name = 'sql_mode' OR Variable_name = 'query_cache_type'  OR Variable_name = 'query_cache_size'
+OR Variable_name = 'license' OR Variable_name = 'init_connect';
 Variable_name	Value
 character_set_client	utf8mb4
 character_set_connection	utf8mb4
@@ -132,6 +133,8 @@ lower_case_table_names	2
 max_allowed_packet	67108864
 net_buffer_length	16384
 net_write_timeout	60
+query_cache_size	1048576
+query_cache_type	OFF
 sql_mode	ONLY_FULL_GROUP_BY,STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_AUTO_CREATE_USER,NO_ENGINE_SUBSTITUTION
 system_time_zone	Asia/Shanghai
 time_zone	Asia/Shanghai
@@ -254,37 +257,18 @@ innodb_default_row_format	dynamic
 SHOW VARIABLES LIKE 'character_set_server';
 Variable_name	Value
 character_set_server	utf8mb4
-SHOW VARIABLES LIKE 'innodb_additional_mem_pool_size';
-Variable_name	Value
-SHOW VARIABLES LIKE 'innodb_checksums';
-Variable_name	Value
 SHOW VARIABLES LIKE 'innodb_file_format';
 Variable_name	Value
-SHOW VARIABLES LIKE 'innodb_file_format_check';
-Variable_name	Value
-SHOW VARIABLES LIKE 'innodb_file_format_max';
-Variable_name	Value
+innodb_file_format	Barracuda
 SHOW VARIABLES LIKE 'innodb_large_prefix';
 Variable_name	Value
-SHOW VARIABLES LIKE 'innodb_locks_unsafe_for_binlog';
-Variable_name	Value
-SHOW VARIABLES LIKE 'innodb_log_checksum_algorithm';
-Variable_name	Value
-SHOW VARIABLES LIKE 'innodb_mirrored_log_groups';
-Variable_name	Value
-SHOW VARIABLES LIKE 'innodb_stats_sample_pages';
-Variable_name	Value
-SHOW VARIABLES LIKE 'innodb_support_xa';
-Variable_name	Value
-SHOW VARIABLES LIKE 'innodb_undo_logs';
-Variable_name	Value
-SHOW VARIABLES LIKE 'innodb_use_sys_malloc';
-Variable_name	Value
+innodb_large_prefix	ON
 drop table if exists t;
 create table t (c1 varchar(100), c2 varchar(128));
 prepare pr1 from "insert into t values(ifnull(?,' '),ifnull(?,' '))";
 set @a='1',@b=repeat('x', 80);
 execute pr1 using @a,@b;
+
 drop table if exists t;
 create table t(a int, b int, index(a));
 insert into t values (null, 0), (null, 1), (10, 11), (10, 12);
@@ -333,11 +317,11 @@ COUNT(*)
 drop table if exists t;
 create table t(a bigint, b bigint);
 insert into t values(1, 1);
-explain format='plan_tree' select ifnull("aaaa", a) from t;
-id	task	access object	operator info
-Projection	root		aaaa->Column
-└─TableReader	root		data:TableFullScan
-  └─TableFullScan	cop[tikv]	table:t	keep order:false, stats:pseudo
+desc format='brief' select ifnull("aaaa", a) from t;
+id	estRows	task	access object	operator info
+Projection	10000.00	root		aaaa->Column#4
+└─TableReader	10000.00	root		data:TableFullScan
+  └─TableFullScan	10000.00	cop[tikv]	table:t	keep order:false, stats:pseudo
 select ifnull("aaaa", a) from t;
 ifnull("aaaa", a)
 aaaa
@@ -447,6 +431,7 @@ a
 36
 36
 with cte1(a) as (select 36) update t1 set a = 1 where a in (select a from cte1);
+
 select * from t1;
 a
 2
@@ -454,6 +439,7 @@ a
 1
 1
 with recursive cte(a) as (select 1 union select a + 1 from cte where a < 10) update cte, t1 set t1.a=1;
+
 select * from t1;
 a
 1
@@ -484,26 +470,35 @@ create table t(a int, b tinyint as(a+100) unique key);
 insert ignore into t values(200, default);
 update t set a=1 where a=200;
 admin check table t;
+
 delete from t;
 insert ignore into t values(200, default);
 admin check table t;
+
 insert ignore into t values(200, default) on duplicate key update a=100;
 admin check table t;
+
 delete from t;
 admin check table t;
+
 begin;
 insert ignore into t values(200, default);
 update t set a=1 where a=200;
 admin check table t;
+
 delete from t;
 insert ignore into t values(200, default);
 admin check table t;
+
 insert ignore into t values(200, default) on duplicate key update a=100;
 admin check table t;
+
 delete from t;
 admin check table t;
+
 commit;
 admin check table t;
+
 drop table if exists t;
 create table t (c_enum enum('c', 'b', 'a'));
 insert into t values ('a'), ('b'), ('c'), ('a'), ('b'), ('a');
@@ -679,7 +674,6 @@ update tdm set c12 = '0' where id = 1;
 select c12+0 from tdm;
 c12+0
 0
-set @@sql_mode = default;
 drop table if exists t;
 create table t(a int);
 with cte1 as (select * from cte2), cte2 as (select 1) select * from cte1;
@@ -691,13 +685,13 @@ Error 3575 (HY000): Recursive Common Table Expression 'cte' can contain neither 
 with recursive cte(n) as (select 1 union select row_number() over(partition by n) from cte ) select * from cte;
 Error 3575 (HY000): Recursive Common Table Expression 'cte' can contain neither aggregation nor window functions in recursive query block
 with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;
-Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive cte(n) as (select 1 union (select * from cte order by n)) select * from cte;
-Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive cte(n) as (select 1 union select distinct  * from cte) select * from cte;
-Error 1235 (42000): This version of TiDB doesn't yet support 'SELECT DISTINCT in recursive query block of Common Table Expression'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive cte(n) as (select 1 union (select * from cte limit 2)) select * from cte;
-Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT in recursive query block of Common Table Expression (except within LATERAL subqueries)'
+Error 1235 (42000): This version of TiDB doesn't yet support 'ORDER BY / LIMIT / SELECT DISTINCT in recursive query block of Common Table Expression'
 with recursive cte(n) as (select 1 union select * from cte, cte c1) select * from cte;
 Error 3577 (HY000): In recursive query block of Recursive Common Table Expression 'cte', the recursive table must be referenced only once, and not in any subquery
 with recursive cte(n) as (select 1 union select * from (select * from cte) c1) select * from cte;
@@ -1013,31 +1007,3 @@ set @@tidb_enable_vectorized_expression = true;
 select length(@p);
 length(@p)
 19
-SELECT xxx(1);
-Error 1046 (3D000): No database selected
-SELECT yyy();
-Error 1046 (3D000): No database selected
-SELECT T.upper(1);
-Error 1305 (42000): FUNCTION t.upper does not exist
-use test;
-SELECT xxx(1);
-Error 1305 (42000): FUNCTION test.xxx does not exist
-SELECT yyy();
-Error 1305 (42000): FUNCTION test.yyy does not exist
-SELECT t.upper(1);
-Error 1305 (42000): FUNCTION t.upper does not exist
-SELECT timestampliteral(rand());
-Error 1305 (42000): FUNCTION test.timestampliteral does not exist
-drop table if exists tab0;
-CREATE TABLE tab0(col0 INTEGER, col1 INTEGER, col2 INTEGER);
-SELECT + - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16 FROM tab0;
-+ - (- CASE + col0 WHEN + CAST( col0 AS SIGNED ) THEN col1 WHEN 79 THEN NULL WHEN + - col1 THEN col0 / + col0 END ) * - 16
-show create table tab0;
-Table	Create Table
-tab0	CREATE TABLE `tab0` (
-  `col0` int DEFAULT NULL,
-  `col1` int DEFAULT NULL,
-  `col2` int DEFAULT NULL
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
-SELECT TIDB_MVCC_INFO();
-Error 1582 (42000): Incorrect parameter count in the call to native function 'tidb_mvcc_info'

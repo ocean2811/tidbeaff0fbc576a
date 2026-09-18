@@ -10,15 +10,14 @@ import (
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/backup"
-	"github.com/pingcap/tidb/br/pkg/conn"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/backup"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/glue"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/metautil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/rtree"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/summary"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"go.uber.org/zap"
@@ -45,7 +44,6 @@ func DefineTxnBackupFlags(command *cobra.Command) {
 	command.Flags().StringP(flagStartKey, "", "", "backup txn kv start key, key is inclusive")
 	command.Flags().StringP(flagEndKey, "", "", "backup txn kv end key, key is exclusive")
 	command.Flags().Int64P(flagStartVersion, "", 0, "backup timestamp for txn kv")
-	command.Flags().String(flagKeyspaceName, "", "keyspace name for backup")
 	command.Flags().String(flagCompressionType, "zstd",
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	command.Flags().Bool(flagRemoveSchedulers, false,
@@ -62,11 +60,6 @@ func (cfg *TxnKvConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err := cfg.Config.ParseFromFlags(flags); err != nil {
 		return errors.Trace(err)
 	}
-	keyspaceName, err := flags.GetString(flagKeyspaceName)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	cfg.KeyspaceName = keyspaceName
 	return nil
 }
 
@@ -118,20 +111,20 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	u, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	// Backup txn does not need domain.
 	needDomain := false
-	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer mgr.Close()
 
 	client := backup.NewBackupClient(ctx, mgr)
-	opts := storeapi.Options{
+	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
 		CheckS3ObjectLockOptions: true,
@@ -140,11 +133,11 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 		return errors.Trace(err)
 	}
 
-	backupRanges := make([]rtree.KeyRange, 0, 1)
+	backupRanges := make([]rtree.Range, 0, 1)
 	// current just build full txn range to support full txn backup
 	minStartKey := []byte{}
 	maxEndKey := []byte{}
-	backupRanges = append(backupRanges, rtree.KeyRange{
+	backupRanges = append(backupRanges, rtree.Range{
 		StartKey: minStartKey,
 		EndKey:   maxEndKey,
 	})
@@ -185,7 +178,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 		ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
 
 	progressCallBack := func(unit backup.ProgressUnit) {
-		if unit == backup.UnitRange {
+		if unit == backup.RangeUnit {
 			return
 		}
 		updateCh.Inc()
@@ -211,7 +204,7 @@ func RunBackupTxn(c context.Context, g glue.Glue, cmdName string, cfg *TxnKvConf
 
 	metaWriter := metautil.NewMetaWriter(client.GetStorage(), metautil.MetaFileSize, false, metautil.MetaFile, &cfg.CipherInfo)
 	metaWriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	_, err = client.BackupRanges(ctx, backupRanges, req, 1, backup.RangesSentThreshold, nil, metaWriter, progressCallBack)
+	err = client.BackupRanges(ctx, backupRanges, req, uint(cfg.Concurrency), nil, metaWriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}

@@ -3,14 +3,14 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "show",
     srcs = ["cmd.go"],
-    importpath = "github.com/pingcap/tidb/br/pkg/task/show",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/task/show",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/errors",
         "//br/pkg/logutil",
         "//br/pkg/metautil",
+        "//br/pkg/storage",
         "//br/pkg/task",
-        "//pkg/objstore",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
         "@com_github_tikv_client_go_v2//oracle",

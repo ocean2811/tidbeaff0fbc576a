@@ -19,18 +19,18 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 )
 
 type tidbKeyGener struct {
 	inner *defaultGener
 }
 
-func (g *tidbKeyGener) gen() any {
+func (g *tidbKeyGener) gen() interface{} {
 	tableID := g.inner.gen().(int64)
 	var result []byte
 	if rand.Intn(2) == 1 {

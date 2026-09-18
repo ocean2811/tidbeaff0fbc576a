@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/owner"
 	"go.uber.org/zap"
 )
 
@@ -101,12 +101,4 @@ func (od *OwnerDaemon) Begin(ctx context.Context) (func(), error) {
 		}
 	}
 	return loop, nil
-}
-
-func (od *OwnerDaemon) ForceToBeOwner(ctx context.Context) error {
-	return od.manager.ForceToBeOwner(ctx)
-}
-
-func (od *OwnerDaemon) RetireIfOwner() {
-	od.manager.RetireOwner()
 }

@@ -3,61 +3,17 @@
 package export
 
 import (
-	"bytes"
-	"context"
 	"database/sql/driver"
 	"fmt"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/errors"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/util/promutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/promutil"
 	"github.com/stretchr/testify/require"
 )
-
-type csvOption struct {
-	nullValue      string
-	separator      []byte
-	delimiter      []byte
-	lineTerminator []byte
-}
-
-// BytesWriter is a Writer implementation on top of bytes.Buffer that is useful for testing.
-type BytesWriter struct {
-	buf *bytes.Buffer
-}
-
-// Write delegates to bytes.Buffer.
-func (u *BytesWriter) Write(_ context.Context, p []byte) (int, error) {
-	return u.buf.Write(p)
-}
-
-// Close delegates to bytes.Buffer.
-func (*BytesWriter) Close(_ context.Context) error {
-	// noop
-	return nil
-}
-
-// Bytes delegates to bytes.Buffer.
-func (u *BytesWriter) Bytes() []byte {
-	return u.buf.Bytes()
-}
-
-// String delegates to bytes.Buffer.
-func (u *BytesWriter) String() string {
-	return u.buf.String()
-}
-
-// Reset delegates to bytes.Buffer.
-func (u *BytesWriter) Reset() {
-	u.buf.Reset()
-}
-
-// NewBufferWriter creates a Writer that simply writes to a buffer (useful for testing).
-func NewBufferWriter() *BytesWriter {
-	return &BytesWriter{buf: &bytes.Buffer{}}
-}
 
 func TestWriteMeta(t *testing.T) {
 	createTableStmt := "CREATE TABLE `t1` (\n" +
@@ -65,7 +21,7 @@ func TestWriteMeta(t *testing.T) {
 		") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci;\n"
 	specCmts := []string{"/*!40103 SET TIME_ZONE='+00:00' */;"}
 	meta := newMockMetaIR("t1", createTableStmt, specCmts)
-	writer := NewBufferWriter()
+	writer := storage.NewBufferWriter()
 
 	err := WriteMeta(tcontext.Background(), meta, writer)
 	require.NoError(t, err)
@@ -92,7 +48,7 @@ func TestWriteInsert(t *testing.T) {
 		"/*!40014 SET FOREIGN_KEY_CHECKS=0*/;",
 	}
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
-	bf := NewBufferWriter()
+	bf := storage.NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	m := newMetrics(conf.PromFactory, conf.Labels)
@@ -110,24 +66,6 @@ func TestWriteInsert(t *testing.T) {
 	require.Equal(t, expected, bf.String())
 	require.Equal(t, ReadGauge(m.finishedRowsGauge), float64(len(data)))
 	require.Equal(t, ReadGauge(m.finishedSizeGauge), float64(len(expected)))
-
-	t.Run("parquet tracks finished size gauge", func(t *testing.T) {
-		parquetData := [][]driver.Value{
-			{"1"},
-			{"2"},
-			{"3"},
-		}
-		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
-		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
-		parquetWriter := NewBufferWriter()
-		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
-
-		n, err := WriteInsertInParquet(tcontext.Background(), cfg, parquetTableIR, parquetTableIR, parquetWriter, parquetMetrics)
-		require.NoError(t, err)
-		require.Equal(t, uint64(len(parquetData)), n)
-		require.Equal(t, float64(len(parquetData)), ReadGauge(parquetMetrics.finishedRowsGauge))
-		require.Greater(t, ReadGauge(parquetMetrics.finishedSizeGauge), float64(0))
-	})
 }
 
 func TestWriteInsertReturnsError(t *testing.T) {
@@ -148,7 +86,7 @@ func TestWriteInsertReturnsError(t *testing.T) {
 	rowErr := errors.New("mock row error")
 	tableIR := newMockTableIR("test", "employee", data, specCmts, colTypes)
 	tableIR.rowErr = rowErr
-	bf := NewBufferWriter()
+	bf := storage.NewBufferWriter()
 
 	conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 	m := newMetrics(conf.PromFactory, conf.Labels)
@@ -166,26 +104,6 @@ func TestWriteInsertReturnsError(t *testing.T) {
 	// error occurred, should revert pointer to zero
 	require.Equal(t, ReadGauge(m.finishedRowsGauge), float64(0))
 	require.Equal(t, ReadGauge(m.finishedSizeGauge), float64(0))
-
-	t.Run("parquet reverts finished metrics on error", func(t *testing.T) {
-		parquetData := [][]driver.Value{
-			{"1"},
-			{"2"},
-			{"3"},
-		}
-		colInfos := []*ColumnInfo{{Name: "id", DatabaseTypeName: "INT"}}
-		parquetRowErr := errors.New("mock parquet row error")
-		parquetTableIR := newMockTableIRWithColumnInfo("test", "employee", parquetData, nil, colInfos)
-		parquetTableIR.rowErr = parquetRowErr
-		parquetWriter := NewBufferWriter()
-		parquetMetrics := newMetrics(cfg.PromFactory, cfg.Labels)
-
-		n, err := WriteInsertInParquet(tcontext.Background(), cfg, parquetTableIR, parquetTableIR, parquetWriter, parquetMetrics)
-		require.ErrorIs(t, err, parquetRowErr)
-		require.Equal(t, uint64(len(parquetData)-1), n)
-		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedRowsGauge))
-		require.Equal(t, float64(0), ReadGauge(parquetMetrics.finishedSizeGauge))
-	})
 }
 
 func TestWriteInsertInCsv(t *testing.T) {
@@ -199,7 +117,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 	}
 	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "TEXT"}
 	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
-	bf := NewBufferWriter()
+	bf := storage.NewBufferWriter()
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
@@ -219,7 +137,7 @@ func TestWriteInsertInCsv(t *testing.T) {
 
 	// test delimiter
 	bf.Reset()
-	opt.delimiter = []byte{'\''}
+	opt.delimiter = quotationMark
 	tableIR = newMockTableIR("test", "employee", data, nil, colTypes)
 	conf = configForWriteCSV(cfg, true, opt)
 	m = newMetrics(conf.PromFactory, conf.Labels)
@@ -294,30 +212,6 @@ func TestWriteInsertInCsv(t *testing.T) {
 	require.Equal(t, float64(len(expected)), ReadGauge(m.finishedSizeGauge))
 }
 
-func TestWriteInsertInCsvAllGeneratedColumns(t *testing.T) {
-	cfg := createMockConfig()
-
-	data := [][]driver.Value{{"1"}, {"2"}, {"3"}}
-	colTypes := []string{"INT"}
-	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
-	// All columns are generated, so nothing is selected: each source row emits
-	// only a line terminator, and no header is written.
-	tableIR.selectedField = ""
-	bf := NewBufferWriter()
-
-	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
-	conf := configForWriteCSV(cfg, false, opt)
-	m := newMetrics(conf.PromFactory, conf.Labels)
-	n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
-	require.NoError(t, err)
-	require.Equal(t, uint64(len(data)), n)
-
-	expected := "\r\n\r\n\r\n"
-	require.Equal(t, expected, bf.String())
-	require.Equal(t, float64(len(data)), ReadGauge(m.finishedRowsGauge))
-	require.Equal(t, float64(len(expected)), ReadGauge(m.finishedSizeGauge))
-}
-
 func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	cfg := createMockConfig()
 
@@ -333,7 +227,7 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	rowErr := errors.New("mock row error")
 	tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
 	tableIR.rowErr = rowErr
-	bf := NewBufferWriter()
+	bf := storage.NewBufferWriter()
 
 	// test nullValue
 	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
@@ -351,75 +245,6 @@ func TestWriteInsertInCsvReturnsError(t *testing.T) {
 	require.Equal(t, float64(0), ReadGauge(m.finishedSizeGauge))
 }
 
-func TestWriteInsertInCsvWithDialect(t *testing.T) {
-	cfg := createMockConfig()
-
-	data := [][]driver.Value{
-		{"1", "male", "bob@mail.com", "020-1234", "blob1"},
-		{"2", "female", "sarah@mail.com", "020-1253", "blob2"},
-		{"3", "male", "john@mail.com", "020-1256", "blob3"},
-		{"4", "female", "sarah@mail.com", "020-1235", "blob4"},
-	}
-	colTypes := []string{"INT", "SET", "VARCHAR", "VARCHAR", "BLOB"}
-	opt := &csvOption{separator: []byte(","), delimiter: []byte{'"'}, nullValue: "\\N", lineTerminator: []byte("\r\n")}
-	conf := configForWriteCSV(cfg, true, opt)
-
-	{
-		// test UTF8
-		conf.CsvOutputDialect = CSVDialectDefault
-		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
-		m := newMetrics(conf.PromFactory, conf.Labels)
-		bf := NewBufferWriter()
-		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
-		require.NoError(t, err)
-		require.Equal(t, uint64(4), n)
-
-		expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\"blob1\"\r\n" +
-			"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"blob2\"\r\n" +
-			"3,\"male\",\"john@mail.com\",\"020-1256\",\"blob3\"\r\n" +
-			"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"blob4\"\r\n"
-		require.Equal(t, expected, bf.String())
-		require.Equal(t, float64(4), ReadGauge(m.finishedRowsGauge))
-		require.Equal(t, float64(185), ReadGauge(m.finishedSizeGauge))
-	}
-	{
-		// test HEX
-		conf.CsvOutputDialect = CSVDialectRedshift
-		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
-		m := newMetrics(conf.PromFactory, conf.Labels)
-		bf := NewBufferWriter()
-		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
-		require.NoError(t, err)
-		require.Equal(t, uint64(4), n)
-
-		expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\"626c6f6231\"\r\n" +
-			"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"626c6f6232\"\r\n" +
-			"3,\"male\",\"john@mail.com\",\"020-1256\",\"626c6f6233\"\r\n" +
-			"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"626c6f6234\"\r\n"
-		require.Equal(t, expected, bf.String())
-		require.Equal(t, float64(4), ReadGauge(m.finishedRowsGauge))
-		require.Equal(t, float64(205), ReadGauge(m.finishedSizeGauge))
-	}
-	{
-		// test Base64
-		conf.CsvOutputDialect = CSVDialectBigQuery
-		tableIR := newMockTableIR("test", "employee", data, nil, colTypes)
-		m := newMetrics(conf.PromFactory, conf.Labels)
-		bf := NewBufferWriter()
-		n, err := WriteInsertInCsv(tcontext.Background(), conf, tableIR, tableIR, bf, m)
-		require.NoError(t, err)
-		require.Equal(t, uint64(4), n)
-
-		expected := "1,\"male\",\"bob@mail.com\",\"020-1234\",\"YmxvYjE=\"\r\n" +
-			"2,\"female\",\"sarah@mail.com\",\"020-1253\",\"YmxvYjI=\"\r\n" +
-			"3,\"male\",\"john@mail.com\",\"020-1256\",\"YmxvYjM=\"\r\n" +
-			"4,\"female\",\"sarah@mail.com\",\"020-1235\",\"YmxvYjQ=\"\r\n"
-		require.Equal(t, expected, bf.String())
-		require.Equal(t, float64(4), ReadGauge(m.finishedRowsGauge))
-		require.Equal(t, float64(197), ReadGauge(m.finishedSizeGauge))
-	}
-}
-
 func TestSQLDataTypes(t *testing.T) {
 	cfg := createMockConfig()
 
@@ -435,7 +260,7 @@ func TestSQLDataTypes(t *testing.T) {
 		tableData := [][]driver.Value{{origin}}
 		colType := []string{sqlType}
 		tableIR := newMockTableIR("test", "t", tableData, nil, colType)
-		bf := NewBufferWriter()
+		bf := storage.NewBufferWriter()
 
 		conf := configForWriteSQL(cfg, UnspecifiedSize, UnspecifiedSize)
 		m := newMetrics(conf.PromFactory, conf.Labels)

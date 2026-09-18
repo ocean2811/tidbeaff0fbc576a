@@ -24,25 +24,21 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/kvproto/pkg/meta_storagepb"
 	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/resourcegroup"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/resourcegroup"
 	pd "github.com/tikv/pd/client"
-	metastorage "github.com/tikv/pd/client/clients/metastorage"
-	"github.com/tikv/pd/client/opt"
 )
 
 type mockResourceManagerClient struct {
 	sync.RWMutex
-	keyspaceID uint32
-	groups     map[string]*rmpb.ResourceGroup
-	eventCh    chan *metastorage.WatchResponse
+	groups  map[string]*rmpb.ResourceGroup
+	eventCh chan []*meta_storagepb.Event
 }
 
 // NewMockResourceManagerClient return a mock ResourceManagerClient for test usage.
-func NewMockResourceManagerClient(keyspaceID uint32) pd.ResourceManagerClient {
+func NewMockResourceManagerClient() pd.ResourceManagerClient {
 	mockMgr := &mockResourceManagerClient{
-		keyspaceID: keyspaceID,
-		groups:     make(map[string]*rmpb.ResourceGroup),
-		eventCh:    make(chan *metastorage.WatchResponse, 100),
+		groups:  make(map[string]*rmpb.ResourceGroup),
+		eventCh: make(chan []*meta_storagepb.Event, 100),
 	}
 	mockMgr.groups[resourcegroup.DefaultResourceGroupName] = &rmpb.ResourceGroup{
 		Name: resourcegroup.DefaultResourceGroupName,
@@ -62,7 +58,7 @@ func NewMockResourceManagerClient(keyspaceID uint32) pd.ResourceManagerClient {
 
 var _ pd.ResourceManagerClient = (*mockResourceManagerClient)(nil)
 
-func (m *mockResourceManagerClient) ListResourceGroups(context.Context, ...pd.GetResourceGroupOption) ([]*rmpb.ResourceGroup, error) {
+func (m *mockResourceManagerClient) ListResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, error) {
 	m.RLock()
 	defer m.RUnlock()
 	groups := make([]*rmpb.ResourceGroup, 0, len(m.groups))
@@ -72,7 +68,7 @@ func (m *mockResourceManagerClient) ListResourceGroups(context.Context, ...pd.Ge
 	return groups, nil
 }
 
-func (m *mockResourceManagerClient) GetResourceGroup(_ context.Context, name string, _ ...pd.GetResourceGroupOption) (*rmpb.ResourceGroup, error) {
+func (m *mockResourceManagerClient) GetResourceGroup(ctx context.Context, name string) (*rmpb.ResourceGroup, error) {
 	m.RLock()
 	defer m.RUnlock()
 	group, ok := m.groups[name]
@@ -82,7 +78,7 @@ func (m *mockResourceManagerClient) GetResourceGroup(_ context.Context, name str
 	return group, nil
 }
 
-func (m *mockResourceManagerClient) AddResourceGroup(_ context.Context, group *rmpb.ResourceGroup) (string, error) {
+func (m *mockResourceManagerClient) AddResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
 	m.Lock()
 	defer m.Unlock()
 	if _, ok := m.groups[group.Name]; ok {
@@ -93,16 +89,16 @@ func (m *mockResourceManagerClient) AddResourceGroup(_ context.Context, group *r
 	if err != nil {
 		return "", err
 	}
-	m.eventCh <- &metastorage.WatchResponse{Events: []*meta_storagepb.Event{{
+	m.eventCh <- []*meta_storagepb.Event{{
 		Type: meta_storagepb.Event_PUT,
 		Kv: &meta_storagepb.KeyValue{
 			Value: value,
-		}}}}
+		}}}
 
 	return "Success!", nil
 }
 
-func (m *mockResourceManagerClient) ModifyResourceGroup(_ context.Context, group *rmpb.ResourceGroup) (string, error) {
+func (m *mockResourceManagerClient) ModifyResourceGroup(ctx context.Context, group *rmpb.ResourceGroup) (string, error) {
 	m.Lock()
 	defer m.Unlock()
 
@@ -111,15 +107,15 @@ func (m *mockResourceManagerClient) ModifyResourceGroup(_ context.Context, group
 	if err != nil {
 		return "", err
 	}
-	m.eventCh <- &metastorage.WatchResponse{Events: []*meta_storagepb.Event{{
+	m.eventCh <- []*meta_storagepb.Event{{
 		Type: meta_storagepb.Event_PUT,
 		Kv: &meta_storagepb.KeyValue{
 			Value: value,
-		}}}}
+		}}}
 	return "Success!", nil
 }
 
-func (m *mockResourceManagerClient) DeleteResourceGroup(_ context.Context, name string) (string, error) {
+func (m *mockResourceManagerClient) DeleteResourceGroup(ctx context.Context, name string) (string, error) {
 	m.Lock()
 	defer m.Unlock()
 	group := m.groups[name]
@@ -128,36 +124,28 @@ func (m *mockResourceManagerClient) DeleteResourceGroup(_ context.Context, name 
 	if err != nil {
 		return "", err
 	}
-	m.eventCh <- &metastorage.WatchResponse{Events: []*meta_storagepb.Event{{
+	m.eventCh <- []*meta_storagepb.Event{{
 		Type: meta_storagepb.Event_DELETE,
 		Kv: &meta_storagepb.KeyValue{
 			Value: value,
-		}}}}
+		}}}
 	return "Success!", nil
 }
 
-func (*mockResourceManagerClient) AcquireTokenBuckets(context.Context, *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
+func (m *mockResourceManagerClient) AcquireTokenBuckets(ctx context.Context, request *rmpb.TokenBucketsRequest) ([]*rmpb.TokenBucketResponse, error) {
 	return nil, nil
 }
 
-func (*mockResourceManagerClient) WatchResourceGroup(context.Context, int64) (chan []*rmpb.ResourceGroup, error) {
+func (m *mockResourceManagerClient) WatchResourceGroup(ctx context.Context, revision int64) (chan []*rmpb.ResourceGroup, error) {
 	return nil, nil
 }
 
-func (*mockResourceManagerClient) LoadResourceGroups(context.Context) ([]*rmpb.ResourceGroup, int64, error) {
+func (m *mockResourceManagerClient) LoadResourceGroups(ctx context.Context) ([]*rmpb.ResourceGroup, int64, error) {
 	return nil, 0, nil
 }
 
-func (*mockResourceManagerClient) Get(context.Context, []byte, ...opt.MetaStorageOption) (*meta_storagepb.GetResponse, error) {
-	return &meta_storagepb.GetResponse{Header: &meta_storagepb.ResponseHeader{}}, nil
-}
-
-func (*mockResourceManagerClient) Put(context.Context, []byte, []byte, ...opt.MetaStorageOption) (*meta_storagepb.PutResponse, error) {
-	return &meta_storagepb.PutResponse{Header: &meta_storagepb.ResponseHeader{}}, nil
-}
-
-func (m *mockResourceManagerClient) Watch(_ context.Context, key []byte, _ ...opt.MetaStorageOption) (chan *metastorage.WatchResponse, error) {
-	if bytes.Equal(pd.GroupSettingsPathPrefixBytes(m.keyspaceID), key) {
+func (m *mockResourceManagerClient) Watch(ctx context.Context, key []byte, opts ...pd.OpOption) (chan []*meta_storagepb.Event, error) {
+	if bytes.Equal(pd.GroupSettingsPathPrefixBytes, key) {
 		return m.eventCh, nil
 	}
 	return nil, nil

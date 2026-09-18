@@ -56,7 +56,7 @@ select replace('abc' collate utf8mb4_bin, 'b' collate utf8mb4_general_ci, 'd' co
 set names default;
 
 # TestJoinOnDifferentCollations
-# https://github.com/pingcap/tidb/issues/34500
+# https://github.com/ocean2811/tidbeaff0fbc576a/issues/34500
 drop table if exists t;
 create table t (a char(10) charset gbk collate gbk_chinese_ci, b time);
 insert into t values ('08:00:00', '08:00:00');
@@ -356,7 +356,8 @@ select * from t use index(ud);
 select * from t use index(e);
 select * from t use index(ue);
 admin check table t;
-admin recover index t a;
+# TODO: fix https://github.com/ocean2811/tidbeaff0fbc576a/issues/47687
+# admin recover index t a;
 alter table t add column n char(10) COLLATE utf8mb4_unicode_ci;
 alter table t add index n(n);
 update t set n = '吧';
@@ -729,16 +730,16 @@ select v from t_bin where v<'b' and id<=3;
 select id from t order by v, id;
 select id from t_bin order by v, id;
 # TestCollateHashAgg
-explain format="plan_tree" select distinct(v) from t_bin;
+explain format="brief" select distinct(v) from t_bin;
 -- sorted_result
 select distinct(v) from t_bin;
-explain format="plan_tree" select distinct(v) from t;
+explain format="brief" select distinct(v) from t;
 -- sorted_result
 select distinct(v) from t;
-explain format="plan_tree" select v, count(*) from t_bin group by v;
+explain format="brief" select v, count(*) from t_bin group by v;
 -- sorted_result
 select v, count(*) from t_bin group by v;
-explain format="plan_tree" select v, count(*) from t group by v;
+explain format="brief" select v, count(*) from t group by v;
 -- sorted_result
 select v, count(*) from t group by v;
 
@@ -770,38 +771,38 @@ create table t (id int, v varchar(5) CHARACTER SET utf8mb4 COLLATE utf8mb4_gener
 create table t_bin (id int, v varchar(5) CHARACTER SET binary , key(v));
 insert into t values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
 insert into t_bin values (1, 'a'), (2, 'À'), (3, 'á'), (4, 'à'), (5, 'b'), (6, 'c'), (7, ' ');
-explain format="plan_tree" select /*+ STREAM_AGG() */ distinct(v) from t_bin;
+explain format="brief" select /*+ STREAM_AGG() */ distinct(v) from t_bin;
 -- sorted_result
 select /*+ STREAM_AGG() */ distinct(v) from t_bin;
-explain format="plan_tree" select /*+ STREAM_AGG() */ distinct(v) from t;
+explain format="brief" select /*+ STREAM_AGG() */ distinct(v) from t;
 -- sorted_result
 select /*+ STREAM_AGG() */ distinct(v) from t;
-explain format="plan_tree" select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
+explain format="brief" select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
 -- sorted_result
 select /*+ STREAM_AGG() */ v, count(*) from t_bin group by v;
-explain format="plan_tree" select /*+ STREAM_AGG() */ v, count(*) from t group by v;
+explain format="brief" select /*+ STREAM_AGG() */ v, count(*) from t group by v;
 -- sorted_result
 select /*+ STREAM_AGG() */ v, count(*) from t group by v;
 # TestCollateIndexReader
-explain format="plan_tree" select v from t where v < 'b'  order by v;
+explain format="brief" select v from t where v < 'b'  order by v;
 select v from t where v < 'b' order by v;
-explain format="plan_tree" select v from t where v < 'b' and v > ' ' order by v;
+explain format="brief" select v from t where v < 'b' and v > ' ' order by v;
 select v from t where v < 'b' and v > ' ' order by v;
-explain format="plan_tree" select v from t_bin where v < 'b' order by v;
+explain format="brief" select v from t_bin where v < 'b' order by v;
 select v from t_bin where v < 'b' order by v;
-explain format="plan_tree" select v from t_bin where v < 'b' and v > ' ' order by v;
+explain format="brief" select v from t_bin where v < 'b' and v > ' ' order by v;
 select v from t_bin where v < 'b' and v > ' ' order by v;
 # TestCollateIndexLookup
-explain format="plan_tree" select id from t use index(v) where v < 'b';
+explain format="brief" select id from t use index(v) where v < 'b';
 -- sorted_result
 select id from t use index(v) where v < 'b';
-explain format="plan_tree" select id from t use index(v) where v < 'b' and v > ' ';
+explain format="brief" select id from t use index(v) where v < 'b' and v > ' ';
 -- sorted_result
 select id from t use index(v) where v < 'b' and v > ' ';
-explain format="plan_tree" select id from t_bin use index(v) where v < 'b';
+explain format="brief" select id from t_bin use index(v) where v < 'b';
 -- sorted_result
 select id from t_bin use index(v) where v < 'b';
-explain format="plan_tree" select id from t_bin use index(v) where v < 'b' and v > ' ';
+explain format="brief" select id from t_bin use index(v) where v < 'b' and v > ' ';
 -- sorted_result
 select id from t_bin use index(v) where v < 'b' and v > ' ';
 
@@ -814,32 +815,6 @@ select min(id) from t group by str order by str;
 # TestUTF8MB40900AICIStrFunc
 select LOCATE('bar' collate utf8mb4_0900_ai_ci, 'FOOBAR' collate utf8mb4_0900_ai_ci);
 select 'FOOBAR' collate utf8mb4_0900_ai_ci REGEXP 'foo.*' collate utf8mb4_0900_ai_ci;
-
-# TestCollationWithJSONArg
-set names utf8mb4 collate utf8mb4_0900_ai_ci;
-select reverse(cast('[]' as json)) between 'W' and 'm';
-select lower(cast('[]' as json)) between 'W' and 'm';
-select upper(cast('[]' as json)) between 'W' and 'm';
-select substring_index(cast('[]' as json), '.', 1) between 'W' and 'm';
-select trim(cast('[]' as json)) between 'W' and 'm';
-select quote(cast('[]' as json)) between "'W'" and "'m'";
-select concat(cast('[]' as json), '1') between 'W' and 'm';
-select concat('1', cast('[]' as json)) between '1W' and '1m';
-select concat_ws(cast('[]' as json), '1', '1') between '1W' and '1m';
-select concat_ws('1', cast('[]' as json)) between 'W' and 'm';
-select elt(1, cast('[]' as json), '[]') between 'W' and 'm';
-select elt(2, cast('[]' as json), '[]') between 'W' and 'm';
-select make_set(1, cast('[]' as json), '[]') between 'W' and 'm';
-select make_set(2, cast('[]' as json), '[]') between 'W' and 'm';
-select replace(cast('[]' as json), '[]', '[]') between 'W' and 'm';
-select replace('[]', '[]', cast('[]' as json)) between 'W' and 'm';
-select insert(cast('[]' as json), 0, 100, '[]') between 'W' and 'm';
-select insert('[]', 0, 100, cast('[]' as json)) between 'W' and 'm';
-select substr(cast('[]' as json), 1) between 'W' and 'm';
-select repeat(cast('[]' as json), 10) between 'W' and 'm';
-select export_set(3,cast('[]' as json),'2','-',8) between 'W' and 'm';
-set names default;
-
 
 # TestConvertCharsetFromBinary
 --enable_warnings

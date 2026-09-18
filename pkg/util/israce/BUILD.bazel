@@ -6,6 +6,6 @@ go_library(
         "israce.go",
         "norace.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/israce",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/israce",
     visibility = ["//visibility:public"],
 )

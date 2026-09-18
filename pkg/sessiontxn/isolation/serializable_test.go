@@ -22,17 +22,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfork"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testfork"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
@@ -151,7 +151,7 @@ func TestSerializableInitialize(t *testing.T) {
 		tk.MustExec("set @@autocommit=0")
 		assert = inactiveSerializableAssert(se)
 		assertAfterActive := activeSerializableAssert(t, se, true)
-		require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 		provider := assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		ts, err := provider.GetStmtReadTS()
@@ -164,7 +164,7 @@ func TestSerializableInitialize(t *testing.T) {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
 		assert = inactiveSerializableAssert(se)
 		assertAfterActive = activeSerializableAssert(t, se, true)
-		require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 		provider = assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		ts, err = provider.GetStmtReadTS()
@@ -255,8 +255,7 @@ func TestTidbSnapshotVarInSerialize(t *testing.T) {
 			}
 			assert = inactiveSerializableAssert(se)
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "SERIALIZABLE")
-			// simulate in an INSERT statement
-			require.NoError(t, se.PrepareTxnCtx(context.TODO(), &ast.InsertStmt{}))
+			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 			provider = assert.CheckAndGetProvider(t)
 			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()

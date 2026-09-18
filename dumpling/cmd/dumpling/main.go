@@ -18,8 +18,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/pingcap/tidb/dumpling/cli"
-	"github.com/pingcap/tidb/dumpling/export"
+	"github.com/ocean2811/tidbeaff0fbc576a/dumpling/cli"
+	"github.com/ocean2811/tidbeaff0fbc576a/dumpling/export"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/spf13/pflag"

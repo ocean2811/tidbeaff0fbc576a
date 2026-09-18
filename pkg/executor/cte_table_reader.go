@@ -18,9 +18,9 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/cteutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/cteutil"
 )
 
 // CTETableReaderExec scans data in iterInTbl, which is filled by corresponding CTEExec.

@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "options",
     srcs = ["options.go"],
-    importpath = "github.com/pingcap/tidb/pkg/store/driver/options",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver/options",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",

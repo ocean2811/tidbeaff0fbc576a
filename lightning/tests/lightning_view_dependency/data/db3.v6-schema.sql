@@ -1,1 +1,0 @@
-CREATE TABLE v6(id INT);

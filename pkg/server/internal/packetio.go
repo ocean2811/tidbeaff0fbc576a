@@ -44,12 +44,12 @@ import (
 
 	"github.com/klauspost/compress/zstd"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	server_err "github.com/pingcap/tidb/pkg/server/err"
-	"github.com/pingcap/tidb/pkg/server/internal/util"
-	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	server_err "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/err"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/util"
+	server_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
 )
 
 const defaultWriterSize = 16 * 1024
@@ -76,7 +76,7 @@ type PacketIO struct {
 func NewPacketIO(bufReadConn *util.BufferedReadConn) *PacketIO {
 	p := &PacketIO{sequence: 0, compressionAlgorithm: mysql.CompressionNone, compressedSequence: 0, zstdLevel: 3}
 	p.SetBufferedReadConn(bufReadConn)
-	p.SetMaxAllowedPacket(config.GetMaxAllowedPacket())
+	p.SetMaxAllowedPacket(variable.DefMaxAllowedPacket)
 	return p
 }
 
@@ -157,18 +157,13 @@ func (p *PacketIO) readOnePacket() ([]byte, error) {
 	}
 
 	length := int(uint32(header[0]) | uint32(header[1])<<8 | uint32(header[2])<<16)
-
 	sequence := header[3]
+
 	if sequence != p.sequence {
-		err := server_err.ErrInvalidSequence.GenWithStack(
+		return nil, server_err.ErrInvalidSequence.GenWithStack(
 			"invalid sequence, received %d while expecting %d", sequence, p.sequence)
-		if p.compressionAlgorithm == mysql.CompressionNone {
-			return nil, err
-		}
-		// To be compatible with MariaDB Connector/J 2.x,
-		// ignore sequence check and print a log when compression protocol is active.
-		terror.Log(err)
 	}
+
 	p.sequence++
 
 	// Accumulated payload length exceeds the limit.
@@ -218,7 +213,7 @@ func (p *PacketIO) ReadPacket() ([]byte, error) {
 	}
 
 	if len(data) < mysql.MaxPayloadLen {
-		server_metrics.InPacketBytes.Add(float64(len(data)))
+		server_metrics.ReadPacketBytes.Add(float64(len(data)))
 		return data, nil
 	}
 
@@ -236,15 +231,14 @@ func (p *PacketIO) ReadPacket() ([]byte, error) {
 		}
 	}
 
-	server_metrics.InPacketBytes.Add(float64(len(data)))
+	server_metrics.ReadPacketBytes.Add(float64(len(data)))
 	return data, nil
 }
 
 // WritePacket writes data that already have header
 func (p *PacketIO) WritePacket(data []byte) error {
 	length := len(data) - 4
-	server_metrics.OutPacketBytes.Add(float64(len(data)))
-
+	server_metrics.WritePacketBytes.Add(float64(len(data)))
 	maxPayloadLen := mysql.MaxPayloadLen
 
 	for length >= maxPayloadLen {
@@ -281,18 +275,21 @@ func (p *PacketIO) WritePacket(data []byte) error {
 			return errors.Trace(mysql.ErrBadConn)
 		} else if n != len(data) {
 			return errors.Trace(mysql.ErrBadConn)
+		} else {
+			p.sequence++
+			return nil
 		}
-		p.sequence++
-		return nil
+	} else {
+		if n, err := p.bufWriter.Write(data); err != nil {
+			terror.Log(errors.Trace(err))
+			return errors.Trace(mysql.ErrBadConn)
+		} else if n != len(data) {
+			return errors.Trace(mysql.ErrBadConn)
+		} else {
+			p.sequence++
+			return nil
+		}
 	}
-	if n, err := p.bufWriter.Write(data); err != nil {
-		terror.Log(errors.Trace(err))
-		return errors.Trace(mysql.ErrBadConn)
-	} else if n != len(data) {
-		return errors.Trace(mysql.ErrBadConn)
-	}
-	p.sequence++
-	return nil
 }
 
 // Flush flushes buffered data to network.
@@ -315,22 +312,18 @@ func (p *PacketIO) Flush() error {
 
 func newCompressedWriter(w io.Writer, ca int, seq *uint8) *compressedWriter {
 	return &compressedWriter{
-		compressorBuffer{nil, nil, nil},
 		w,
 		new(bytes.Buffer),
 		seq,
-		nil,
 		ca,
 		3,
 	}
 }
 
 type compressedWriter struct {
-	compressorBuffer     compressorBuffer
 	w                    io.Writer
 	buf                  *bytes.Buffer
 	compressedSequence   *uint8
-	compressedPacket     *bytes.Buffer
 	compressionAlgorithm int
 	zstdLevel            zstd.EncoderLevel
 }
@@ -364,48 +357,33 @@ func (cw *compressedWriter) Write(data []byte) (n int, err error) {
 }
 
 func (cw *compressedWriter) Flush() error {
+	var payload, compressedPacket bytes.Buffer
 	var w io.WriteCloser
 	var err error
-	if cw.compressorBuffer.payload == nil {
-		cw.compressorBuffer.payload = new(bytes.Buffer)
-	}
-	if cw.compressedPacket == nil {
-		cw.compressedPacket = new(bytes.Buffer)
-	}
 
 	// https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_basic_compression_packet.html
 	// suggests a MIN_COMPRESS_LENGTH of 50.
 	minCompressLength := 50
+	zlibCompressDefaultLevel := 6
 	data := cw.buf.Bytes()
 	cw.buf.Reset()
 
 	switch cw.compressionAlgorithm {
 	case mysql.CompressionZlib:
-		if cw.compressorBuffer.zlibWriter == nil {
-			cw.compressorBuffer.zlibWriter, err = zlib.NewWriterLevel(cw.compressorBuffer.payload, mysql.ZlibCompressDefaultLevel)
-		}
-		w = cw.compressorBuffer.zlibWriter
+		w, err = zlib.NewWriterLevel(&payload, zlibCompressDefaultLevel)
 	case mysql.CompressionZstd:
-		if cw.compressorBuffer.zstdWriter == nil {
-			cw.compressorBuffer.zstdWriter, err = zstd.NewWriter(cw.compressorBuffer.payload, zstd.WithEncoderLevel(cw.zstdLevel))
-		}
-		w = cw.compressorBuffer.zstdWriter
+		w, err = zstd.NewWriter(&payload, zstd.WithEncoderLevel(cw.zstdLevel))
 	default:
 		return errors.New("Unknown compression algorithm")
 	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	// always reset the compressed packet buffer.
-	defer cw.compressedPacket.Reset()
 
 	uncompressedLength := 0
 	compressedHeader := make([]byte, 7)
 
-	needCompress := len(data) > minCompressLength
-	if needCompress {
-		// only reset the payload buffer if we are compressing.
-		defer cw.compressorBuffer.Reset()
+	if len(data) > minCompressLength {
 		uncompressedLength = len(data)
 		_, err := w.Write(data)
 		if err != nil {
@@ -418,8 +396,8 @@ func (cw *compressedWriter) Flush() error {
 	}
 
 	var compressedLength int
-	if needCompress {
-		compressedLength = len(cw.compressorBuffer.payload.Bytes())
+	if len(data) > minCompressLength {
+		compressedLength = len(payload.Bytes())
 	} else {
 		compressedLength = len(data)
 	}
@@ -430,43 +408,26 @@ func (cw *compressedWriter) Flush() error {
 	compressedHeader[4] = byte(uncompressedLength)
 	compressedHeader[5] = byte(uncompressedLength >> 8)
 	compressedHeader[6] = byte(uncompressedLength >> 16)
-	_, err = cw.compressedPacket.Write(compressedHeader)
+	_, err = compressedPacket.Write(compressedHeader)
 	if err != nil {
 		return errors.Trace(err)
 	}
 	*cw.compressedSequence++
 
-	if needCompress {
-		_, err = cw.compressedPacket.Write(cw.compressorBuffer.payload.Bytes())
+	if len(data) > minCompressLength {
+		_, err = compressedPacket.Write(payload.Bytes())
 	} else {
-		_, err = cw.compressedPacket.Write(data)
+		_, err = compressedPacket.Write(data)
 	}
 	if err != nil {
 		return errors.Trace(err)
 	}
-	_, err = cw.w.Write(cw.compressedPacket.Bytes())
+	w.Close()
+	_, err = cw.w.Write(compressedPacket.Bytes())
 	if err != nil {
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-type compressorBuffer struct {
-	payload    *bytes.Buffer
-	zlibWriter *zlib.Writer
-	zstdWriter *zstd.Encoder
-}
-
-func (c *compressorBuffer) Reset() {
-	if c.payload != nil {
-		c.payload.Reset()
-	}
-	if c.zlibWriter != nil {
-		c.zlibWriter.Reset(c.payload)
-	}
-	if c.zstdWriter != nil {
-		c.zstdWriter.Reset(c.payload)
-	}
 }
 
 func newCompressedReader(r io.Reader, ca int, seq *uint8) *compressedReader {

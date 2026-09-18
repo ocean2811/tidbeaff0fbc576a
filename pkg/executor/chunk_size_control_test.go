@@ -22,15 +22,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -99,7 +99,7 @@ func generateTableSplitKeyForInt(tid int64, splitNum []int) [][]byte {
 func TestLimitAndTableScan(t *testing.T) {
 	t.Skip("not stable because coprocessor may result in goroutine leak")
 	kit := createChunkSizeControlKit(t, "create table t (a int, primary key (a))")
-	tbl, err := kit.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := kit.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
 
@@ -130,7 +130,7 @@ func TestLimitAndTableScan(t *testing.T) {
 func TestLimitAndIndexScan(t *testing.T) {
 	t.Skip("not stable because coprocessor may result in goroutine leak")
 	kit := createChunkSizeControlKit(t, "create table t (a int, index idx_a(a))")
-	tbl, err := kit.dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := kit.dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tbl.Meta().ID
 	idx := tbl.Meta().Indices[0].ID
@@ -160,7 +160,7 @@ func TestLimitAndIndexScan(t *testing.T) {
 }
 
 // nolint: unused, deadcode
-func parseTimeCost(t *testing.T, line []any) time.Duration {
+func parseTimeCost(t *testing.T, line []interface{}) time.Duration {
 	lineStr := fmt.Sprintf("%v", line)
 	idx := strings.Index(lineStr, "time:")
 	require.NotEqual(t, -1, idx)
@@ -179,7 +179,7 @@ func generateIndexSplitKeyForInt(tid, idx int64, splitNum []int) [][]byte {
 	for _, num := range splitNum {
 		d := new(types.Datum)
 		d.SetInt64(int64(num))
-		b, err := codec.EncodeKey(time.UTC, nil, *d)
+		b, err := codec.EncodeKey(nil, nil, *d)
 		if err != nil {
 			panic(err)
 		}

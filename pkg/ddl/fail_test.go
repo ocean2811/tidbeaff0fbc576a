@@ -18,9 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util/callback"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,22 +37,26 @@ func TestFailBeforeDecodeArgs(t *testing.T) {
 	tableIDi, _ := strconv.Atoi(rs.Rows()[0][0].(string))
 	tableID = int64(tableIDi)
 
+	d := dom.DDL()
+	tc := &callback.TestDDLCallback{Do: dom}
+
 	first := true
 	stateCnt := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	tc.OnJobRunBeforeExported = func(job *model.Job) {
 		// It can be other schema states except failed schema state.
 		// This schema state can only appear once.
 		if job.SchemaState == model.StateWriteOnly {
 			stateCnt++
 		} else if job.SchemaState == model.StateWriteReorganization {
 			if first {
-				require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/errorBeforeDecodeArgs", `return(true)`))
+				require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/errorBeforeDecodeArgs", `return(true)`))
 				first = false
 			} else {
-				require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/errorBeforeDecodeArgs"))
+				require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/errorBeforeDecodeArgs"))
 			}
 		}
-	})
+	}
+	d.SetHook(tc)
 	defaultValue := int64(3)
 	jobID := testCreateColumn(tk, t, testkit.NewTestKit(t, store).Session(), tableID, "c3", "", defaultValue, dom)
 	// Make sure the schema state only appears once.

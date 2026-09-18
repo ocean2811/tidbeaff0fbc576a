@@ -21,11 +21,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/types"
-	_ "github.com/pingcap/tidb/pkg/types/parser_driver" // for parser driver
-	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/types"
+	_ "github.com/ocean2811/tidbeaff0fbc576a/pkg/types/parser_driver" // for parser driver
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbutil"
 	"go.uber.org/zap"
 )
 

@@ -16,14 +16,14 @@ package expression
 
 import (
 	"testing"
+	"time"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression/exprstatic"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,38 +48,12 @@ func TestEvaluateExprWithNull(t *testing.T) {
 	outerIfNull, err := newFunctionForTest(ctx, ast.Ifnull, col0, innerIfNull)
 	require.NoError(t, err)
 
-	res, err := EvaluateExprWithNull(ctx, schema, outerIfNull, true)
-	require.Nil(t, err)
-	require.Equal(t, "ifnull(Column#1, 1)", res.StringWithCtx(ctx, errors.RedactLogDisable))
-	require.Equal(t, "ifnull(Column#1, ?)", res.StringWithCtx(ctx, errors.RedactLogEnable))
-	require.Equal(t, "ifnull(Column#1, ‹1›)", res.StringWithCtx(ctx, errors.RedactLogMarker))
+	res := EvaluateExprWithNull(ctx, schema, outerIfNull)
+	require.Equal(t, "ifnull(Column#1, 1)", res.String())
 	schema.Columns = append(schema.Columns, col1)
 	// ifnull(null, ifnull(null, 1))
-	res, err = EvaluateExprWithNull(ctx, schema, outerIfNull, true)
-	require.Nil(t, err)
+	res = EvaluateExprWithNull(ctx, schema, outerIfNull)
 	require.True(t, res.Equal(ctx, NewOne()))
-}
-
-func TestEvaluateExprWithNullMeetError(t *testing.T) {
-	ctx := createContext(t)
-	tblInfo := newTestTableBuilder("").add("col0", mysql.TypeLonglong, 0).add("col1", mysql.TypeLonglong, 0).build()
-	schema := tableInfoToSchemaForTest(tblInfo)
-	col0 := schema.Columns[0]
-	col1 := schema.Columns[1]
-	schema.Columns = schema.Columns[:1]
-	innerFunc, err := newFunctionForTest(ctx, ast.Ifnull, col1, NewOne())
-	require.NoError(t, err)
-	// rename the function name to make it invalid, so that the inner function will meet an error
-	innerFunc.(*ScalarFunction).FuncName.L = "invalid"
-	outerIfNull, err := newFunctionForTest(ctx, ast.Ifnull, col0, innerFunc)
-	require.NoError(t, err)
-
-	// the inner function has an error
-	_, err = EvaluateExprWithNull(ctx, schema, outerIfNull, true)
-	require.NotNil(t, err)
-	// check in NullRejectCheck ctx
-	_, err = EvaluateExprWithNull(ctx.GetNullRejectCheckExprCtx(), schema, outerIfNull, true)
-	require.NotNil(t, err)
 }
 
 func TestEvaluateExprWithNullAndParameters(t *testing.T) {
@@ -88,24 +62,22 @@ func TestEvaluateExprWithNullAndParameters(t *testing.T) {
 	schema := tableInfoToSchemaForTest(tblInfo)
 	col0 := schema.Columns[0]
 
-	ctx.GetSessionVars().StmtCtx.EnablePlanCache()
+	ctx.GetSessionVars().StmtCtx.UseCache = true
 
 	// cases for parameters
 	ltWithoutParam, err := newFunctionForTest(ctx, ast.LT, col0, NewOne())
 	require.NoError(t, err)
-	res, err := EvaluateExprWithNull(ctx, schema, ltWithoutParam, true)
-	require.Nil(t, err)
+	res := EvaluateExprWithNull(ctx, schema, ltWithoutParam)
 	require.True(t, res.Equal(ctx, NewNull())) // the expression is evaluated to null
 	param := NewOne()
-	param.ParamMarker = &ParamMarker{order: 0}
+	param.ParamMarker = &ParamMarker{ctx: ctx, order: 0}
 	ctx.GetSessionVars().PlanCacheParams.Append(types.NewIntDatum(10))
 	ltWithParam, err := newFunctionForTest(ctx, ast.LT, col0, param)
 	require.NoError(t, err)
-	res, err = EvaluateExprWithNull(ctx, schema, ltWithParam, true)
-	require.Nil(t, err)
+	res = EvaluateExprWithNull(ctx, schema, ltWithParam)
 	_, isConst := res.(*Constant)
 	require.True(t, isConst) // this expression is evaluated and skip-plan cache flag is set.
-	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache())
+	require.True(t, !ctx.GetSessionVars().StmtCtx.UseCache)
 }
 
 func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
@@ -127,31 +99,22 @@ func TestEvaluateExprWithNullNoChangeRetType(t *testing.T) {
 	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
 
 	// after EvaluateExprWithNull, this flag should be still false
-	EvaluateExprWithNull(ctx, schema, eq, true)
+	EvaluateExprWithNull(ctx, schema, eq)
 	flagInCast = eq.(*ScalarFunction).GetArgs()[1].(*ScalarFunction).RetType.GetFlag()
 	require.False(t, mysql.HasParseToJSONFlag(flagInCast))
 }
 
 func TestConstant(t *testing.T) {
 	ctx := createContext(t)
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
 	require.False(t, NewZero().IsCorrelated())
-	require.Equal(t, ConstStrict, NewZero().ConstLevel())
+	require.True(t, NewZero().ConstItem(sc))
 	require.True(t, NewZero().Decorrelate(nil).Equal(ctx, NewZero()))
-	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode())
+	require.Equal(t, []byte{0x0, 0x8, 0x0}, NewZero().HashCode(sc))
 	require.False(t, NewZero().Equal(ctx, NewOne()))
-
-	decTp := types.NewFieldTypeBuilder().SetType(mysql.TypeNewDecimal).SetFlen(5).SetDecimal(2).BuildP()
-	con := &Constant{
-		Value:   types.NewDecimalDatum(types.NewDecFromStringForTest("0.99")),
-		RetType: decTp,
-	}
-	args := []Expression{con}
-	PropagateType(ctx.GetEvalCtx(), types.ETReal, args...)
-	require.NotSame(t, con, args[0])
-	require.Equal(t, 5, con.RetType.GetFlen())
-	require.Equal(t, 2, con.RetType.GetDecimal())
-	require.Equal(t, 48, args[0].GetType(ctx.GetEvalCtx()).GetFlen())
-	require.Equal(t, 30, args[0].GetType(ctx.GetEvalCtx()).GetDecimal())
+	res, err := NewZero().MarshalJSON()
+	require.NoError(t, err)
+	require.Equal(t, []byte{0x22, 0x30, 0x22}, res)
 }
 
 func TestIsBinaryLiteral(t *testing.T) {
@@ -170,32 +133,21 @@ func TestIsBinaryLiteral(t *testing.T) {
 	require.False(t, IsBinaryLiteral(col))
 }
 
-func TestConstLevel(t *testing.T) {
-	ctxConst := NewZero()
-	ctxConst.DeferredExpr = newFunctionWithMockCtx(ast.UnixTimestamp)
-	ctx := exprstatic.NewEvalContext()
-	for _, c := range []struct {
-		exp   Expression
-		level ConstLevel
-	}{
-		{newFunctionWithMockCtx(ast.Rand), ConstNone},
-		{newFunctionWithMockCtx(ast.UUID), ConstNone},
-		{newFunctionWithMockCtx(ast.GetParam, NewOne()), ConstNone},
-		{newFunctionWithMockCtx(ast.Abs, NewOne()), ConstStrict},
-		{newFunctionWithMockCtx(ast.Abs, newColumn(1)), ConstNone},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), NewOne()), ConstStrict},
-		{newFunctionWithMockCtx(ast.Plus, newColumn(1), NewOne()), ConstNone},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), newColumn(1)), ConstNone},
-		{newFunctionWithMockCtx(ast.Plus, NewOne(), ctxConst), ConstOnlyInContext},
-	} {
-		require.Equal(t, c.level, c.exp.ConstLevel(), c.exp.StringWithCtx(ctx, errors.RedactLogDisable))
-	}
+func TestConstItem(t *testing.T) {
+	ctx := createContext(t)
+	sf := newFunction(ast.Rand)
+	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+	sf = newFunction(ast.UUID)
+	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+	sf = newFunction(ast.GetParam, NewOne())
+	require.False(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
+	sf = newFunction(ast.Abs, NewOne())
+	require.True(t, sf.ConstItem(ctx.GetSessionVars().StmtCtx))
 }
 
 func TestVectorizable(t *testing.T) {
 	exprs := make([]Expression, 0, 4)
-	sf := newFunctionWithMockCtx(ast.Rand)
+	sf := newFunction(ast.Rand)
 	column := &Column{
 		UniqueID: 0,
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
@@ -219,21 +171,21 @@ func TestVectorizable(t *testing.T) {
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
 	exprs = exprs[:0]
-	sf = newFunctionWithMockCtx(ast.SetVar, column0, column1)
+	sf = newFunction(ast.SetVar, column0, column1)
 	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 
 	exprs = exprs[:0]
-	sf = newFunctionWithMockCtx(ast.GetVar, column0)
+	sf = newFunction(ast.GetVar, column0)
 	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 
 	exprs = exprs[:0]
-	sf = newFunctionWithMockCtx(ast.NextVal, column0)
+	sf = newFunction(ast.NextVal, column0)
 	exprs = append(exprs, sf)
-	sf = newFunctionWithMockCtx(ast.LastVal, column0)
+	sf = newFunction(ast.LastVal, column0)
 	exprs = append(exprs, sf)
-	sf = newFunctionWithMockCtx(ast.SetVal, column1, column2)
+	sf = newFunction(ast.SetVal, column1, column2)
 	exprs = append(exprs, sf)
 	require.False(t, Vectorizable(exprs))
 }
@@ -259,7 +211,7 @@ func (builder *testTableBuilder) add(name string, tp byte, flag uint) *testTable
 func (builder *testTableBuilder) build() *model.TableInfo {
 	ti := &model.TableInfo{
 		ID:    1,
-		Name:  ast.NewCIStr(builder.tableName),
+		Name:  model.NewCIStr(builder.tableName),
 		State: model.StatePublic,
 	}
 	for i, colName := range builder.columnNames {
@@ -274,7 +226,7 @@ func (builder *testTableBuilder) build() *model.TableInfo {
 		fieldType.SetFlag(builder.flags[i])
 		ti.Columns = append(ti.Columns, &model.ColumnInfo{
 			ID:        int64(i + 1),
-			Name:      ast.NewCIStr(colName),
+			Name:      model.NewCIStr(colName),
 			Offset:    i,
 			FieldType: *fieldType,
 			State:     model.StatePublic,
@@ -300,7 +252,7 @@ func TestEvalExpr(t *testing.T) {
 	ctx := createContext(t)
 	eTypes := []types.EvalType{types.ETInt, types.ETReal, types.ETDecimal, types.ETString, types.ETTimestamp, types.ETDatetime, types.ETDuration}
 	tNames := []string{"int", "real", "decimal", "string", "timestamp", "datetime", "duration"}
-	for i := range tNames {
+	for i := 0; i < len(tNames); i++ {
 		ft := eType2FieldType(eTypes[i])
 		colExpr := &Column{Index: 0, RetType: ft}
 		input := chunk.New([]*types.FieldType{ft}, 1024, 1024)
@@ -309,11 +261,13 @@ func TestEvalExpr(t *testing.T) {
 		colBuf2 := chunk.NewColumn(ft, 1024)
 		var err error
 		require.True(t, colExpr.Vectorized())
-		err = EvalExpr(ctx, false, colExpr, colExpr.GetType(ctx).EvalType(), input, colBuf)
+		ctx.GetSessionVars().EnableVectorizedExpression = false
+		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf)
 		require.NoError(t, err)
-		err = EvalExpr(ctx, true, colExpr, colExpr.GetType(ctx).EvalType(), input, colBuf2)
+		ctx.GetSessionVars().EnableVectorizedExpression = true
+		err = EvalExpr(ctx, colExpr, colExpr.GetType().EvalType(), input, colBuf2)
 		require.NoError(t, err)
-		for j := range 1024 {
+		for j := 0; j < 1024; j++ {
 			isNull := colBuf.IsNull(j)
 			isNull2 := colBuf2.IsNull(j)
 			require.Equal(t, isNull2, isNull)

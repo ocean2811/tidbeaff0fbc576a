@@ -15,30 +15,28 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/plancodec"
 )
 
 // IsTiFlashContained returns whether the plan contains TiFlash related executors.
-func IsTiFlashContained(plan base.Plan) (tiFlashPushDown, tiFlashExchangePushDown bool) {
+func IsTiFlashContained(plan Plan) (tiFlashPushDown, tiFlashExchangePushDown bool) {
 	if plan == nil {
 		return
 	}
-	var tiflashProcess func(p base.Plan)
-	tiflashProcess = func(p base.Plan) {
+	var tiflashProcess func(p Plan)
+	tiflashProcess = func(p Plan) {
 		if exp, isExplain := p.(*Explain); isExplain {
 			p = exp.TargetPlan
 			if p == nil {
 				return
 			}
 		}
-		pp, isPhysical := p.(base.PhysicalPlan)
+		pp, isPhysical := p.(PhysicalPlan)
 		if !isPhysical {
 			return
 		}
-		if tableReader, ok := pp.(*physicalop.PhysicalTableReader); ok {
+		if tableReader, ok := pp.(*PhysicalTableReader); ok {
 			tiFlashPushDown = tableReader.StoreType == kv.TiFlash
 			if tiFlashPushDown && tableReader.GetTablePlan().TP() == plancodec.TypeExchangeSender {
 				tiFlashExchangePushDown = true

@@ -15,9 +15,9 @@
 package aggregation
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 type sumFunction struct {
@@ -26,7 +26,7 @@ type sumFunction struct {
 
 // Update implements Aggregation interface.
 func (sf *sumFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
-	return sf.updateSum(sc.TypeCtx(), evalCtx, row)
+	return sf.updateSum(sc, evalCtx, row)
 }
 
 // GetResult implements Aggregation interface.

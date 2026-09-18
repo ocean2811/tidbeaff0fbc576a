@@ -22,11 +22,10 @@ import (
 
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -125,7 +124,7 @@ func (h ClusterUpgradeHandler) FinishUpgrade() (hasDone bool, err error) {
 
 // SimpleServerInfo is some simple information such as version and address.
 type SimpleServerInfo struct {
-	serverinfo.VersionInfo
+	infosync.ServerVersionInfo
 	ID           string `json:"ddl_id"`
 	IP           string `json:"ip"`
 	Port         uint   `json:"listening_port"`
@@ -174,15 +173,15 @@ func (h ClusterUpgradeHandler) showUpgrade(w http.ResponseWriter) error {
 		return err
 	}
 
-	allVersionsMap := map[serverinfo.VersionInfo]int{}
-	allVersions := make([]serverinfo.VersionInfo, 0, len(allServersInfo))
+	allVersionsMap := map[infosync.ServerVersionInfo]int{}
+	allVersions := make([]infosync.ServerVersionInfo, 0, len(allServersInfo))
 	for _, v := range allServersInfo {
-		if _, ok := allVersionsMap[v.VersionInfo]; ok {
-			allVersionsMap[v.VersionInfo]++
+		if _, ok := allVersionsMap[v.ServerVersionInfo]; ok {
+			allVersionsMap[v.ServerVersionInfo]++
 			continue
 		}
-		allVersionsMap[v.VersionInfo] = 1
-		allVersions = append(allVersions, v.VersionInfo)
+		allVersionsMap[v.ServerVersionInfo] = 1
+		allVersions = append(allVersions, v.ServerVersionInfo)
 	}
 	maxVerInfo := allVersions[0]
 	for k := range allVersionsMap {
@@ -202,11 +201,11 @@ func (h ClusterUpgradeHandler) showUpgrade(w http.ResponseWriter) error {
 		allSimpleServerInfo := make([]SimpleServerInfo, 0, len(allServersInfo))
 		for _, info := range allServersInfo {
 			sInfo := SimpleServerInfo{
-				VersionInfo:  info.VersionInfo,
-				ID:           info.ID,
-				IP:           info.IP,
-				Port:         info.Port,
-				JSONServerID: info.JSONServerID,
+				ServerVersionInfo: info.ServerVersionInfo,
+				ID:                info.ID,
+				IP:                info.IP,
+				Port:              info.Port,
+				JSONServerID:      info.JSONServerID,
 			}
 			allSimpleServerInfo = append(allSimpleServerInfo, sInfo)
 		}

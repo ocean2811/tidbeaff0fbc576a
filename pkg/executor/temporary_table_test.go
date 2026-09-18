@@ -16,14 +16,13 @@ package executor_test
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -76,31 +75,25 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 
 	tk.MustExec("use test")
 	tk1.MustExec("use test")
-
-	if tk.MustQuery("select @@tidb_schema_cache_size > 0").Equal(testkit.Rows("1")) {
-		// infoschema v2 requires network, so it cannot be tested this way.
-		t.Skip()
-	}
-
 	tk.MustExec("drop table if exists normal, tmp_t")
 	tk.MustExec("create table normal (id int, a int, index(a))")
 	createTable(tk)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcServerBusy", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/rpcServerBusy", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/rpcServerBusy"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/rpcServerBusy"))
 	}()
 
 	tk.MustExec("insert into tmp_t values (1, 1, 1)")
 	tk.MustExec("insert into tmp_t values (2, 2, 2)")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	rs, err := tk1.ExecWithContext(ctx, "select * from normal")
+	// Make sure the fail point works.
+	// With that failpoint, all requests to the TiKV is discard.
+	rs, err := tk1.Exec("select * from normal")
 	require.NoError(t, err)
 
 	blocked := make(chan struct{}, 1)
+	ctx, cancelFunc := context.WithCancel(context.Background())
 	done.Add(1)
 	go func() {
 		defer done.Done()
@@ -110,10 +103,10 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 
 	select {
 	case <-blocked:
-		cancel()
+		cancelFunc()
 		require.FailNow(t, "The query should block when the failpoint is enabled.")
 	case <-time.After(200 * time.Millisecond):
-		cancel()
+		cancelFunc()
 	}
 
 	// Check the temporary table do not send request to TiKV.
@@ -162,23 +155,4 @@ func assertTemporaryTableNoNetwork(t *testing.T, createTable func(*testkit.TestK
 	tk.MustExec("select * from tmp_t where id in (1, 2, 3) for update")
 	tk.MustExec("select * from tmp_t where id > 1 for update")
 	tk.MustExec("rollback")
-}
-
-func TestIssue58875(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists users, users1;")
-	tk.MustExec("CREATE GLOBAL TEMPORARY TABLE users (     id BIGINT,     v1 int,     v2 int,  v3 int, v4 int,   PRIMARY KEY(id), index v1_index(v1,v2,v3) ) ON COMMIT DELETE ROWS;")
-	tk.MustExec("create table users1(id int, value int, index index_value(value));")
-	tk.MustExec("insert into users1 values(1,2);")
-	tk.MustExec("begin;")
-	res := tk.MustQuery("explain analyze select /*+ inl_join(users) */ * from users use index(v1_index) where v1 in (select value from users1);").Rows()
-	for _, row := range res {
-		// if access object contains 'table:users', the execution info should be empty.
-		if strings.Contains(row[4].(string), "table:users") && !strings.Contains(row[4].(string), "table:users1") {
-			require.Len(t, row[5].(string), 0)
-		}
-	}
 }

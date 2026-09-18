@@ -15,7 +15,7 @@
 package disk
 
 import (
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
 )
 
 // Tracker is used to track the disk usage during query execution.
@@ -26,5 +26,5 @@ type Tracker = memory.Tracker
 //  2. "bytesLimit <= 0" means no limit.
 var NewTracker = memory.NewTracker
 
-// NewGlobalTracker creates a global disk tracker.
-var NewGlobalTracker = memory.NewGlobalTracker
+// NewGlobalTrcaker creates a global disk tracker.
+var NewGlobalTrcaker = memory.NewGlobalTracker

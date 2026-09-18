@@ -17,8 +17,8 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/types"
 )
 
 var (
@@ -46,7 +46,6 @@ var (
 
 	_ ErrNode = &ProcedureErrorCon{}
 	_ ErrNode = &ProcedureErrorVal{}
-	_ ErrNode = &ProcedureErrorState{}
 )
 
 // procedure param type.

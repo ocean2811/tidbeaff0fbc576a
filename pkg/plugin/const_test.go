@@ -56,9 +56,11 @@ func TestConstToString(t *testing.T) {
 }
 
 func TestGeneralEventString(t *testing.T) {
-	for event := range GeneralEventCount {
+	for i := 0; i < int(GeneralEventCount); i++ {
+		event := GeneralEvent(i)
+		str := event.String()
 		// event string should be upper case
-		require.Equal(t, strings.ToUpper(event.String()), event.String())
+		require.Equal(t, strings.ToUpper(str), str)
 		// GeneralEventFromString return the right event
 		got, err := GeneralEventFromString(event.String())
 		require.NoError(t, err)

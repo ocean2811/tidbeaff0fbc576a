@@ -16,20 +16,16 @@ package executor_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"strconv"
-	"strings"
 	"testing"
-	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/session/sessmgr"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,7 +46,7 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=0;")
 	tkRoot.MustQuery("select * from t1;")
 	tkRootProcess := tkRoot.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkRootProcess}
+	ps := []*util.ProcessInfo{tkRootProcess}
 	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkUser.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Check(testkit.Rows(
@@ -60,7 +56,7 @@ func TestExplainFor(t *testing.T) {
 	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=1;")
 	check := func() {
 		tkRootProcess = tkRoot.Session().ShowProcess()
-		ps = []*sessmgr.ProcessInfo{tkRootProcess}
+		ps = []*util.ProcessInfo{tkRootProcess}
 		tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		tkUser.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 		rows := tkRoot.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
@@ -78,105 +74,23 @@ func TestExplainFor(t *testing.T) {
 				buf.WriteString(fmt.Sprintf("%v", v))
 			}
 		}
-		require.Regexp(t, `TableReader(?:_\d+)? 10000\.00 0 root  time:[^ ]+.* data:TableFullScan(?:_\d+)? N/A N/A\n`+
-			`└─TableFullScan(?:_\d+)? 10000\.00 0 cop\[tikv\] table:t1 .* keep order:false, stats:pseudo N/A N/A`,
+		require.Regexp(t, "TableReader_5 10000.00 0 root  time:.*, loops:1,( RU:.*,)? cop_task: {num:.*, max:.*, proc_keys:.* rpc_num: 1, rpc_time:.*} data:TableFullScan_4 N/A N/A\n"+
+			"└─TableFullScan_4 10000.00 0 cop.* table:t1 tikv_task:{time:.*, loops:0} keep order:false, stats:pseudo N/A N/A",
 			buf.String())
 	}
 	tkRoot.MustQuery("select * from t1;")
-	tkRootProcess = tkRoot.Session().ShowProcess()
-	require.NotEmpty(t, tkRootProcess.BriefBinaryPlan)
-	targetPlan, ok := tkRootProcess.Plan.(base.Plan)
-	require.True(t, ok)
-	statsColl := execdetails.NewRuntimeStatsColl(nil)
-	statsColl.GetBasicRuntimeStats(targetPlan.ID(), true).Record(time.Millisecond, 7)
-	// Keep the binary snapshot stale while replacing RuntimeStatsColl to verify live stats rendering.
-	processWithLiveStats := *tkRootProcess
-	processWithLiveStats.RuntimeStatsColl = statsColl
-	ps = []*sessmgr.ProcessInfo{&processWithLiveStats}
-	tkStatsExplain := testkit.NewTestKit(t, store)
-	tkStatsExplain.MustExec("use test")
-	tkStatsExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	rows := tkStatsExplain.MustQuery(fmt.Sprintf("explain for connection %d", processWithLiveStats.ID)).Rows()
-	require.Len(t, rows, 2)
-	require.Len(t, rows[0], 9)
-	require.Equal(t, "7", rows[0][2])
 	check()
-	tkRoot.MustQuery("explain analyze format = 'brief' select * from t1;")
+	tkRoot.MustQuery("explain analyze select * from t1;")
 	check()
 	err := tkUser.ExecToErr(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
-	require.True(t, plannererrors.ErrAccessDenied.Equal(err))
+	require.True(t, core.ErrAccessDenied.Equal(err))
 	err = tkUser.ExecToErr("explain for connection 42")
-	require.True(t, plannererrors.ErrNoSuchThread.Equal(err))
+	require.True(t, core.ErrNoSuchThread.Equal(err))
 
 	tkRootProcess.Plan = nil
-	ps = []*sessmgr.ProcessInfo{tkRootProcess}
+	ps = []*util.ProcessInfo{tkRootProcess}
 	tkRoot.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tkRoot.MustExec(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
-
-	tkRoot.MustExec("set @@tidb_enable_collect_execution_info=0")
-	tkRoot.MustExec("set tidb_enable_non_prepared_plan_cache=1")
-	tkRoot.MustExec("drop table if exists t_explain_for_nonprep")
-	tkRoot.MustExec("create table t_explain_for_nonprep(status int)")
-	tkRoot.MustExec("insert into t_explain_for_nonprep values (1)")
-	tkExplain := testkit.NewTestKit(t, store)
-	tkExplain.MustExec("use test")
-
-	// The cached non-prepared plan keeps parameterized predicates in the recorded ProcessInfo plan.
-	queryDone := make(chan error, 1)
-	querySQL := "select status, sleep(1) from t_explain_for_nonprep where status=1"
-	go func() {
-		queryDone <- tkRoot.QueryToErr(querySQL)
-	}()
-	require.Eventually(t, func() bool {
-		pi := tkRoot.Session().ShowProcess()
-		return pi != nil && strings.Contains(pi.Info, "sleep(1)")
-	}, 5*time.Second, 50*time.Millisecond)
-
-	tkRootProcess = tkRoot.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkRootProcess}
-	tkExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
-
-	require.NoError(t, <-queryDone)
-
-	tkRootProcess = tkRoot.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkRootProcess}
-	tkExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
-
-	tkRoot.MustExec("set tidb_enable_prepared_plan_cache=1")
-	tkRoot.MustExec("drop table if exists t_explain_for_prep")
-	tkRoot.MustExec("create table t_explain_for_prep(status int)")
-	tkRoot.MustExec("insert into t_explain_for_prep values (1)")
-	tkRoot.MustExec("prepare stmt_explain_for_connection from 'select status, sleep(1) from t_explain_for_prep where status = ?'")
-	tkRoot.MustExec("set @status = 1")
-	tkRoot.MustQuery("execute stmt_explain_for_connection using @status").Check(testkit.Rows("1 0"))
-	tkRoot.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
-
-	// Prepared plan cache also records BriefBinaryPlan through Execute.Plan, so the decode-only path
-	// should stay valid for both running and finished EXPLAIN FOR CONNECTION.
-	queryDone = make(chan error, 1)
-	querySQL = "execute stmt_explain_for_connection using @status"
-	go func() {
-		queryDone <- tkRoot.QueryToErr(querySQL)
-	}()
-	require.Eventually(t, func() bool {
-		pi := tkRoot.Session().ShowProcess()
-		return pi != nil && strings.Contains(pi.Info, "stmt_explain_for_connection")
-	}, 5*time.Second, 50*time.Millisecond)
-
-	tkRootProcess = tkRoot.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkRootProcess}
-	tkExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
-
-	require.NoError(t, <-queryDone)
-	tkRoot.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
-
-	tkRootProcess = tkRoot.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkRootProcess}
-	tkExplain.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tkExplain.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID))
 }
 
 func TestExplainForVerbose(t *testing.T) {
@@ -190,7 +104,7 @@ func TestExplainForVerbose(t *testing.T) {
 	tk.MustExec("create table t1(id int);")
 	tk.MustQuery("select * from t1;")
 	tkRootProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkRootProcess}
+	ps := []*util.ProcessInfo{tkRootProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
@@ -206,7 +120,7 @@ func TestExplainForVerbose(t *testing.T) {
 	tk.MustExec("create table t2(id int);")
 	tk.MustQuery("select * from t2;")
 	tkRootProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkRootProcess}
+	ps = []*util.ProcessInfo{tkRootProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	rs = tk.MustQuery("explain format = 'verbose' select * from t2").Rows()
@@ -217,7 +131,7 @@ func TestExplainForVerbose(t *testing.T) {
 		require.Len(t, rs[i], 6)
 		// "id", "estRows", "estCost", "actRows", "task", "access object", "execution info", "operator info", "memory", "disk"
 		require.Len(t, rs2[i], 10)
-		for j := range 3 {
+		for j := 0; j < 3; j++ {
 			require.Equal(t, rs2[i][j], rs[i][j])
 		}
 	}
@@ -242,15 +156,72 @@ func TestIssue11124(t *testing.T) {
 	tk.MustExec("insert into kankan2 values(2, 'z');")
 	tk.MustQuery("select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'")
 	tkRootProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkRootProcess}
+	ps := []*util.ProcessInfo{tkRootProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	rs := tk.MustQuery("explain format = 'brief' select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'").Rows()
-	rs2 := tk2.MustQuery(fmt.Sprintf("explain format = 'brief' for connection %d", tkRootProcess.ID)).Rows()
+	rs := tk.MustQuery("explain select t1.id from kankan1 t1 left join kankan2 t2 on t1.id = t2.id where (case  when t1.name='b' then 'case2' when t1.name='a' then 'case1' else NULL end) = 'case1'").Rows()
+	rs2 := tk2.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
 	for i := range rs {
 		require.Equal(t, rs2[i], rs[i])
 	}
+}
+
+func TestExplainMemTablePredicate(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("desc select * from METRICS_SCHEMA.tidb_query_duration where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:tidb_query_duration PromQL:histogram_quantile(0.9, sum(rate(tidb_server_handle_query_duration_seconds_bucket{}[60s])) by (le,sql_type,instance)), start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
+	tk.MustQuery("desc select * from METRICS_SCHEMA.up where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13' ").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:up PromQL:up{}, start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, step:1m0s"))
+	tk.MustQuery("desc select * from information_schema.cluster_log where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13"))
+	tk.MustQuery("desc select * from information_schema.cluster_log where level in ('warn','error') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, log_levels:["error","warn"]`))
+	tk.MustQuery("desc select * from information_schema.cluster_log where type in ('high_cpu_1','high_memory_1') and time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_LOG start_time:2019-12-23 16:10:13, end_time:2019-12-23 16:30:13, node_types:["high_cpu_1","high_memory_1"]`))
+	tk.MustQuery("desc select * from information_schema.slow_query").Check(testkit.Rows(
+		"MemTableScan_4 10000.00 root table:SLOW_QUERY only search in the current 'tidb-slow.log' file"))
+	tk.MustQuery("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:SLOW_QUERY start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000"))
+	tk.MustExec("set @@time_zone = '+00:00';")
+	tk.MustQuery("desc select * from information_schema.slow_query where time >= '2019-12-23 16:10:13' and time <= '2019-12-23 16:30:13'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:SLOW_QUERY start_time:2019-12-23 16:10:13.000000, end_time:2019-12-23 16:30:13.000000"))
+}
+
+func TestExplainClusterTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("desc select * from information_schema.cluster_config where type in ('tikv', 'tidb')").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG node_types:["tidb","tikv"]`))
+	tk.MustQuery("desc select * from information_schema.cluster_config where instance='192.168.1.7:2379'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG instances:["192.168.1.7:2379"]`))
+	tk.MustQuery("desc select * from information_schema.cluster_config where type='tidb' and instance='192.168.1.7:2379'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:CLUSTER_CONFIG node_types:["tidb"], instances:["192.168.1.7:2379"]`))
+}
+
+func TestInspectionResultTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("desc select * from information_schema.inspection_result where rule = 'ddl' and rule = 'config'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT skip_inspection:true`))
+	tk.MustQuery("desc select * from information_schema.inspection_result where rule in ('ddl', 'config')").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:["config","ddl"], items:[]`))
+	tk.MustQuery("desc select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool')").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:[], items:["ddl.lease","raftstore.threadpool"]`))
+	tk.MustQuery("desc select * from information_schema.inspection_result where item in ('ddl.lease', 'raftstore.threadpool') and rule in ('ddl', 'config')").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RESULT rules:["config","ddl"], items:["ddl.lease","raftstore.threadpool"]`))
+}
+
+func TestInspectionRuleTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("desc select * from information_schema.inspection_rules where type='inspection'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RULES node_types:["inspection"]`))
+	tk.MustQuery("desc select * from information_schema.inspection_rules where type='inspection' or type='summary'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RULES node_types:["inspection","summary"]`))
+	tk.MustQuery("desc select * from information_schema.inspection_rules where type='inspection' and type='summary'").Check(testkit.Rows(
+		`MemTableScan_5 10000.00 root table:INSPECTION_RULES skip_request: true`))
 }
 
 func TestExplainForConnPlanCache(t *testing.T) {
@@ -286,7 +257,7 @@ func TestExplainForConnPlanCache(t *testing.T) {
 	// single test
 	tk1.MustExec(executeQuery)
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{
-		PS: []*sessmgr.ProcessInfo{tk1.Session().ShowProcess()},
+		PS: []*util.ProcessInfo{tk1.Session().ShowProcess()},
 	})
 	tk2.MustQuery(explainQuery).Check(explainResult)
 	tk1.MustExec(executeQuery)
@@ -298,21 +269,43 @@ func TestExplainForConnPlanCache(t *testing.T) {
 	var wg util.WaitGroupWrapper
 
 	wg.Run(func() {
-		for range repeats {
+		for i := 0; i < repeats; i++ {
 			tk1.MustExec(executeQuery)
 		}
 	})
 
 	wg.Run(func() {
-		for range repeats {
+		for i := 0; i < repeats; i++ {
 			tk2.Session().SetSessionManager(&testkit.MockSessionManager{
-				PS: []*sessmgr.ProcessInfo{tk1.Session().ShowProcess()},
+				PS: []*util.ProcessInfo{tk1.Session().ShowProcess()},
 			})
 			tk2.MustQuery(explainQuery).Check(explainResult)
 		}
 	})
 
 	wg.Wait()
+}
+
+func TestSavedPlanPanicPlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, c int generated always as (a+b) stored)")
+	tk.MustExec("insert into t(a,b) values(1,1)")
+	tk.MustExec("begin")
+	tk.MustExec("update t set b = 2 where a = 1")
+	tk.MustExec("prepare stmt from 'select b from t where a > ?'")
+	tk.MustExec("set @p = 0")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows(
+		"2",
+	))
+	tk.MustExec("set @p = 1")
+	tk.MustQuery("execute stmt using @p").Check(testkit.Rows())
+	err := tk.ExecToErr("insert into t(a,b,c) values(3,3,3)")
+	require.EqualError(t, err, "[planner:3105]The value specified for generated column 'c' in table 't' is not allowed.")
 }
 
 func TestExplainDotForExplainPlan(t *testing.T) {
@@ -328,12 +321,10 @@ func TestExplainDotForExplainPlan(t *testing.T) {
 	))
 
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
+	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	err := tk.ExecToErr(fmt.Sprintf("explain format=\"dot\" for connection %s", connID))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "explain format 'dot' for connection is not supported now")
+	tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Check(nil)
 }
 
 func TestExplainDotForQuery(t *testing.T) {
@@ -346,15 +337,103 @@ func TestExplainDotForQuery(t *testing.T) {
 	connID := rows[0][0].(string)
 	tk.MustQuery("select 1")
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
+	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 
-	tk2.MustQuery("explain format=\"dot\" select 1").Check(testkit.Rows(
-		"\ndigraph Projection_3 {\nsubgraph cluster3{\nnode [style=filled, color=lightgrey]\ncolor=black\nlabel = \"root\"\n\"Projection_3\" -> \"TableDual_4\"\n}\n}\n",
+	expected := tk2.MustQuery("explain format=\"dot\" select 1").Rows()
+	got := tk.MustQuery(fmt.Sprintf("explain format=\"dot\" for connection %s", connID)).Rows()
+	for i := range got {
+		require.Equal(t, expected[i], got[i])
+	}
+}
+
+func TestExplainTableStorage(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustQuery("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"]"))
+	tk.MustQuery("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_NAME = 'schemata'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS table:[\"schemata\"]"))
+	tk.MustQuery("desc select * from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME = 'schemata'").Check(testkit.Rows(
+		"MemTableScan_5 10000.00 root table:TABLE_STORAGE_STATS schema:[\"information_schema\"], table:[\"schemata\"]"))
+}
+
+func TestInspectionSummaryTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl'").Check(testkit.Rows(
+		`Selection_5 8000.00 root  eq(Column#1, "ddl")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"]`,
 	))
-	err := tk.ExecToErr(fmt.Sprintf("explain format=\"dot\" for connection %s", connID))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "explain format 'dot' for connection is not supported now")
+	tk.MustQuery("desc select * from information_schema.inspection_summary where 'ddl'=rule or rule='config'").Check(testkit.Rows(
+		`Selection_5 8000.00 root  or(eq("ddl", Column#1), eq(Column#1, "config"))`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config","ddl"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where 'ddl'=rule or rule='config' or rule='slow_query'").Check(testkit.Rows(
+		`Selection_5 8000.00 root  or(eq("ddl", Column#1), or(eq(Column#1, "config"), eq(Column#1, "slow_query")))`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config","ddl","slow_query"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where (rule='config' or rule='slow_query') and (metrics_name='metric_name3' or metrics_name='metric_name1')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  or(eq(Column#1, "config"), eq(Column#1, "slow_query")), or(eq(Column#3, "metric_name3"), eq(Column#3, "metric_name1"))`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config","slow_query"], metric_names:["metric_name1","metric_name3"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  in(Column#1, "ddl", "slow_query")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl","slow_query"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name='metric_name1'").Check(testkit.Rows(
+		`Selection_5 8000.00 root  eq(Column#3, "metric_name1"), in(Column#1, "ddl", "slow_query")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl","slow_query"], metric_names:["metric_name1"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'slow_query') and metrics_name in ('metric_name1', 'metric_name2')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  in(Column#1, "ddl", "slow_query"), in(Column#3, "metric_name1", "metric_name2")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl","slow_query"], metric_names:["metric_name1","metric_name2"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl' and metrics_name in ('metric_name1', 'metric_name2')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  eq(Column#1, "ddl"), in(Column#3, "metric_name1", "metric_name2")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"], metric_names:["metric_name1","metric_name2"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule='ddl' and metrics_name='metric_NAME3'").Check(testkit.Rows(
+		`Selection_5 8000.00 root  eq(Column#1, "ddl"), eq(Column#3, "metric_NAME3")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["ddl"], metric_names:["metric_name3"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where rule in ('ddl', 'config') and rule in ('slow_query', 'config')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config"]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and rule in ('ddl', 'config') and rule in ('slow_query', 'config') and quantile in (0.80, 0.90)").Check(testkit.Rows(
+		`Selection_5 8000.00 root  in(Column#1, "ddl", "config"), in(Column#1, "slow_query", "config"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name4")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY rules:["config"], metric_names:["metric_name4"], quantiles:[0.800000,0.900000]`,
+	))
+	tk.MustQuery("desc select * from information_schema.inspection_summary where metrics_name in ('metric_name1', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name4') and metrics_name in ('metric_name5', 'metric_name1') and metrics_name in ('metric_name1', 'metric_name3')").Check(testkit.Rows(
+		`Selection_5 8000.00 root  in(Column#3, "metric_name1", "metric_name3"), in(Column#3, "metric_name1", "metric_name4"), in(Column#3, "metric_name5", "metric_name1"), in(Column#3, "metric_name5", "metric_name4")`,
+		`└─MemTableScan_6 10000.00 root table:INSPECTION_SUMMARY skip_inspection: true`,
+	))
+}
+
+func TestExplainTiFlashSystemTables(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tiflashInstance := "192.168.1.7:3930"
+	database := "test"
+	table := "t"
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s'", tiflashInstance)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tiflash_instances:[\"%s\"]", tiflashInstance)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s'", tiflashInstance)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"]", tiflashInstance)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIDB_DATABASE = '%s'", database)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tidb_databases:[\"%s\"]", database)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIDB_DATABASE = '%s'", database)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tidb_databases:[\"%s\"]", database)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIDB_TABLE = '%s'", table)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tidb_tables:[\"%s\"]", table)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIDB_TABLE = '%s'", table)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tidb_tables:[\"%s\"]", table)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_TABLES where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_TABLES tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
+	tk.MustQuery(fmt.Sprintf("desc select * from information_schema.TIFLASH_SEGMENTS where TIFLASH_INSTANCE = '%s' and TIDB_DATABASE = '%s' and TIDB_TABLE = '%s'", tiflashInstance, database, table)).Check(testkit.Rows(
+		fmt.Sprintf("MemTableScan_5 10000.00 root table:TIFLASH_SEGMENTS tiflash_instances:[\"%s\"], tidb_databases:[\"%s\"], tidb_tables:[\"%s\"]", tiflashInstance, database, table)))
 }
 
 func TestPointGetUserVarPlanCache(t *testing.T) {
@@ -365,9 +444,9 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 	tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "localhost", CurrentUser: true, AuthUsername: "root", AuthHostname: "%"}, nil, []byte("012345678901234567890"), nil)
 
 	tk.MustExec("use test")
-
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1")
 	tk.MustExec("CREATE TABLE t1 (a BIGINT, b VARCHAR(40), PRIMARY KEY (a, b))")
 	tk.MustExec("INSERT INTO t1 VALUES (1,'3'),(2,'4')")
@@ -380,29 +459,28 @@ func TestPointGetUserVarPlanCache(t *testing.T) {
 		"1 3 1 1",
 	))
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
+	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection 1.25 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─MergeJoin 1.25 root  inner join, left key:test.t2.a, right key:test.t1.a`,
-		`  ├─TableReader(Build) 10.00 root  data:TableRangeScan`,
-		`  │ └─TableRangeScan 10.00 cop[tikv] table:t1 range:[1,1], keep order:true, stats:pseudo`,
-		`  └─Selection(Probe) 1.00 root  1`,
-		`    └─Point_Get 1.00 root table:t2, index:idx_a(a) `))
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
+		`Projection_9 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─HashJoin_11 10.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get_12(Build) 1.00 root table:t2, index:idx_a(a) `, // use idx_a
+		`  └─TableReader_14(Probe) 10.00 root  data:TableRangeScan_13`,
+		`    └─TableRangeScan_13 10.00 cop[tikv] table:t1 range:[1,1], keep order:false, stats:pseudo`))
+
 	tk.MustExec("set @a=2")
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	tk.MustQuery(fmt.Sprintf("explain format='brief' for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
-		`Projection 1.25 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
-		`└─MergeJoin 1.25 root  inner join, left key:test.t2.a, right key:test.t1.a`,
-		`  ├─TableReader(Build) 10.00 root  data:TableRangeScan`,
-		`  │ └─TableRangeScan 10.00 cop[tikv] table:t1 range:[2,2], keep order:true, stats:pseudo`,
-		`  └─Selection(Probe) 1.00 root  1`,
-		`    └─Point_Get 1.00 root table:t2, index:idx_a(a) `))
+	tk.MustQuery(fmt.Sprintf("explain for connection %d", tkProcess.ID)).Check(testkit.Rows( // can use idx_a
+		`Projection_9 10.00 root  test.t1.a, test.t1.b, test.t2.a, test.t2.b`,
+		`└─HashJoin_11 10.00 root  CARTESIAN inner join`,
+		`  ├─Point_Get_12(Build) 1.00 root table:t2, index:idx_a(a) `,
+		`  └─TableReader_14(Probe) 10.00 root  data:TableRangeScan_13`,
+		`    └─TableRangeScan_13 10.00 cop[tikv] table:t1 range:[2,2], keep order:false, stats:pseudo`))
 	tk.MustQuery("execute stmt using @a").Check(testkit.Rows(
 		"2 4 2 2",
 	))
@@ -422,7 +500,7 @@ func TestExpressionIndexPreparePlanCache(t *testing.T) {
 	tk.MustExec("execute stmt using @a")
 
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
+	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
@@ -441,7 +519,6 @@ func TestIssue28259(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
-	tk.MustExec(`set tidb_opt_projection_push_down=0`)
 
 	// test for indexRange
 	tk.MustExec("use test")
@@ -455,7 +532,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("8502658334322817163"))
 
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
+	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 2)
@@ -466,7 +543,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 2)
@@ -490,7 +567,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustExec("set @a=0, @b=2, @c=2;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
@@ -502,7 +579,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
@@ -532,7 +609,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustExec("set @a=0, @b=2, @c=2;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
@@ -546,7 +623,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
@@ -574,7 +651,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustExec("set @a=0, @b=2, @c=2;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows("1"))
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
@@ -584,11 +661,10 @@ func TestIssue28259(t *testing.T) {
 
 	tk.MustExec("set @a=2, @b=1, @c=1;")
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
-	// Plan cache should not be skipped because the OR simplification has not been performed.
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt using @a,@b,@c;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 4)
@@ -617,7 +693,7 @@ func TestIssue28259(t *testing.T) {
 	tk.MustExec("set @a=1, @b=8;")
 	tk.MustQuery("execute stmt using @a,@b;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 3)
@@ -642,7 +718,7 @@ func TestIssue28696(t *testing.T) {
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("4"))
 
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
+	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
@@ -687,7 +763,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt using @a,@b,@c,@d,@e;").Check(testkit.Rows("aa 1333053589 1037-12-26 01:38:52"))
 
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
+	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res := tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 7)
@@ -706,7 +782,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt using @a, @b;").Check(testkit.Rows())
 
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Len(t, res.Rows(), 5)
@@ -726,7 +802,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt using @a;").Check(testkit.Rows("4 bbcsa 4"))
 
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Regexp(t, ".*IndexMerge.*", res.Rows()[0][0])
@@ -735,7 +811,7 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0")) // unsafe range
 	tk.MustQuery("execute stmt using @b;").Check(testkit.Rows("3 ddcdsaf 3"))
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Regexp(t, ".*IndexMerge.*", res.Rows()[0][0])
@@ -798,7 +874,8 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustExec("prepare stmt from 'SELECT /*+ USE_INDEX_MERGE(t0, i0, PRIMARY)*/ t0.c0 FROM t0 WHERE t0.c1 OR t0.c0;';")
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
 	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	// The plan contains the generated column, so it can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
 
 	tk.MustExec("drop table if exists t1, t2")
 	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
@@ -815,10 +892,77 @@ func TestIndexMerge4PlanCache(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 }
 
+func TestSetOperations4PlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists t1, t2;")
+	tk.MustExec("CREATE TABLE `t1` (a int);")
+	tk.MustExec("CREATE TABLE `t2` (a int);")
+	tk.MustExec("insert into t1 values(1), (2);")
+	tk.MustExec("insert into t2 values(1), (3);")
+	// test for UNION
+	tk.MustExec("prepare stmt from 'select * from t1 where a > ? union select * from t2 where a > ?;';")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt using @a, @b;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("execute stmt using @b, @a;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b, @b;").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @a;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt from 'select * from t1 where a > ? union all select * from t2 where a > ?;';")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt using @a, @b;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("execute stmt using @b, @a;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b, @b;").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @a;").Sort().Check(testkit.Rows("1", "1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	// test for EXCEPT
+	tk.MustExec("prepare stmt from 'select * from t1 where a > ? except select * from t2 where a > ?;';")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt using @a, @a;").Sort().Check(testkit.Rows("2"))
+	tk.MustQuery("execute stmt using @b, @a;").Sort().Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b, @b;").Sort().Check(testkit.Rows("2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @b;").Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	// test for INTERSECT
+	tk.MustExec("prepare stmt from 'select * from t1 where a > ? union select * from t2 where a > ?;';")
+	tk.MustExec("set @a=0, @b=1;")
+	tk.MustQuery("execute stmt using @a, @a;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("execute stmt using @b, @a;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @b, @b;").Sort().Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @b;").Sort().Check(testkit.Rows("1", "2", "3"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	// test for UNION + INTERSECT
+	tk.MustExec("prepare stmt from 'select * from t1 union all select * from t1 intersect select * from t2;'")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "1", "2"))
+
+	tk.MustExec("prepare stmt from '(select * from t1 union all select * from t1) intersect select * from t2;'")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1"))
+
+	// test for order by and limit
+	tk.MustExec("prepare stmt from '(select * from t1 union all select * from t1 intersect select * from t2) order by a limit 2;'")
+	tk.MustQuery("execute stmt;").Sort().Check(testkit.Rows("1", "1"))
+}
+
 func TestSPM4PlanCache(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
 
 	tk.MustExec("use test")
@@ -836,7 +980,7 @@ func TestSPM4PlanCache(t *testing.T) {
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 
 	tkProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkProcess}
+	ps := []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	require.Regexp(t, ".*IndexReader.*", res.Rows()[0][0])
@@ -854,7 +998,7 @@ func TestSPM4PlanCache(t *testing.T) {
 	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("0"))
 	tk.MustQuery("execute stmt;").Check(testkit.Rows())
 	tkProcess = tk.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tkProcess}
+	ps = []*util.ProcessInfo{tkProcess}
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	res = tk.MustQuery("explain for connection " + strconv.FormatUint(tkProcess.ID, 10))
 	// We can use the new binding.
@@ -869,6 +1013,375 @@ func TestSPM4PlanCache(t *testing.T) {
 	tk.MustExec("admin reload bindings;")
 }
 
+func TestHint4PlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, index idx_a(a));")
+
+	tk.MustExec("prepare stmt from 'select * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt from 'select /*+ IGNORE_PLAN_CACHE() */ * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
+func TestIgnorePlanCacheWithPrepare(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, index idx_a(a));")
+	tk.MustExec("drop table if exists r;")
+	tk.MustExec("create table r(a int);")
+
+	// test use_index
+	tk.MustExec("prepare stmt from 'select * from t;';")
+	tk.MustExec("create binding for select * from t using select /*+ use_index(t, idx_a) */ * from t;")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
+
+	tk.MustExec("create binding for select * from t using select /*+ ignore_plan_cache() */ * from t;")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
+
+	tk.MustExec("create binding for select * from t using select /*+ use_index(t, idx_a) */ * from t;")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
+
+	// test straight_join
+	tk.MustExec("prepare stmt_join from 'select * from t, r where r.a = t.a;';")
+	tk.MustExec("create binding for select * from t, r where r.a = t.a using select /*+ straight_join() */* from t, r where r.a = t.a;")
+	tk.MustQuery("execute stmt_join;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt_join;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt_join;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
+
+	tk.MustExec("create binding for select * from t, r where r.a = t.a using select /*+ ignore_plan_cache() */* from t, r where r.a = t.a;")
+	tk.MustQuery("execute stmt_join;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt_join;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
+
+	tk.MustExec("create binding for select * from t, r where r.a = t.a using select /*+ straight_join() */* from t, r where r.a = t.a;")
+	tk.MustQuery("execute stmt_join;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt_join;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_binding;").Check(testkit.Rows("1"))
+}
+
+func TestSelectView4PlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists view_t;")
+	tk.MustExec("create table view_t (a int,b int)")
+	tk.MustExec("insert into view_t values(1,2)")
+	tk.MustExec("create definer='root'@'localhost' view view1 as select * from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view2(c,d) as select * from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view3(c,d) as select a,b from view_t")
+	tk.MustExec("create definer='root'@'localhost' view view4 as select * from (select * from (select * from view_t) tb1) tb;")
+	tk.MustExec("prepare stmt1 from 'select * from view1;'")
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt2 from 'select * from view2;'")
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt3 from 'select * from view3;'")
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt4 from 'select * from view4;'")
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("create table view_t(c int,d int)")
+	err := tk.ExecToErr("execute stmt1;")
+	require.Equal(t, "[planner:1356]View 'test.view1' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them", err.Error())
+	err = tk.ExecToErr("execute stmt2")
+	require.Equal(t, "[planner:1356]View 'test.view2' references invalid table(s) or column(s) or function(s) or definer/invoker of view lack rights to use them", err.Error())
+	err = tk.ExecToErr("execute stmt3")
+	require.Equal(t, core.ErrViewInvalid.GenWithStackByArgs("test", "view3").Error(), err.Error())
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("create table view_t(a int,b int,c int)")
+	tk.MustExec("insert into view_t values(1,2,3)")
+
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("alter table view_t drop column a")
+	tk.MustExec("alter table view_t add column a int after b")
+	tk.MustExec("update view_t set a=1;")
+
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt1;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt2;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt3;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt4;").Check(testkit.Rows("1 2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop table view_t;")
+	tk.MustExec("drop view view1,view2,view3,view4;")
+
+	tk.MustExec("set @@tidb_enable_window_function = 1")
+	defer func() {
+		tk.MustExec("set @@tidb_enable_window_function = 0")
+	}()
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int)")
+	tk.MustExec("insert into t values (1,1),(1,2),(2,1),(2,2)")
+	tk.MustExec("create definer='root'@'localhost' view v as select a, first_value(a) over(rows between 1 preceding and 1 following), last_value(a) over(rows between 1 preceding and 1 following) from t")
+	tk.MustExec("prepare stmt from 'select * from v;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1 1 1", "1 1 2", "2 1 2", "2 2 2"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1 1 1", "1 1 2", "2 1 2", "2 2 2"))
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop view v;")
+}
+
+func TestInvisibleIndex4PlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t(c1 INT, index idx_c(c1));")
+
+	tk.MustExec("prepare stmt from 'select * from t use index(idx_c) where c1 > 1;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("ALTER TABLE t ALTER INDEX idx_c INVISIBLE;")
+	err := tk.ExecToErr("select * from t use index(idx_c) where c1 > 1;")
+	require.Equal(t, "[planner:1176]Key 'idx_c' doesn't exist in table 't'", err.Error())
+
+	err = tk.ExecToErr("execute stmt;")
+	require.Equal(t, "[planner:1176]Key 'idx_c' doesn't exist in table 't'", err.Error())
+}
+
+func TestCTE4PlanCache(t *testing.T) {
+	// CTE can not be cached, because part of it will be treated as a subquery.
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
+		"select ? c1 " +
+		"union all " +
+		"select c1 + 1 c1 from cte1 where c1 < ?) " +
+		"select * from cte1;';")
+	tk.MustExec("set @a=5, @b=4, @c=2, @d=1;")
+	tk.MustQuery("execute stmt using @d, @a").Check(testkit.Rows("1", "2", "3", "4", "5"))
+	tk.MustQuery("execute stmt using @d, @b").Check(testkit.Rows("1", "2", "3", "4"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @c, @b").Check(testkit.Rows("2", "3", "4"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	// Two seed parts.
+	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
+		"select 1 c1 " +
+		"union all " +
+		"select 2 c1 " +
+		"union all " +
+		"select c1 + 1 c1 from cte1 where c1 < ?) " +
+		"select * from cte1 order by c1;';")
+	tk.MustExec("set @a=10, @b=2;")
+	tk.MustQuery("execute stmt using @a").Check(testkit.Rows("1", "2", "2", "3", "3", "4", "4", "5", "5", "6", "6", "7", "7", "8", "8", "9", "9", "10", "10"))
+	tk.MustQuery("execute stmt using @b").Check(testkit.Rows("1", "2", "2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	// Two recursive parts.
+	tk.MustExec("prepare stmt from 'with recursive cte1 as (" +
+		"select 1 c1 " +
+		"union all " +
+		"select 2 c1 " +
+		"union all " +
+		"select c1 + 1 c1 from cte1 where c1 < ? " +
+		"union all " +
+		"select c1 + ? c1 from cte1 where c1 < ?) " +
+		"select * from cte1 order by c1;';")
+	tk.MustExec("set @a=1, @b=2, @c=3, @d=4, @e=5;")
+	tk.MustQuery("execute stmt using @c, @b, @e;").Check(testkit.Rows("1", "2", "2", "3", "3", "3", "4", "4", "5", "5", "5", "6", "6"))
+	tk.MustQuery("execute stmt using @b, @a, @d;").Check(testkit.Rows("1", "2", "2", "2", "3", "3", "3", "4", "4", "4"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(a int);")
+	tk.MustExec("insert into t1 values(1);")
+	tk.MustExec("insert into t1 values(2);")
+	tk.MustExec("prepare stmt from 'SELECT * FROM t1 dt WHERE EXISTS(WITH RECURSIVE qn AS (SELECT a*? AS b UNION ALL SELECT b+? FROM qn WHERE b=?) SELECT * FROM qn WHERE b=a);';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.qn failed: [schema:1146]Table 'test.qn' doesn't exist"))
+	tk.MustExec("set @a=1, @b=2, @c=3, @d=4, @e=5, @f=0;")
+
+	tk.MustQuery("execute stmt using @f, @a, @f").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt using @a, @b, @a").Sort().Check(testkit.Rows("1", "2"))
+	//tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: PhysicalApply plan is un-cacheable"))
+
+	tk.MustExec("prepare stmt from 'with recursive c(p) as (select ?), cte(a, b) as (select 1, 1 union select a+?, 1 from cte, c where a < ?)  select * from cte order by 1, 2;';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: find table test.cte failed: [schema:1146]Table 'test.cte' doesn't exist"))
+	tk.MustQuery("execute stmt using @a, @a, @e;").Check(testkit.Rows("1 1", "2 1", "3 1", "4 1", "5 1"))
+	tk.MustQuery("execute stmt using @b, @b, @c;").Check(testkit.Rows("1 1", "3 1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
+func TestValidity4PlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int);")
+
+	tk.MustExec("prepare stmt from 'select * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("drop database if exists plan_cache;")
+	tk.MustExec("create database plan_cache;")
+	tk.MustExec("use plan_cache;")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("insert into t values(1);")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("prepare stmt from 'select * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+
+	tk.MustExec("use test") // still read plan_cache.t and can hit the cache
+	tk.MustQuery("execute stmt;").Check(testkit.Rows("1"))
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
+}
+
+func TestListPartition4PlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("set @@session.tidb_enable_list_partition=1;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("create table t(a int, b int) PARTITION BY LIST (a) ( PARTITION p0 VALUES IN (1, 2, 3), PARTITION p1 VALUES IN (4, 5, 6));")
+
+	tk.MustExec("set @@tidb_partition_prune_mode='static';")
+	tk.MustExec("prepare stmt from 'select * from t;';")
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	tk.MustQuery("execute stmt;").Check(testkit.Rows())
+	// The list partition plan can not be cached.
+	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
+}
+
+func TestMoreSessions4PlanCache(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk2 := testkit.NewTestKit(t, store)
+	tk.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+
+	tk.MustExec("set @@tidb_enable_collect_execution_info=0;")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int);")
+	tk.MustExec("prepare stmt from 'select * from t;';")
+
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk2.MustExec(`set tidb_enable_prepared_plan_cache=1`)
+
+	tk2.MustExec("use test;")
+	require.EqualError(t, tk2.ExecToErr("execute stmt;"), "[planner:8111]Prepared statement not found")
+	tk2.MustExec("prepare stmt from 'select * from t;';")
+	tk2.MustQuery("execute stmt").Check(testkit.Rows())
+	tk2.MustQuery("execute stmt").Check(testkit.Rows())
+	tk2.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+
+	tk.MustQuery("execute stmt").Check(testkit.Rows())
+	tk.MustQuery("select @@last_plan_from_cache").Check(testkit.Rows("1"))
+}
+
+func TestIssue28792(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t12(a INT, b INT)")
+	tk.MustExec("CREATE TABLE t97(a INT, b INT UNIQUE NOT NULL);")
+	r1 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 on t12.b = t97.b;").Rows()
+	r2 := tk.MustQuery("EXPLAIN SELECT t12.a, t12.b FROM t12 LEFT JOIN t97 use index () on t12.b = t97.b;").Rows()
+	require.Equal(t, r2, r1)
+}
+
 func TestExplainForJSON(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
@@ -880,53 +1393,62 @@ func TestExplainForJSON(t *testing.T) {
 	tk1.MustExec("create table t1(id int);")
 	tk1.MustQuery("select * from t1;")
 	tk1RootProcess := tk1.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tk1RootProcess}
+	ps := []*util.ProcessInfo{tk1RootProcess}
 	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	err := tk2.ExecToErr(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not supported now")
+	resRow := tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
+	resJSON := tk2.MustQuery(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID)).Rows()
+
+	j := new([]*core.ExplainInfoForEncode)
+	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
+	flatJSONRows := make([]*core.ExplainInfoForEncode, 0)
+	for _, row := range *j {
+		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
+	}
+	require.Equal(t, len(flatJSONRows), len(resRow))
+
+	for i, row := range resRow {
+		require.Contains(t, row[0], flatJSONRows[i].ID)
+		require.Equal(t, flatJSONRows[i].EstRows, row[1])
+		require.Equal(t, flatJSONRows[i].TaskType, row[2])
+		require.Equal(t, flatJSONRows[i].AccessObject, row[3])
+		require.Equal(t, flatJSONRows[i].OperatorInfo, row[4])
+	}
 
 	tk1.MustExec("set @@tidb_enable_collect_execution_info=1;")
 	tk1.MustExec("drop table if exists t2")
 	tk1.MustExec("create table t2(id int);")
 	tk1.MustQuery("select * from t2;")
 	tk1RootProcess = tk1.Session().ShowProcess()
-	ps = []*sessmgr.ProcessInfo{tk1RootProcess}
+	ps = []*util.ProcessInfo{tk1RootProcess}
 	tk1.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
 	tk2.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-	err = tk2.ExecToErr(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "not supported now")
+	resRow = tk2.MustQuery(fmt.Sprintf("explain format = 'row' for connection %d", tk1RootProcess.ID)).Rows()
+	resJSON = tk2.MustQuery(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID)).Rows()
 
-	// test syntax - these should also fail
-	err = tk2.ExecToErr(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
-	require.Error(t, err)
-	err = tk2.ExecToErr(fmt.Sprintf("explain format = tidb_json for connection %d", tk1RootProcess.ID))
-	require.Error(t, err)
-	err = tk2.ExecToErr(fmt.Sprintf("explain format = 'TIDB_JSON' for connection %d", tk1RootProcess.ID))
-	require.Error(t, err)
-	err = tk2.ExecToErr(fmt.Sprintf("explain format = TIDB_JSON for connection %d", tk1RootProcess.ID))
-	require.Error(t, err)
-}
-
-func TestIssue55669(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tk.MustExec("use test")
-	tk.MustExec("create table t (a int, b int, primary key (a,b), key (b)) partition by range (b) (partition p0 values less than (1000000), partition pMax values less than (maxvalue))")
-	tk.MustQuery("select a,b from t where b between 1 and 10")
-	tkRootProcess := tk.Session().ShowProcess()
-	ps := []*sessmgr.ProcessInfo{tkRootProcess}
-	tk.Session().SetSessionManager(&testkit.MockSessionManager{PS: ps})
-
-	rs := tk.MustQuery(fmt.Sprintf("explain for connection %d", tkRootProcess.ID)).Rows()
-	ok := false
-	for i := range rs {
-		if strings.HasSuffix(rs[i][4].(string), "partition:p0") {
-			ok = true
-		}
+	j = new([]*core.ExplainInfoForEncode)
+	require.NoError(t, json.Unmarshal([]byte(resJSON[0][0].(string)), j))
+	flatJSONRows = []*core.ExplainInfoForEncode{}
+	for _, row := range *j {
+		flatJSONRows = append(flatJSONRows, flatJSONPlan(row)...)
 	}
-	require.True(t, ok)
+	require.Equal(t, len(flatJSONRows), len(resRow))
+
+	for i, row := range resRow {
+		require.Contains(t, row[0], flatJSONRows[i].ID)
+		require.Equal(t, flatJSONRows[i].EstRows, row[1])
+		require.Equal(t, flatJSONRows[i].ActRows, row[2])
+		require.Equal(t, flatJSONRows[i].TaskType, row[3])
+		require.Equal(t, flatJSONRows[i].AccessObject, row[4])
+		require.Equal(t, flatJSONRows[i].OperatorInfo, row[6])
+		// executeInfo, memory, disk maybe vary in multi execution
+		require.NotEqual(t, flatJSONRows[i].ExecuteInfo, "")
+		require.NotEqual(t, flatJSONRows[i].MemoryInfo, "")
+		require.NotEqual(t, flatJSONRows[i].DiskInfo, "")
+	}
+	// test syntax
+	tk2.MustExec(fmt.Sprintf("explain format = 'tidb_json' for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = tidb_json for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = 'TIDB_JSON' for connection %d", tk1RootProcess.ID))
+	tk2.MustExec(fmt.Sprintf("explain format = TIDB_JSON for connection %d", tk1RootProcess.ID))
 }

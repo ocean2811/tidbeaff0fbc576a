@@ -6,11 +6,10 @@ go_library(
         "errors.go",
         "group.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/ddl/resourcegroup",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/resourcegroup",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/resource_manager",
     ],

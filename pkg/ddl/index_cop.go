@@ -16,108 +16,275 @@ package ddl
 
 import (
 	"context"
+	"encoding/hex"
+	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/copr"
-	sess "github.com/pingcap/tidb/pkg/ddl/session"
-	"github.com/pingcap/tidb/pkg/distsql"
-	distsqlctx "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/copr"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/ingest"
+	sess "github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/internal/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/distsql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/tables"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/timeutil"
 	"github.com/pingcap/tipb/go-tipb"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 )
 
-const tableScanCopID = 1
+// copReadBatchSize is the batch size of coprocessor read.
+// It multiplies the tidb_ddl_reorg_batch_size by 10 to avoid
+// sending too many cop requests for the same handle range.
+func copReadBatchSize() int {
+	return 10 * int(variable.GetDDLReorgBatchSize())
+}
+
+// copReadChunkPoolSize is the size of chunk pool, which
+// represents the max concurrent ongoing coprocessor requests.
+// It multiplies the tidb_ddl_reorg_worker_cnt by 10.
+func copReadChunkPoolSize() int {
+	return 10 * int(variable.GetDDLReorgWorkerCounter())
+}
+
+// chunkSender is used to receive the result of coprocessor request.
+type chunkSender interface {
+	AddTask(IndexRecordChunk)
+}
+
+type copReqSenderPool struct {
+	tasksCh       chan *reorgBackfillTask
+	chunkSender   chunkSender
+	checkpointMgr *ingest.CheckpointManager
+	sessPool      *sess.Pool
+
+	ctx    context.Context
+	copCtx copr.CopContext
+	store  kv.Storage
+
+	senders []*copReqSender
+	wg      sync.WaitGroup
+	closed  bool
+
+	srcChkPool chan *chunk.Chunk
+}
+
+type copReqSender struct {
+	senderPool *copReqSenderPool
+
+	ctx    context.Context
+	cancel context.CancelFunc
+}
+
+func (c *copReqSender) run() {
+	p := c.senderPool
+	defer p.wg.Done()
+	defer util.Recover(metrics.LabelDDL, "copReqSender.run", func() {
+		p.chunkSender.AddTask(IndexRecordChunk{Err: dbterror.ErrReorgPanic})
+	}, false)
+	sessCtx, err := p.sessPool.Get()
+	if err != nil {
+		logutil.Logger(p.ctx).Error("copReqSender get session from pool failed", zap.Error(err))
+		p.chunkSender.AddTask(IndexRecordChunk{Err: err})
+		return
+	}
+	se := sess.NewSession(sessCtx)
+	defer p.sessPool.Put(sessCtx)
+	for {
+		if util.HasCancelled(c.ctx) {
+			return
+		}
+		task, ok := <-p.tasksCh
+		if !ok {
+			return
+		}
+		if p.checkpointMgr != nil && p.checkpointMgr.IsKeyProcessed(task.endKey) {
+			logutil.Logger(p.ctx).Info("checkpoint detected, skip a cop-request task",
+				zap.Int("task ID", task.id),
+				zap.String("task end key", hex.EncodeToString(task.endKey)))
+			continue
+		}
+		err := scanRecords(p, task, se)
+		if err != nil {
+			p.chunkSender.AddTask(IndexRecordChunk{ID: task.id, Err: err})
+			return
+		}
+	}
+}
+
+func scanRecords(p *copReqSenderPool, task *reorgBackfillTask, se *sess.Session) error {
+	logutil.Logger(p.ctx).Info("start a cop-request task",
+		zap.Int("id", task.id), zap.String("task", task.String()))
+
+	return wrapInBeginRollback(se, func(startTS uint64) error {
+		rs, err := buildTableScan(p.ctx, p.copCtx.GetBase(), startTS, task.startKey, task.endKey)
+		if err != nil {
+			return err
+		}
+		failpoint.Inject("mockCopSenderPanic", func(val failpoint.Value) {
+			if val.(bool) {
+				panic("mock panic")
+			}
+		})
+		if p.checkpointMgr != nil {
+			p.checkpointMgr.Register(task.id, task.endKey)
+		}
+		var done bool
+		startTime := time.Now()
+		for !done {
+			srcChk := p.getChunk()
+			done, err = fetchTableScanResult(p.ctx, p.copCtx.GetBase(), rs, srcChk)
+			if err != nil {
+				p.recycleChunk(srcChk)
+				terror.Call(rs.Close)
+				return err
+			}
+			if p.checkpointMgr != nil {
+				p.checkpointMgr.UpdateTotalKeys(task.id, srcChk.NumRows(), done)
+			}
+			idxRs := IndexRecordChunk{ID: task.id, Chunk: srcChk, Done: done}
+			rate := float64(srcChk.MemoryUsage()) / 1024.0 / 1024.0 / time.Since(startTime).Seconds()
+			metrics.AddIndexScanRate.WithLabelValues(metrics.LblAddIndex).Observe(rate)
+			failpoint.Inject("mockCopSenderError", func() {
+				idxRs.Err = errors.New("mock cop error")
+			})
+			p.chunkSender.AddTask(idxRs)
+			startTime = time.Now()
+		}
+		terror.Call(rs.Close)
+		return nil
+	})
+}
 
 func wrapInBeginRollback(se *sess.Session, f func(startTS uint64) error) error {
-	err := se.Begin(context.Background())
+	err := se.Begin()
 	if err != nil {
 		return errors.Trace(err)
 	}
 	defer se.Rollback()
-
-	txn, err := se.Txn()
-	if err != nil {
-		return err
-	}
-	startTS := txn.StartTS()
-	failpoint.InjectCall("wrapInBeginRollbackStartTS", startTS)
-	err = f(startTS)
-	failpoint.InjectCall("wrapInBeginRollbackAfterFn")
-	return err
+	var startTS uint64
+	sessVars := se.GetSessionVars()
+	sessVars.TxnCtxMu.Lock()
+	startTS = sessVars.TxnCtx.StartTS
+	sessVars.TxnCtxMu.Unlock()
+	return f(startTS)
 }
 
-func buildTableScan(ctx context.Context, c *copr.CopContextBase, distSQLCtx *distsqlctx.DistSQLContext, startTS uint64, start, end kv.Key, selectExpr expression.Expression) (distsql.SelectResult, bool, error) {
-	dagPB, conditionPushed, err := buildDAGPB(ctx, c.ExprCtx, distSQLCtx, c.PushDownFlags, c.TableInfo, c.ColumnInfos, selectExpr)
+func newCopReqSenderPool(ctx context.Context, copCtx copr.CopContext, store kv.Storage,
+	taskCh chan *reorgBackfillTask, sessPool *sess.Pool,
+	checkpointMgr *ingest.CheckpointManager) *copReqSenderPool {
+	poolSize := copReadChunkPoolSize()
+	srcChkPool := make(chan *chunk.Chunk, poolSize)
+	for i := 0; i < poolSize; i++ {
+		srcChkPool <- chunk.NewChunkWithCapacity(copCtx.GetBase().FieldTypes, copReadBatchSize())
+	}
+	return &copReqSenderPool{
+		tasksCh:       taskCh,
+		ctx:           ctx,
+		copCtx:        copCtx,
+		store:         store,
+		senders:       make([]*copReqSender, 0, variable.GetDDLReorgWorkerCounter()),
+		wg:            sync.WaitGroup{},
+		srcChkPool:    srcChkPool,
+		sessPool:      sessPool,
+		checkpointMgr: checkpointMgr,
+	}
+}
+
+func (c *copReqSenderPool) adjustSize(n int) {
+	// Add some senders.
+	for i := len(c.senders); i < n; i++ {
+		ctx, cancel := context.WithCancel(c.ctx)
+		c.senders = append(c.senders, &copReqSender{
+			senderPool: c,
+			ctx:        ctx,
+			cancel:     cancel,
+		})
+		c.wg.Add(1)
+		go c.senders[i].run()
+	}
+	// Remove some senders.
+	if n < len(c.senders) {
+		for i := n; i < len(c.senders); i++ {
+			c.senders[i].cancel()
+		}
+		c.senders = c.senders[:n]
+	}
+}
+
+func (c *copReqSenderPool) close(force bool) {
+	if c.closed {
+		return
+	}
+	logutil.Logger(c.ctx).Info("close cop-request sender pool", zap.Bool("force", force))
+	if force {
+		for _, w := range c.senders {
+			w.cancel()
+		}
+	}
+	// Wait for all cop-req senders to exit.
+	c.wg.Wait()
+	c.closed = true
+}
+
+func (c *copReqSenderPool) getChunk() *chunk.Chunk {
+	chk := <-c.srcChkPool
+	newCap := copReadBatchSize()
+	if chk.Capacity() != newCap {
+		chk = chunk.NewChunkWithCapacity(c.copCtx.GetBase().FieldTypes, newCap)
+	}
+	chk.Reset()
+	return chk
+}
+
+// recycleChunk puts the index record slice and the chunk back to the pool for reuse.
+func (c *copReqSenderPool) recycleChunk(chk *chunk.Chunk) {
+	if chk == nil {
+		return
+	}
+	c.srcChkPool <- chk
+}
+
+func buildTableScan(ctx context.Context, c *copr.CopContextBase, startTS uint64, start, end kv.Key) (distsql.SelectResult, error) {
+	dagPB, err := buildDAGPB(c.SessionContext, c.TableInfo, c.ColumnInfos)
 	if err != nil {
-		return nil, false, err
+		return nil, err
 	}
 
 	var builder distsql.RequestBuilder
-	builder.
+	kvReq, err := builder.
 		SetDAGRequest(dagPB).
 		SetStartTS(startTS).
 		SetKeyRanges([]kv.KeyRange{{StartKey: start, EndKey: end}}).
 		SetKeepOrder(true).
-		SetFromSessionVars(distSQLCtx).
-		SetConcurrency(1)
-	if selectExpr != nil {
-		// DDL will not push down to TiFlash currently, so we can just specify `kv.TiKV` here to make it clearer.
-		builder.SetStoreType(kv.TiKV)
-	}
-	kvReq, err := builder.
+		SetFromSessionVars(c.SessionContext.GetSessionVars()).
+		SetFromInfoSchema(c.SessionContext.GetDomainInfoSchema()).
+		SetConcurrency(1).
 		Build()
 	kvReq.RequestSource.RequestSourceInternal = true
 	kvReq.RequestSource.RequestSourceType = getDDLRequestSource(model.ActionAddIndex)
 	kvReq.RequestSource.ExplicitRequestSourceType = kvutil.ExplicitTypeDDL
 	if err != nil {
-		return nil, conditionPushed, err
+		return nil, err
 	}
-
-	if distSQLCtx.RuntimeStatsColl == nil {
-		result, err := distsql.Select(ctx, distSQLCtx, kvReq, c.FieldTypes)
-		return result, conditionPushed, err
-	}
-	// The plan ID of the table scan is always `tableScanCopID`, so we can read the stats of `tableScanCopID` executor to know
-	// how many rows have been scanned.
-	//
-	// The following logic assumes that the DAG has a structure like:
-	// TableScan -> Executor1 -> Executor2 -> ... -> ExecutorN
-	// So the plan IDs are assigned like:
-	// TableScan: tableScanCopID
-	// Executor1: tableScanCopID + 1
-	// Executor2: tableScanCopID + 2
-	// ...
-	// ExecutorN: tableScanCopID + N
-	copPlanIDs := make([]int, 0, 2)
-	copPlanIDs = append(copPlanIDs, tableScanCopID)
-	rootPlanID := tableScanCopID
-	for i := range dagPB.Executors {
-		if i == 0 {
-			continue
-		}
-		copPlanIDs = append(copPlanIDs, tableScanCopID+i)
-		rootPlanID = tableScanCopID + i
-	}
-	result, err := distsql.SelectWithRuntimeStats(ctx, distSQLCtx, kvReq, c.FieldTypes, copPlanIDs, rootPlanID)
-	return result, conditionPushed, err
+	return distsql.Select(ctx, c.SessionContext, kvReq, c.FieldTypes)
 }
 
 func fetchTableScanResult(
@@ -135,7 +302,7 @@ func fetchTableScanResult(
 	}
 	err = table.FillVirtualColumnValue(
 		copCtx.VirtualColumnsFieldTypes, copCtx.VirtualColumnsOutputOffsets,
-		copCtx.ExprColumnInfos, copCtx.ColumnInfos, copCtx.ExprCtx, chk)
+		copCtx.ExprColumnInfos, copCtx.ColumnInfos, copCtx.SessionContext, chk)
 	return false, err
 }
 
@@ -146,8 +313,8 @@ func completeErr(err error, idxInfo *model.IndexInfo) error {
 	return errors.Trace(err)
 }
 
-func getRestoreData(useNewCollate bool, tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
-	if !useNewCollate || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
+func getRestoreData(tblInfo *model.TableInfo, targetIdx, pkIdx *model.IndexInfo, handleDts []types.Datum) []types.Datum {
+	if !collate.NewCollationEnabled() || !tblInfo.IsCommonHandle || tblInfo.CommonHandleVersion == 0 {
 		return nil
 	}
 	if pkIdx == nil {
@@ -155,7 +322,7 @@ func getRestoreData(useNewCollate bool, tblInfo *model.TableInfo, targetIdx, pkI
 	}
 	for i, pkIdxCol := range pkIdx.Columns {
 		pkCol := tblInfo.Columns[pkIdxCol.Offset]
-		if !types.NeedRestoredDataWithCollate(&pkCol.FieldType, useNewCollate) {
+		if !types.NeedRestoredData(&pkCol.FieldType) {
 			// Since the handle data cannot be null, we can use SetNull to
 			// indicate that this column does not need to be restored.
 			handleDts[i].SetNull()
@@ -173,109 +340,43 @@ func getRestoreData(useNewCollate bool, tblInfo *model.TableInfo, targetIdx, pkI
 	return dtToRestored
 }
 
-func buildDAGPB(ctx context.Context, exprCtx exprctx.BuildContext, distSQLCtx *distsqlctx.DistSQLContext, pushDownFlags uint64, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo, selectExpr expression.Expression) (*tipb.DAGRequest, bool, error) {
-	conditionPushed := false
-	useNewCollate := exprCtx.NewCollationEnabled()
-
+func buildDAGPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.DAGRequest, error) {
 	dagReq := &tipb.DAGRequest{}
-	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(exprCtx.GetEvalCtx().Location())
-	dagReq.Flags = pushDownFlags
+	dagReq.TimeZoneName, dagReq.TimeZoneOffset = timeutil.Zone(sCtx.GetSessionVars().Location())
+	sc := sCtx.GetSessionVars().StmtCtx
+	dagReq.Flags = sc.PushDownFlags()
 	for i := range colInfos {
 		dagReq.OutputOffsets = append(dagReq.OutputOffsets, uint32(i))
 	}
-	tblScanPB, err := constructTableScanPB(exprCtx, tblInfo, colInfos)
-	if err != nil {
-		return nil, false, err
-	}
-
-	var selectionPB *tipb.Executor
-	// TODO: Remove this fallback after expression-to-PB conversion can use the
-	// collation mode captured by the reorg task.
-	// Pushdown cannot preserve the reorg task's captured collation mode when it
-	// differs from the executor's global mode. Evaluate the condition in TiDB instead.
-	if selectExpr != nil && useNewCollate == collate.NewCollationEnabled() {
-		selectionPB, err = constructSelectionPB(exprCtx, selectExpr, distSQLCtx, tblScanPB)
-	}
-
-	// Now, the partial index doesn't support pushing down part of the condition.
-	// So if we cannot push down the whole condition, we just ignore it.
-	if err == nil && selectionPB != nil {
-		conditionPushed = true
-		dagReq.Executors = append(dagReq.Executors, tblScanPB, selectionPB)
-	} else {
-		if selectExpr != nil {
-			selectExprStr := selectExpr.StringWithCtx(exprCtx.GetEvalCtx(), errors.RedactLogDisable)
-			if useNewCollate != collate.NewCollationEnabled() {
-				logutil.Logger(ctx).Info("skip pushing down the selection expression for index condition due to collation mode mismatch",
-					zap.String("table", tblInfo.Name.O),
-					zap.String("expr", selectExprStr),
-					zap.Bool("useNewCollate", useNewCollate),
-					zap.Bool("globalUseNewCollate", collate.NewCollationEnabled()))
-			} else {
-				logutil.Logger(ctx).Info("fail to push down the selection expression for index condition",
-					zap.String("table", tblInfo.Name.O),
-					zap.String("expr", selectExprStr),
-					zap.Error(err))
-			}
-		}
-		dagReq.Executors = append(dagReq.Executors, tblScanPB)
-	}
-
-	distsql.SetEncodeType(distSQLCtx, dagReq)
-	collExec := true
-	dagReq.CollectExecutionSummaries = &collExec
-	return dagReq, conditionPushed, nil
-}
-
-func constructTableScanPB(ctx exprctx.BuildContext, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
-	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos, false)
-	tblScan.TableId = tblInfo.ID
-	err := tables.SetPBColumnsDefaultValue(ctx, tblScan.Columns, colInfos)
-	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
-}
-
-func constructSelectionPB(ctx exprctx.BuildContext, expr expression.Expression, distSQLCtx *distsqlctx.DistSQLContext, child *tipb.Executor) (*tipb.Executor, error) {
-	// Just use the default `vardef.DefGroupConcatMaxLen`, it only affects the AGG functions, so it doesn't matter here.
-	pc := expression.NewPushDownContext(ctx.GetEvalCtx(), distSQLCtx.Client, false, nil, nil, vardef.DefGroupConcatMaxLen)
-	// DDL will not push down to TiFlash currently, so we can just specify `kv.TiKV` here.
-	// If we want to support TiFlash in the future, we need to try to push down to both TiKV and TiFlash.
-	pushed, _ := expression.PushDownExprs(pc, []expression.Expression{expr}, kv.TiKV)
-	if len(pushed) == 0 {
-		// If no expression is pushed down, return nil to indicate that push down is not supported.
-		return nil, errors.New("cannot push down the selection expression")
-	}
-
-	// As we have only one expression, the pushed expressions should be the same as the original expression.
-	pbExpr, err := expression.ExpressionsToPBList(ctx.GetEvalCtx(), pushed, distSQLCtx.Client)
+	execPB, err := constructTableScanPB(sCtx, tblInfo, colInfos)
 	if err != nil {
 		return nil, err
 	}
-
-	return &tipb.Executor{
-		Tp: tipb.ExecType_TypeSelection,
-		Selection: &tipb.Selection{
-			Conditions: pbExpr,
-			Child:      child,
-		},
-	}, nil
+	dagReq.Executors = append(dagReq.Executors, execPB)
+	distsql.SetEncodeType(sCtx, dagReq)
+	return dagReq, nil
 }
 
-// ExtractDatumByOffsets is exported for test.
-func ExtractDatumByOffsets(ctx expression.EvalContext, row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
+func constructTableScanPB(sCtx sessionctx.Context, tblInfo *model.TableInfo, colInfos []*model.ColumnInfo) (*tipb.Executor, error) {
+	tblScan := tables.BuildTableScanFromInfos(tblInfo, colInfos)
+	tblScan.TableId = tblInfo.ID
+	err := tables.SetPBColumnsDefaultValue(sCtx, tblScan.Columns, colInfos)
+	return &tipb.Executor{Tp: tipb.ExecType_TypeTableScan, TblScan: tblScan}, err
+}
+
+func extractDatumByOffsets(row chunk.Row, offsets []int, expCols []*expression.Column, buf []types.Datum) []types.Datum {
 	for i, offset := range offsets {
 		c := expCols[offset]
-		row.DatumWithBuffer(offset, c.GetType(ctx), &buf[i])
+		row.DatumWithBuffer(offset, c.GetType(), &buf[i])
 	}
 	return buf
 }
 
-// BuildHandle is exported for test.
-func BuildHandle(useNewCollate bool, pkDts []types.Datum, tblInfo *model.TableInfo,
-	pkInfo *model.IndexInfo, loc *time.Location, errCtx errctx.Context) (kv.Handle, error) {
+func buildHandle(pkDts []types.Datum, tblInfo *model.TableInfo,
+	pkInfo *model.IndexInfo, stmtCtx *stmtctx.StatementContext) (kv.Handle, error) {
 	if tblInfo.IsCommonHandle {
 		tablecodec.TruncateIndexValues(tblInfo, pkInfo, pkDts)
-		handleBytes, err := codec.NewEncoder(useNewCollate).EncodeKey(loc, nil, pkDts...)
-		err = errCtx.HandleError(err)
+		handleBytes, err := codec.EncodeKey(stmtCtx, nil, pkDts...)
 		if err != nil {
 			return nil, err
 		}

@@ -20,7 +20,7 @@ import (
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/mvcc"
 )
 
 // ErrLocked is returned when trying to Read/Write on a locked key. Client should

@@ -72,7 +72,7 @@ func connectTiDB(port int) (db *sql.DB, err error) {
 	sleepTime := 250 * time.Millisecond
 	startTime := time.Now()
 	maxRetry := 10
-	for i := range maxRetry {
+	for i := 0; i < maxRetry; i++ {
 		db, err = sql.Open("mysql", dsn)
 		if err != nil {
 			log.Warn("open addr failed",
@@ -152,7 +152,7 @@ func TestGracefulShutdown(t *testing.T) {
 	}()
 
 	// Graceful shutdown will wait for connections in transaction only.
-	// See https://github.com/pingcap/tidb/pull/44953.
+	// See https://github.com/ocean2811/tidbeaff0fbc576a/pull/44953.
 	txn, err := conn1.BeginTx(ctx, nil)
 	require.NoError(t, err)
 	sql := `select 1 from t where not (select sleep(3)) ;`

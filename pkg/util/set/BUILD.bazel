@@ -5,16 +5,16 @@ go_library(
     srcs = [
         "float64_set.go",
         "int_set.go",
-        "set.go",
+        "mem_aware_map.go",
         "set_with_memory_usage.go",
         "string_set.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/set",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/types",
         "//pkg/util/hack",
         "//pkg/util/memory",
+        "@org_golang_x_exp//maps",
     ],
 )
 
@@ -25,7 +25,7 @@ go_test(
         "float64_set_test.go",
         "int_set_test.go",
         "main_test.go",
-        "set_test.go",
+        "mem_aware_map_test.go",
         "set_with_memory_usage_test.go",
         "string_set_test.go",
     ],
@@ -34,7 +34,6 @@ go_test(
     deps = [
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//assert",
-        "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
 )

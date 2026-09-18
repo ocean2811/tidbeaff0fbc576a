@@ -17,7 +17,7 @@ package expression
 import (
 	"regexp"
 
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 // memorized regexp means the constant pattern.
@@ -26,6 +26,16 @@ import (
 type regexpMemorizedSig struct {
 	memorizedRegexp *regexp.Regexp
 	memorizedErr    error
+}
+
+func (reg *regexpMemorizedSig) isMemorizedRegexpInitialized() bool {
+	return !(reg.memorizedRegexp == nil && reg.memorizedErr == nil)
+}
+
+func (reg *regexpMemorizedSig) memorize(compile func(string) (*regexp.Regexp, error), pattern string) {
+	re, err := compile(pattern)
+	reg.memorizedRegexp = re
+	reg.memorizedErr = err
 }
 
 func releaseBuffers(bf *baseBuiltinFunc, params []*funcParam) {
@@ -57,7 +67,7 @@ func isResultNull(columns []*chunk.Column, i int) bool {
 
 func fillNullStringIntoResult(result *chunk.Column, num int) {
 	result.ReserveString(num)
-	for range num {
+	for i := 0; i < num; i++ {
 		result.AppendNull()
 	}
 }

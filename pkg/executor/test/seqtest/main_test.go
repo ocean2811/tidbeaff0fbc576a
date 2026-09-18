@@ -17,7 +17,7 @@ package executor
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testsetup"
 	"github.com/tikv/client-go/v2/config"
 	"go.uber.org/goleak"
 )
@@ -30,9 +30,8 @@ func TestMain(m *testing.M) {
 	})
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/executor.readProjection[...]"),
+		goleak.IgnoreTopFunction("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor.readProjection[...]"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 	}

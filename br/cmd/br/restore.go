@@ -7,20 +7,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/gluetidb"
-	"github.com/pingcap/tidb/br/pkg/gluetikv"
-	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/task"
-	"github.com/pingcap/tidb/br/pkg/trace"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/util/gctuner"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/metricsutil"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/gluetikv"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/summary"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/task"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/trace"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version/build"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/metricsutil"
 	"github.com/spf13/cobra"
 	"go.uber.org/zap"
 	"sourcegraph.com/sourcegraph/appdash"
@@ -28,12 +23,12 @@ import (
 
 func runRestoreCommand(command *cobra.Command, cmdName string) error {
 	cfg := task.RestoreConfig{Config: task.Config{LogProgress: HasLogFile()}}
-	if err := cfg.ParseFromFlags(command.Flags(), false); err != nil {
+	if err := cfg.ParseFromFlags(command.Flags()); err != nil {
 		command.SilenceUsage = false
 		return errors.Trace(err)
 	}
 
-	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.TLS, cfg.KeyspaceName); err != nil {
+	if err := metricsutil.RegisterMetricsForBR(cfg.PD, cfg.KeyspaceName); err != nil {
 		return errors.Trace(err)
 	}
 
@@ -42,9 +37,6 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 			return errors.Trace(err)
 		}
 	}
-
-	// have to skip grant table, in order to NotifyUpdatePrivilege in binary mode
-	config.GetGlobalConfig().Security.SkipGrantTable = true
 
 	ctx := GetDefaultContext()
 	if cfg.EnableOpenTracing {
@@ -68,37 +60,16 @@ func runRestoreCommand(command *cobra.Command, cmdName string) error {
 		return nil
 	}
 
-	config.UpdateGlobal(func(conf *config.Config) {
-		// Need to be skipped when the cluster has TiDB type coprocessor tasks
-		conf.AdvertiseAddress = config.UnavailableIP
-
-		// No need to cache the coproceesor result
-		conf.TiKVClient.CoprCache.CapacityMB = 0
-	})
-
-	// Disable the memory limit tuner. That's because the server memory is get from TiDB node instead of BR node.
-	gctuner.GlobalMemoryLimitTuner.DisableAdjustMemoryLimit()
-	defer gctuner.GlobalMemoryLimitTuner.EnableAdjustMemoryLimit()
-
-	if len(cfg.Schemas) > 0 {
-		extraDBNames := make([]string, 0, len(cfg.Schemas))
-		for schema := range cfg.Schemas {
-			extraDBNames = append(extraDBNames, utils.UnquoteName(schema))
-		}
-		filter := gluetidb.FilterLoadSpecifiedDBAndSysDBs(extraDBNames)
-		restore := setTiDBGlueDBFilter(filter)
-		defer restore()
-	}
 	if err := task.RunRestore(GetDefaultContext(), tidbGlue, cmdName, &cfg); err != nil {
 		log.Error("failed to restore", zap.Error(err))
-		printWorkaroundOnFullRestoreError(err)
+		printWorkaroundOnFullRestoreError(command, err)
 		return errors.Trace(err)
 	}
 	return nil
 }
 
 // print workaround when we met not fresh or incompatible cluster error on full cluster restore
-func printWorkaroundOnFullRestoreError(err error) {
+func printWorkaroundOnFullRestoreError(command *cobra.Command, err error) {
 	if !errors.ErrorEqual(err, berrors.ErrRestoreNotFreshCluster) &&
 		!errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys) {
 		return
@@ -110,7 +81,7 @@ func printWorkaroundOnFullRestoreError(err error) {
 		fmt.Println("# you can drop existing databases and tables and start restore again")
 	case errors.ErrorEqual(err, berrors.ErrRestoreIncompatibleSys):
 		fmt.Println("# the target cluster is not compatible with the backup data,")
-		fmt.Println("# you can use '--with-sys-table=false' to skip restoring system tables")
+		fmt.Println("# you can remove 'with-sys-table' flag to skip restoring system tables")
 	}
 	fmt.Println("#######################################################################")
 }
@@ -168,10 +139,9 @@ func NewRestoreCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			build.LogInfo(build.BR)
-			logutil.LogEnvVariables()
+			utils.LogEnvVariables()
 			task.LogArguments(c)
 			session.DisableStats4Test()
-			kv.TxnTotalSizeLimit.Store(config.SuperLargeTxnSize)
 
 			summary.SetUnit(summary.RestoreUnit)
 			return nil
@@ -199,7 +169,7 @@ func newFullRestoreCommand() *cobra.Command {
 			return runRestoreCommand(cmd, task.FullRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, false)
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, false)
 	task.DefineRestoreSnapshotFlags(command)
 	return command
 }
@@ -267,7 +237,7 @@ func newStreamRestoreCommand() *cobra.Command {
 			return runRestoreCommand(command, task.PointRestoreCmd)
 		},
 	}
-	task.DefineFilterFlags(command, filterOutSysAndMemKeepAuthAndBind, true)
+	task.DefineFilterFlags(command, filterOutSysAndMemTables, true)
 	task.DefineStreamRestoreFlags(command)
 	return command
 }

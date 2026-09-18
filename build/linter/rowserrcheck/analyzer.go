@@ -16,13 +16,12 @@ package rowserrcheck
 
 import (
 	"github.com/jingyugao/rowserrcheck/passes/rowserr"
-	"github.com/pingcap/tidb/build/linter/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/build/linter/util"
 )
 
 // Analyzer is the analyzer struct of rowserrcheck.
 var Analyzer = rowserr.NewAnalyzer()
 
 func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

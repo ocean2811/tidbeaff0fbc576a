@@ -16,49 +16,27 @@ package helper_test
 
 import (
 	"bufio"
-	"cmp"
-	"context"
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
-	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
-	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/helper"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
-	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client/http"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
-
-// getKeyspaceAwareKey uses the store codec to encode keys properly in NextGen mode
-// This ensures compatibility with keyspace encoding
-func getKeyspaceAwareKey(store kv.Storage, key []byte) []byte {
-	if !kerneltype.IsNextGen() || store == nil {
-		return key
-	}
-
-	// Use the store's codec to encode the key - single source of truth
-	codec := store.GetCodec()
-	return codec.EncodeKey(key)
-}
 
 func TestHotRegion(t *testing.T) {
 	store := createMockStore(t)
@@ -67,7 +45,7 @@ func TestHotRegion(t *testing.T) {
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
 	}
-	regionMetric, err := h.FetchHotRegion(context.Background(), "read")
+	regionMetric, err := h.FetchHotRegion(pdapi.HotRead)
 	require.NoError(t, err)
 
 	expected := map[uint64]helper.RegionMetric{
@@ -85,258 +63,23 @@ func TestHotRegion(t *testing.T) {
 	require.Equal(t, expected, regionMetric)
 
 	dbInfo := &model.DBInfo{
-		Name: ast.NewCIStr("test"),
+		Name: model.NewCIStr("test"),
 	}
 	require.NoError(t, err)
 
-	res, err := h.FetchRegionTableIndex(regionMetric, infoschema.DBInfoAsInfoSchema([]*model.DBInfo{dbInfo}), nil)
+	res, err := h.FetchRegionTableIndex(regionMetric, []*model.DBInfo{dbInfo})
 	require.NotEqual(t, res[0].RegionMetric, res[1].RegionMetric)
 	require.NoError(t, err)
 }
 
 func TestGetRegionsTableInfo(t *testing.T) {
-	// Use a nil-store helper so GetTablesInfoWithKeyRange uses V1 codec, matching the
-	// hardcoded V1 region keys in getMockTiKVRegionsInfo. Keyspace-aware (V2) behavior
-	// is covered by TestGetRegionsTableInfoWithKeyspace.
-	h := &helper.Helper{}
+	store := createMockStore(t)
+
+	h := helper.NewHelper(store)
 	regionsInfo := getMockTiKVRegionsInfo()
 	schemas := getMockRegionsTableInfoSchema()
-	tableInfos := h.GetRegionsTableInfo(regionsInfo, infoschema.DBInfoAsInfoSchema(schemas), nil)
+	tableInfos := h.GetRegionsTableInfo(regionsInfo, schemas)
 	require.Equal(t, getRegionsTableInfoAns(schemas), tableInfos)
-}
-
-// TestGetRegionsTableInfoWithKeyspace verifies that ParseRegionsTableInfos correctly
-// matches region-to-table mappings when both region keys and table key ranges include
-// a keyspace prefix (API V2 / keyspace-aware mode).
-func TestGetRegionsTableInfoWithKeyspace(t *testing.T) {
-	keyspaceID := uint32(1)
-	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{
-		Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID},
-		Name:     "test_keyspace",
-	})
-	require.NoError(t, err)
-
-	schemas := getMockRegionsTableInfoSchema()
-	db := schemas[0]
-	// Build table info key ranges using the V2 codec (with keyspace prefix).
-	tables := make([]helper.TableInfoWithKeyRange, 0, 6)
-	for _, table := range db.Deprecated.Tables {
-		tables = append(tables, helper.NewTableWithKeyRange(db, table, codecV2))
-		for _, index := range table.Indices {
-			tables = append(tables, helper.NewIndexWithKeyRange(db, table, index, codecV2))
-		}
-	}
-	// Sort tables by start key to match the production contract expected by ParseRegionsTableInfos.
-	slices.SortFunc(tables, func(i, j helper.TableInfoWithKeyRange) int {
-		return cmp.Compare(i.StartKey, j.StartKey)
-	})
-
-	// Construct mock region info using the keyspace-encoded key ranges.
-	// Region 1: ends before all tables (should be empty).
-	tbl41 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[0], codecV2)
-	tbl41Idx1 := helper.NewIndexWithKeyRange(db, db.Deprecated.Tables[0], db.Deprecated.Tables[0].Indices[0], codecV2)
-	// Region 2: spans table 41's index 1 range and record range.
-	tbl63 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[1], codecV2)
-	// Region 3: spans table 63 record range.
-	tbl66 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[2], codecV2)
-	// Region 4: spans table 66 record range.
-	regions := []*pd.RegionInfo{
-		{ID: 1, StartKey: "", EndKey: tbl41Idx1.StartKey},
-		{ID: 2, StartKey: tbl41Idx1.StartKey, EndKey: tbl41.EndKey},
-		{ID: 3, StartKey: tbl63.StartKey, EndKey: tbl63.EndKey},
-		{ID: 4, StartKey: tbl66.StartKey, EndKey: tbl66.EndKey},
-	}
-
-	h := &helper.Helper{}
-	tableInfos := h.ParseRegionsTableInfos(regions, tables)
-
-	// Region 1 is before all tables — should be empty.
-	require.Empty(t, tableInfos[1])
-	// Region 2 spans table 41's index and record range.
-	require.Len(t, tableInfos[2], 2) // index 1 + record
-	require.Equal(t, int64(41), tableInfos[2][0].Table.ID)
-	// Region 3 spans table 63.
-	require.NotEmpty(t, tableInfos[3])
-	require.Equal(t, int64(63), tableInfos[3][0].Table.ID)
-	// Region 4 spans table 66.
-	require.NotEmpty(t, tableInfos[4])
-	require.Equal(t, int64(66), tableInfos[4][0].Table.ID)
-
-	// Verify that V2 keys differ from V1 keys (keyspace prefix is present).
-	codecV1 := tikv.NewCodecV1(tikv.ModeTxn)
-	tbl41V1 := helper.NewTableWithKeyRange(db, db.Deprecated.Tables[0], codecV1)
-	require.NotEqual(t, tbl41.StartKey, tbl41V1.StartKey, "V2 keys should differ from V1 due to keyspace prefix")
-
-	// Verify the public path: GetRegionsTableInfo (wrapping GetTablesInfoWithKeyRange)
-	// must produce the same mapping when backed by a V2-codec store. A regression that
-	// reverts GetTablesInfoWithKeyRange to V1 encoding would produce a mismatched result.
-	regionsInfoForAPI := &pd.RegionsInfo{
-		Count:   int64(len(regions)),
-		Regions: make([]pd.RegionInfo, len(regions)),
-	}
-	for i, r := range regions {
-		regionsInfoForAPI.Regions[i] = *r
-	}
-	hV2 := &helper.Helper{Store: &codecOnlyStorage{codec: codecV2}}
-	tableInfosViaAPI := hV2.GetRegionsTableInfo(regionsInfoForAPI, infoschema.DBInfoAsInfoSchema(schemas), nil)
-	require.Equal(t, tableInfos, tableInfosViaAPI)
-}
-
-// TestGetPDRegionStatsKeyspaceEncoding verifies that GetPDRegionStats encodes the table
-// key range with the store's codec before querying PD. Without this the request would
-// carry a V1 key range and return stats for the wrong set of regions in keyspace-aware
-// clusters.
-func TestGetPDRegionStatsKeyspaceEncoding(t *testing.T) {
-	keyspaceID := uint32(1)
-	keyspaceMeta := &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID}, Name: "test_keyspace"}
-	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, keyspaceMeta)
-	require.NoError(t, err)
-
-	type capturedKeys struct{ start, end []byte }
-	captured := make(chan capturedKeys, 1)
-	router := mux.NewRouter()
-	router.HandleFunc(pd.StatsRegion, func(w http.ResponseWriter, r *http.Request) {
-		captured <- capturedKeys{
-			start: []byte(r.URL.Query().Get("start_key")),
-			end:   []byte(r.URL.Query().Get("end_key")),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"count":0,"empty_region":0,"region_count":0}`))
-	})
-	serverMux := http.NewServeMux()
-	serverMux.Handle("/", router)
-	server := httptest.NewServer(serverMux)
-
-	pdAddr := server.URL[len("http://"):]
-	pdAddrs := []string{"invalid_pd_address", pdAddr}
-	store, err := mockstore.NewMockStore(
-		mockstore.WithCurrentKeyspaceMeta(keyspaceMeta),
-		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("pd-stats-test", pdAddrs)),
-		mockstore.WithPDAddr(pdAddrs),
-	)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		server.Close()
-		view.Stop()
-		require.NoError(t, store.Close())
-	})
-
-	h := &helper.Helper{Store: store.(helper.Storage)}
-	_, err = h.GetPDRegionStats(context.Background(), 41, false)
-	require.NoError(t, err)
-
-	keys := <-captured
-	// The key range sent to PD must match what codecV2.EncodeRegionRange produces for
-	// table 41 with noIndexStats=false (uses EncodeTablePrefix, not GenTableRecordPrefix).
-	tableStart := tablecodec.EncodeTablePrefix(41)
-	tableEnd := tableStart.PrefixNext()
-	expectedStart, expectedEnd := codecV2.EncodeRegionRange(tableStart, tableEnd)
-	require.Equal(t, expectedStart, keys.start, "GetPDRegionStats must encode start key with the store's codec")
-	require.Equal(t, expectedEnd, keys.end, "GetPDRegionStats must encode end key with the store's codec")
-}
-
-func TestCollectStorageClassStatusWithCtx(t *testing.T) {
-	for _, tc := range []struct {
-		name  string
-		body  string
-		ready uint64
-		total uint64
-	}{
-		{name: "counters only", body: `{"ready":7,"total":9}`, ready: 7, total: 9},
-		{name: "all ready", body: `{"ready":1,"total":1}`, ready: 1, total: 1},
-		{name: "zero counters", body: `{"ready":0,"total":0}`},
-		{name: "zero ready", body: `{"ready":0,"total":1}`, total: 1},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var gotPath string
-			var gotQuery string
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				gotPath = r.URL.Path
-				gotQuery = r.URL.RawQuery
-				w.Header().Set("Content-Type", "application/json")
-				_, _ = w.Write([]byte(tc.body))
-			}))
-			t.Cleanup(server.Close)
-
-			status, err := helper.CollectStorageClassStatusWithCtx(
-				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(42), 123, "STANDARD")
-			require.NoError(t, err)
-			require.Equal(t, helper.StorageClassStatusResp{Ready: tc.ready, Total: tc.total}, status)
-			require.Equal(t, "/kvengine/storage_class_status", gotPath)
-			require.Equal(t, "keyspace_id=42&table_id=123&target=STANDARD", gotQuery)
-		})
-	}
-}
-
-func TestCollectStorageClassStatusWithCtxRejectsBadResponse(t *testing.T) {
-	t.Run("http status", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, "not ready", http.StatusServiceUnavailable)
-		}))
-		t.Cleanup(server.Close)
-		_, err := helper.CollectStorageClassStatusWithCtx(
-			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
-		require.ErrorContains(t, err, "status 503")
-	})
-
-	t.Run("invalid json", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte(`{"ready":`))
-		}))
-		t.Cleanup(server.Close)
-		_, err := helper.CollectStorageClassStatusWithCtx(
-			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
-		require.Error(t, err)
-	})
-
-	for _, body := range []string{
-		`{}`,
-		`null`,
-		`{"ready":0}`,
-		`{"total":0}`,
-		`{"ready":null,"total":0}`,
-		`{"ready":0,"total":null}`,
-	} {
-		t.Run("missing required field "+body, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(body))
-			}))
-			t.Cleanup(server.Close)
-			_, err := helper.CollectStorageClassStatusWithCtx(
-				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
-			require.ErrorContains(t, err, "must contain ready and total")
-		})
-	}
-
-	for _, body := range []string{
-		`{"ready":-1,"total":1}`,
-		`{"ready":0,"total":-1}`,
-		`{"ready":"1","total":1}`,
-		`{"ready":0,"total":"1"}`,
-		`{"ready":0.5,"total":1}`,
-		`{"ready":0,"total":1.5}`,
-	} {
-		t.Run("invalid counter "+body, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				_, _ = w.Write([]byte(body))
-			}))
-			t.Cleanup(server.Close)
-			_, err := helper.CollectStorageClassStatusWithCtx(
-				context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
-			require.Error(t, err)
-		})
-	}
-
-	t.Run("ready greater than total", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte(`{"ready":2,"total":1}`))
-		}))
-		t.Cleanup(server.Close)
-		_, err := helper.CollectStorageClassStatusWithCtx(
-			context.Background(), strings.TrimPrefix(server.URL, "http://"), tikv.KeyspaceID(1), 2, "IA")
-		require.ErrorContains(t, err, "ready 2 greater than total 1")
-	})
 }
 
 func TestTiKVRegionsInfo(t *testing.T) {
@@ -346,9 +89,7 @@ func TestTiKVRegionsInfo(t *testing.T) {
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
 	}
-	pdCli, err := h.TryGetPDHTTPClient()
-	require.NoError(t, err)
-	regionsInfo, err := pdCli.GetRegions(context.Background())
+	regionsInfo, err := h.GetRegionsInfo()
 	require.NoError(t, err)
 	require.Equal(t, getMockTiKVRegionsInfo(), regionsInfo)
 }
@@ -361,10 +102,7 @@ func TestTiKVStoresStat(t *testing.T) {
 		RegionCache: store.GetRegionCache(),
 	}
 
-	pdCli, err := h.TryGetPDHTTPClient()
-	require.NoError(t, err)
-
-	stat, err := pdCli.GetStores(context.Background())
+	stat, err := h.GetStoresStat()
 	require.NoError(t, err)
 
 	data, err := json.Marshal(stat)
@@ -374,26 +112,12 @@ func TestTiKVStoresStat(t *testing.T) {
 	require.Equal(t, expected, string(data))
 }
 
-// codecOnlyStorage is a minimal helper.Storage stub whose only working method is
-// GetCodec. All other methods panic if called. It is only safe to use with code
-// paths that exclusively call GetCodec, such as GetTablesInfoWithKeyRange.
-type codecOnlyStorage struct {
-	helper.Storage
-	codec tikv.Codec
-}
-
-func (s *codecOnlyStorage) GetCodec() tikv.Codec { return s.codec }
-
 type mockStore struct {
 	helper.Storage
 	pdAddrs []string
 }
 
 func (s *mockStore) EtcdAddrs() ([]string, error) {
-	return s.pdAddrs, nil
-}
-
-func (s *mockStore) GetPDAddrs() ([]string, error) {
 	return s.pdAddrs, nil
 }
 
@@ -414,28 +138,18 @@ func (s *mockStore) Describe() string {
 }
 
 func createMockStore(t *testing.T) (store helper.Storage) {
-	server := mockPDHTTPServer()
-
-	pdAddrs := []string{"invalid_pd_address", server.URL[len("http://"):]}
-
-	// Get keyspace-aware region boundary by creating a temp store to access codec
-	tempStore, err := teststore.NewMockStoreWithoutBootstrap()
-	require.NoError(t, err)
-	xKey := getKeyspaceAwareKey(tempStore, []byte("x"))
-	tempStore.Close()
-
-	s, err := teststore.NewMockStoreWithoutBootstrap(
+	s, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
-			mockstore.BootstrapWithMultiRegions(c, xKey)
+			mockstore.BootstrapWithMultiRegions(c, []byte("x"))
 		}),
-		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("store-helper-test", pdAddrs)),
-		mockstore.WithPDAddr(pdAddrs),
 	)
 	require.NoError(t, err)
 
+	server := mockPDHTTPServer()
+
 	store = &mockStore{
 		s.(helper.Storage),
-		pdAddrs,
+		[]string{"invalid_pd_address", server.URL[len("http://"):]},
 	}
 
 	t.Cleanup(func() {
@@ -449,9 +163,9 @@ func createMockStore(t *testing.T) (store helper.Storage) {
 
 func mockPDHTTPServer() *httptest.Server {
 	router := mux.NewRouter()
-	router.HandleFunc(pd.HotRead, mockHotRegionResponse)
-	router.HandleFunc(pd.Regions, mockTiKVRegionsInfoResponse)
-	router.HandleFunc(pd.Stores, mockStoreStatResponse)
+	router.HandleFunc(pdapi.HotRead, mockHotRegionResponse)
+	router.HandleFunc(pdapi.Regions, mockTiKVRegionsInfoResponse)
+	router.HandleFunc(pdapi.Stores, mockStoreStatResponse)
 	serverMux := http.NewServeMux()
 	serverMux.Handle("/", router)
 	return httptest.NewServer(serverMux)
@@ -460,22 +174,22 @@ func mockPDHTTPServer() *httptest.Server {
 func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
-	regionsStat := pd.HotPeersStat{
-		Stats: []pd.HotPeerStatShow{
+	regionsStat := helper.HotRegionsStat{
+		RegionsStat: []helper.RegionStat{
 			{
-				ByteRate:  100,
+				FlowBytes: 100,
 				RegionID:  2,
 				HotDegree: 1,
 			},
 			{
-				ByteRate:  200,
+				FlowBytes: 200,
 				RegionID:  4,
 				HotDegree: 2,
 			},
 		},
 	}
-	resp := pd.StoreHotPeersInfos{
-		AsLeader: make(pd.StoreHotPeersStat),
+	resp := helper.StoreHotRegionInfos{
+		AsLeader: make(map[uint64]*helper.HotRegionsStat),
 	}
 	resp.AsLeader[0] = &regionsStat
 	data, err := json.MarshalIndent(resp, "", "	")
@@ -489,23 +203,25 @@ func mockHotRegionResponse(w http.ResponseWriter, _ *http.Request) {
 }
 
 func getMockRegionsTableInfoSchema() []*model.DBInfo {
-	dbInfo := &model.DBInfo{Name: ast.NewCIStr("test")}
-	dbInfo.Deprecated.Tables = []*model.TableInfo{
+	return []*model.DBInfo{
 		{
-			ID:      41,
-			Indices: []*model.IndexInfo{{ID: 1}},
-		},
-		{
-			ID:      63,
-			Indices: []*model.IndexInfo{{ID: 1}, {ID: 2}},
-		},
-		{
-			ID:      66,
-			Indices: []*model.IndexInfo{{ID: 1}, {ID: 2}, {ID: 3}},
+			Name: model.NewCIStr("test"),
+			Tables: []*model.TableInfo{
+				{
+					ID:      41,
+					Indices: []*model.IndexInfo{{ID: 1}},
+				},
+				{
+					ID:      63,
+					Indices: []*model.IndexInfo{{ID: 1}, {ID: 2}},
+				},
+				{
+					ID:      66,
+					Indices: []*model.IndexInfo{{ID: 1}, {ID: 2}, {ID: 3}},
+				},
+			},
 		},
 	}
-
-	return []*model.DBInfo{dbInfo}
 }
 
 func getRegionsTableInfoAns(dbs []*model.DBInfo) map[int64][]helper.TableInfo {
@@ -513,62 +229,62 @@ func getRegionsTableInfoAns(dbs []*model.DBInfo) map[int64][]helper.TableInfo {
 	db := dbs[0]
 	ans[1] = []helper.TableInfo{}
 	ans[2] = []helper.TableInfo{
-		{db, db.Deprecated.Tables[0], false, nil, true, db.Deprecated.Tables[0].Indices[0]},
-		{db, db.Deprecated.Tables[0], false, nil, false, nil},
+		{db, db.Tables[0], false, nil, true, db.Tables[0].Indices[0]},
+		{db, db.Tables[0], false, nil, false, nil},
 	}
 	ans[3] = []helper.TableInfo{
-		{db, db.Deprecated.Tables[1], false, nil, true, db.Deprecated.Tables[1].Indices[0]},
-		{db, db.Deprecated.Tables[1], false, nil, true, db.Deprecated.Tables[1].Indices[1]},
-		{db, db.Deprecated.Tables[1], false, nil, false, nil},
+		{db, db.Tables[1], false, nil, true, db.Tables[1].Indices[0]},
+		{db, db.Tables[1], false, nil, true, db.Tables[1].Indices[1]},
+		{db, db.Tables[1], false, nil, false, nil},
 	}
 	ans[4] = []helper.TableInfo{
-		{db, db.Deprecated.Tables[2], false, nil, false, nil},
+		{db, db.Tables[2], false, nil, false, nil},
 	}
 	ans[5] = []helper.TableInfo{
-		{db, db.Deprecated.Tables[2], false, nil, true, db.Deprecated.Tables[2].Indices[2]},
-		{db, db.Deprecated.Tables[2], false, nil, false, nil},
+		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[2]},
+		{db, db.Tables[2], false, nil, false, nil},
 	}
 	ans[6] = []helper.TableInfo{
-		{db, db.Deprecated.Tables[2], false, nil, true, db.Deprecated.Tables[2].Indices[0]},
+		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[0]},
 	}
 	ans[7] = []helper.TableInfo{
-		{db, db.Deprecated.Tables[2], false, nil, true, db.Deprecated.Tables[2].Indices[1]},
+		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[1]},
 	}
 	ans[8] = []helper.TableInfo{
-		{db, db.Deprecated.Tables[2], false, nil, true, db.Deprecated.Tables[2].Indices[1]},
-		{db, db.Deprecated.Tables[2], false, nil, true, db.Deprecated.Tables[2].Indices[2]},
-		{db, db.Deprecated.Tables[2], false, nil, false, nil},
+		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[1]},
+		{db, db.Tables[2], false, nil, true, db.Tables[2].Indices[2]},
+		{db, db.Tables[2], false, nil, false, nil},
 	}
 	return ans
 }
 
-func getMockTiKVRegionsInfo() *pd.RegionsInfo {
-	regions := []pd.RegionInfo{
+func getMockTiKVRegionsInfo() *helper.RegionsInfo {
+	regions := []helper.RegionInfo{
 		{
 			ID:       1,
 			StartKey: "",
 			EndKey:   "12341234",
-			Epoch: pd.RegionEpoch{
+			Epoch: helper.RegionEpoch{
 				ConfVer: 1,
 				Version: 1,
 			},
-			Peers: []pd.RegionPeer{
+			Peers: []helper.RegionPeer{
 				{ID: 2, StoreID: 1},
 				{ID: 15, StoreID: 51},
 				{ID: 66, StoreID: 99, IsLearner: true},
 				{ID: 123, StoreID: 111, IsLearner: true},
 			},
-			Leader: pd.RegionPeer{
+			Leader: helper.RegionPeer{
 				ID:      2,
 				StoreID: 1,
 			},
-			DownPeers: []pd.RegionPeerStat{
+			DownPeers: []helper.RegionPeerStat{
 				{
-					Peer:    pd.RegionPeer{ID: 66, StoreID: 99, IsLearner: true},
-					DownSec: 120,
+					helper.RegionPeer{ID: 66, StoreID: 99, IsLearner: true},
+					120,
 				},
 			},
-			PendingPeers: []pd.RegionPeer{
+			PendingPeers: []helper.RegionPeer{
 				{ID: 15, StoreID: 51},
 			},
 			WrittenBytes:    100,
@@ -581,66 +297,66 @@ func getMockTiKVRegionsInfo() *pd.RegionsInfo {
 			ID:       2,
 			StartKey: "7480000000000000FF295F698000000000FF0000010000000000FA",
 			EndKey:   "7480000000000000FF2B5F698000000000FF0000010000000000FA",
-			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []pd.RegionPeer{{ID: 3, StoreID: 1}},
-			Leader:   pd.RegionPeer{ID: 3, StoreID: 1},
+			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []helper.RegionPeer{{ID: 3, StoreID: 1}},
+			Leader:   helper.RegionPeer{ID: 3, StoreID: 1},
 		},
 		// table: 63, record + index: 1, 2
 		{
 			ID:       3,
 			StartKey: "7480000000000000FF3F5F698000000000FF0000010000000000FA",
 			EndKey:   "7480000000000000FF425F698000000000FF0000010000000000FA",
-			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []pd.RegionPeer{{ID: 4, StoreID: 1}},
-			Leader:   pd.RegionPeer{ID: 4, StoreID: 1},
+			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []helper.RegionPeer{{ID: 4, StoreID: 1}},
+			Leader:   helper.RegionPeer{ID: 4, StoreID: 1},
 		},
 		// table: 66, record
 		{
 			ID:       4,
 			StartKey: "7480000000000000FF425F72C000000000FF0000000000000000FA",
 			EndKey:   "",
-			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []pd.RegionPeer{{ID: 5, StoreID: 1}},
-			Leader:   pd.RegionPeer{ID: 5, StoreID: 1},
+			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []helper.RegionPeer{{ID: 5, StoreID: 1}},
+			Leader:   helper.RegionPeer{ID: 5, StoreID: 1},
 		},
 		// table: 66, record + index: 3
 		{
 			ID:       5,
 			StartKey: "7480000000000000FF425F698000000000FF0000030000000000FA",
 			EndKey:   "7480000000000000FF425F72C000000000FF0000000000000000FA",
-			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []pd.RegionPeer{{ID: 6, StoreID: 1}},
-			Leader:   pd.RegionPeer{ID: 6, StoreID: 1},
+			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []helper.RegionPeer{{ID: 6, StoreID: 1}},
+			Leader:   helper.RegionPeer{ID: 6, StoreID: 1},
 		},
 		// table: 66, index: 1
 		{
 			ID:       6,
 			StartKey: "7480000000000000FF425F698000000000FF0000010000000000FA",
 			EndKey:   "7480000000000000FF425F698000000000FF0000020000000000FA",
-			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []pd.RegionPeer{{ID: 7, StoreID: 1}},
-			Leader:   pd.RegionPeer{ID: 7, StoreID: 1},
+			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []helper.RegionPeer{{ID: 7, StoreID: 1}},
+			Leader:   helper.RegionPeer{ID: 7, StoreID: 1},
 		},
 		// table: 66, index: 2
 		{
 			ID:       7,
 			StartKey: "7480000000000000FF425F698000000000FF0000020000000000FA",
 			EndKey:   "7480000000000000FF425F698000000000FF0000030000000000FA",
-			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []pd.RegionPeer{{ID: 8, StoreID: 1}},
-			Leader:   pd.RegionPeer{ID: 8, StoreID: 1},
+			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []helper.RegionPeer{{ID: 8, StoreID: 1}},
+			Leader:   helper.RegionPeer{ID: 8, StoreID: 1},
 		},
 		// merge region 7, 5
 		{
 			ID:       8,
 			StartKey: "7480000000000000FF425F698000000000FF0000020000000000FA",
 			EndKey:   "7480000000000000FF425F72C000000000FF0000000000000000FA",
-			Epoch:    pd.RegionEpoch{ConfVer: 1, Version: 1},
-			Peers:    []pd.RegionPeer{{ID: 9, StoreID: 1}},
-			Leader:   pd.RegionPeer{ID: 9, StoreID: 1},
+			Epoch:    helper.RegionEpoch{ConfVer: 1, Version: 1},
+			Peers:    []helper.RegionPeer{{ID: 9, StoreID: 1}},
+			Leader:   helper.RegionPeer{ID: 9, StoreID: 1},
 		},
 	}
-	return &pd.RegionsInfo{
+	return &helper.RegionsInfo{
 		Count:   int64(len(regions)),
 		Regions: regions,
 	}
@@ -671,24 +387,24 @@ func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 	if err != nil {
 		log.Panic("mock tikv store api response failed", zap.Error(err))
 	}
-	storesStat := pd.StoresInfo{
+	storesStat := helper.StoresStat{
 		Count: 1,
-		Stores: []pd.StoreInfo{
+		Stores: []helper.StoreStat{
 			{
-				Store: pd.MetaStore{
+				Store: helper.StoreBaseStat{
 					ID:        1,
 					Address:   "127.0.0.1:20160",
 					State:     0,
 					StateName: "Up",
 					Version:   "3.0.0-beta",
-					Labels: []pd.StoreLabel{
+					Labels: []helper.StoreLabel{
 						{
 							Key:   "test",
 							Value: "test",
 						},
 					},
 				},
-				Status: pd.StoreStatus{
+				Status: helper.StoreDetailStat{
 					Capacity:        "60 GiB",
 					Available:       "100 GiB",
 					LeaderCount:     10,
@@ -699,8 +415,8 @@ func mockStoreStatResponse(w http.ResponseWriter, _ *http.Request) {
 					RegionWeight:    999999.999999,
 					RegionScore:     999999.999999,
 					RegionSize:      1000,
-					StartTS:         startTs,
-					LastHeartbeatTS: lastHeartbeatTs,
+					StartTs:         startTs,
+					LastHeartbeatTs: lastHeartbeatTs,
 					Uptime:          "1h30m",
 				},
 			},
@@ -745,57 +461,6 @@ func TestComputeTiFlashStatus(t *testing.T) {
 	for i := 1000; i < 3000; i++ {
 		_, ok := regionReplica2[int64(i)]
 		require.True(t, ok)
-	}
-}
-
-func TestCollectColumnarStatusFTSIndexReady(t *testing.T) {
-	testCases := []struct {
-		name             string
-		response         string
-		ftsIndexReady    uint
-		hasFtsIndexReady bool
-	}{
-		{
-			name:             "present",
-			response:         `{"ready":3,"vector-index-ready":2,"fts-index-ready":1,"total":4}`,
-			ftsIndexReady:    1,
-			hasFtsIndexReady: true,
-		},
-		{
-			name:             "present zero",
-			response:         `{"ready":3,"vector-index-ready":2,"fts-index-ready":0,"total":4}`,
-			ftsIndexReady:    0,
-			hasFtsIndexReady: true,
-		},
-		{
-			name:             "missing on older TiKV",
-			response:         `{"ready":3,"vector-index-ready":2,"total":4}`,
-			ftsIndexReady:    0,
-			hasFtsIndexReady: false,
-		},
-	}
-
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				require.Equal(t, "/kvengine/columnar_status", r.URL.Path)
-				require.Equal(t, "7", r.URL.Query().Get("keyspace_id"))
-				require.Equal(t, "9", r.URL.Query().Get("table_id"))
-				require.Equal(t, "11", r.URL.Query().Get("index_id"))
-				_, err := w.Write([]byte(testCase.response))
-				require.NoError(t, err)
-			}))
-			defer server.Close()
-
-			indexID := int64(11)
-			status, err := helper.CollectColumnarStatusWithCtx(context.Background(), strings.TrimPrefix(server.URL, "http://"), 7, 9, &indexID)
-			require.NoError(t, err)
-			require.Equal(t, uint(3), status.Ready)
-			require.Equal(t, uint(2), status.VectorIndexReady)
-			require.Equal(t, testCase.ftsIndexReady, status.FtsIndexReady)
-			require.Equal(t, testCase.hasFtsIndexReady, status.HasFtsIndexReady)
-			require.Equal(t, uint(4), status.Total)
-		})
 	}
 }
 

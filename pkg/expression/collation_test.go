@@ -17,15 +17,13 @@ package expression
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
-	"go.uber.org/atomic"
 )
 
 func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll string) Expression {
@@ -33,71 +31,6 @@ func newExpression(coercibility Coercibility, repertoire Repertoire, chs, coll s
 	constant.SetCoercibility(coercibility)
 	constant.SetRepertoire(repertoire)
 	return constant
-}
-
-func TestCollationHashEquals(t *testing.T) {
-	c1 := collationInfo{
-		coer:       1,
-		coerInit:   atomic.Bool{},
-		repertoire: 1,
-		charset:    "aa",
-		collation:  "bb",
-	}
-	c2 := collationInfo{
-		coer:       1,
-		coerInit:   atomic.Bool{},
-		repertoire: 1,
-		charset:    "aabb",
-		collation:  "",
-	}
-	hasher1 := base.NewHashEqualer()
-	hasher2 := base.NewHashEqualer()
-	c1.Hash64(hasher1)
-	c2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-	require.False(t, c1.Equals(c2))
-
-	c2.charset = "aa"
-	c2.collation = "bb"
-	hasher2.Reset()
-	c2.Hash64(hasher2)
-	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
-	require.True(t, c1.Equals(c2))
-
-	c2.coer = 2
-	hasher2.Reset()
-	c2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-	require.False(t, c1.Equals(c2))
-
-	c2.coer = 1
-	c2.coerInit.Store(true)
-	hasher2.Reset()
-	c2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-	require.False(t, c1.Equals(c2))
-
-	c2.coerInit.Store(false)
-	c2.repertoire = 2
-	hasher2.Reset()
-	c2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-	require.False(t, c1.Equals(c2))
-
-	c2.repertoire = 1
-	c2.charset = ""
-	c2.collation = "aabb"
-	hasher2.Reset()
-	c2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-	require.False(t, c1.Equals(c2))
-
-	c2.charset = "aa"
-	c2.collation = "bb"
-	hasher2.Reset()
-	c2.Hash64(hasher2)
-	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
-	require.True(t, c1.Equals(c2))
 }
 
 func TestInferCollation(t *testing.T) {
@@ -146,36 +79,6 @@ func TestInferCollation(t *testing.T) {
 			},
 			false,
 			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB4},
-		},
-		// Regression test: utf8mb4_0900_bin is a binary collation and should win
-		// over non-bin collations at the same coercibility (same as utf8mb4_bin).
-		{
-			[]Expression{
-				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB40900Bin),
-				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
-			},
-			false,
-			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB40900Bin},
-		},
-		{
-			[]Expression{
-				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
-				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB40900Bin),
-			},
-			false,
-			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB40900Bin},
-		},
-		// Regression test: two utf8mb4 columns with utf8mb4_0900_bin + utf8mb4_unicode_ci
-		// combined with a binary blob. utf8mb4_0900_bin should be recognized as bin
-		// collation so binary wins without triggering from_binary() cast.
-		{
-			[]Expression{
-				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, charset.CollationUTF8MB40900Bin),
-				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetUTF8MB4, "utf8mb4_unicode_ci"),
-				newExpression(CoercibilityImplicit, UNICODE, charset.CharsetBin, charset.CollationBin),
-			},
-			false,
-			&ExprCollation{CoercibilityImplicit, UNICODE, charset.CharsetBin, charset.CollationBin},
 		},
 		// binary charset with non-binary charset.
 		{
@@ -315,9 +218,8 @@ func TestInferCollation(t *testing.T) {
 		},
 	}
 
-	ctx := createContext(t)
 	for i, test := range tests {
-		ec := inferCollation(ctx, test.exprs...)
+		ec := inferCollation(test.exprs...)
 		if test.err {
 			require.Nil(t, ec, i)
 		} else {
@@ -328,7 +230,7 @@ func TestInferCollation(t *testing.T) {
 
 func newConstString(s string, coercibility Coercibility, chs, coll string) *Constant {
 	repe := ASCII
-	for i := range len(s) {
+	for i := 0; i < len(s); i++ {
 		if s[i] >= 0x80 {
 			repe = UNICODE
 		}
@@ -854,7 +756,7 @@ func TestCompareString(t *testing.T) {
 	chk.Column(1).AppendString("😃")
 	chk.Column(0).AppendString("a ")
 	chk.Column(1).AppendString("a  ")
-	for range 4 {
+	for i := 0; i < 4; i++ {
 		v, isNull, err := CompareStringWithCollationInfo(ctx, col1, col2, chk.GetRow(0), chk.GetRow(0), "utf8_general_ci")
 		require.NoError(t, err)
 		require.False(t, isNull)

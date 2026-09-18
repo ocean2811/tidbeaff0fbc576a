@@ -21,16 +21,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
-	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/traceevent"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/staleread"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -85,7 +84,7 @@ func (m *txnManager) GetTxnInfoSchema() infoschema.InfoSchema {
 		return m.ctxProvider.GetTxnInfoSchema()
 	}
 
-	if is := m.sctx.GetLatestInfoSchema(); is != nil {
+	if is := m.sctx.GetDomainInfoSchema(); is != nil {
 		return is.(infoschema.InfoSchema)
 	}
 
@@ -169,21 +168,6 @@ func (m *txnManager) EnterNewTxn(ctx context.Context, r *sessiontxn.EnterNewTxnR
 		m.sctx.GetSessionVars().SetInTxn(true)
 	}
 
-	// Emit txn.enter trace event
-	if traceevent.IsEnabled(traceevent.TxnLifecycle) {
-		sessVars := m.sctx.GetSessionVars()
-		fields := []zap.Field{
-			zap.Int("type", int(r.Type)),
-			zap.Uint64("conn_id", sessVars.ConnectionID),
-			zap.Bool("explicit", r.Type == sessiontxn.EnterNewTxnWithBeginStmt),
-		}
-		// Add startTS if transaction context is available
-		if sessVars.TxnCtx != nil && sessVars.TxnCtx.StartTS > 0 {
-			fields = append(fields, zap.Uint64("start_ts", sessVars.TxnCtx.StartTS))
-		}
-		traceevent.TraceEvent(ctx, traceevent.TxnLifecycle, "txn.enter", fields...)
-	}
-
 	m.resetEvents()
 	m.recordEvent("enter txn")
 	return nil
@@ -197,20 +181,7 @@ func (m *txnManager) OnTxnEnd() {
 
 	duration := time.Since(m.enterTxnInstant)
 	threshold := m.sctx.GetSessionVars().SlowTxnThreshold
-	slow := threshold > 0 && uint64(duration.Milliseconds()) >= threshold
-
-	// Emit txn.end trace event
-	if traceevent.IsEnabled(traceevent.TxnLifecycle) {
-		sessVars := m.sctx.GetSessionVars()
-		traceevent.TraceEvent(context.Background(), traceevent.TxnLifecycle, "txn.end",
-			zap.Duration("duration", duration),
-			zap.Uint64("stmt_count", uint64(sessVars.TxnCtx.StatementCount)),
-			zap.Bool("slow", slow),
-			zap.Uint64("conn_id", sessVars.ConnectionID),
-		)
-	}
-
-	if slow {
+	if threshold > 0 && uint64(duration.Milliseconds()) >= threshold {
 		logutil.BgLogger().Info(
 			"slow transaction", zap.Duration("duration", duration),
 			zap.Uint64("conn", m.sctx.GetSessionVars().ConnectionID),
@@ -237,7 +208,9 @@ func (m *txnManager) OnStmtStart(ctx context.Context, node ast.StmtNode) error {
 	var sql string
 	if node != nil {
 		sql = node.OriginalText()
-		sql = parser.Normalize(sql, m.sctx.GetSessionVars().EnableRedactLog)
+		if m.sctx.GetSessionVars().EnableRedactLog {
+			sql = parser.Normalize(sql)
+		}
 	}
 	m.recordEvent(sql)
 	return m.ctxProvider.OnStmtStart(ctx, m.stmtNode)
@@ -334,14 +307,6 @@ func (m *txnManager) OnLocalTemporaryTableCreated() {
 }
 
 func (m *txnManager) AdviseWarmup() error {
-	if m.sctx.GetSessionVars().BulkDMLEnabled {
-		// We don't want to validate the feasibility of pipelined DML here.
-		// We'd like to check it later after optimization so that optimizer info can be used.
-		// And it does not make much sense to save such a little time for pipelined-dml as it's
-		// for bulk processing.
-		return nil
-	}
-
 	if m.ctxProvider != nil {
 		return m.ctxProvider.AdviseWarmup()
 	}
@@ -349,7 +314,7 @@ func (m *txnManager) AdviseWarmup() error {
 }
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
-func (m *txnManager) AdviseOptimizeWithPlan(plan any) error {
+func (m *txnManager) AdviseOptimizeWithPlan(plan interface{}) error {
 	if m.ctxProvider != nil {
 		return m.ctxProvider.AdviseOptimizeWithPlan(plan)
 	}
@@ -362,7 +327,6 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 	}
 
 	if r.StaleReadTS > 0 {
-		m.sctx.GetSessionVars().TxnCtx.StaleReadTs = r.StaleReadTS
 		return staleread.NewStalenessTxnContextProvider(m.sctx, r.StaleReadTS, nil), nil
 	}
 
@@ -402,9 +366,4 @@ func (m *txnManager) newProviderWithRequest(r *sessiontxn.EnterNewTxnRequest) (s
 	default:
 		return nil, errors.Errorf("Invalid txn mode '%s'", txnMode)
 	}
-}
-
-// SetOptionsBeforeCommit sets options before commit.
-func (m *txnManager) SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error {
-	return m.ctxProvider.SetOptionsBeforeCommit(txn, commitTSChecker)
 }

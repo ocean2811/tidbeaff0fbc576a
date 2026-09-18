@@ -1,8 +1,8 @@
 # TiDB Design Documents
 
 - Author(s): [Mattias Jonsson](http://github.com/mjonss)
-- Discussion PR: https://github.com/pingcap/tidb/issues/38535
-- Tracking Issue: https://github.com/pingcap/tidb/issues/15000
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/issues/38535
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/15000
 
 ## Table of Contents
 

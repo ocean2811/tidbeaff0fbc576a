@@ -15,12 +15,12 @@
 package applycache
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/kvcache"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/kvcache"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/syncutil"
 )
 
 // ApplyCache is used in the apply executor. When we get the same value of the outer row.

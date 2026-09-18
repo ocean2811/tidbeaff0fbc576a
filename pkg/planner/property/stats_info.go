@@ -16,16 +16,10 @@ package property
 
 import (
 	"fmt"
-	"math"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
 )
-
-// ScaleNDVFunc is used to avoid cycle import.
-// `sctx` should be base.PlanContext, use any to avoid cycle import.
-var ScaleNDVFunc func(vars *variable.SessionVars, originalNDV, originalRows, selectedRows float64) (newNDV float64)
 
 // GroupNDV stores the NDV of a group of columns.
 type GroupNDV struct {
@@ -66,8 +60,7 @@ func (s *StatsInfo) Count() int64 {
 }
 
 // Scale receives a selectivity and multiplies it with RowCount and NDV.
-func (s *StatsInfo) Scale(vars *variable.SessionVars, factor float64) *StatsInfo {
-	originalRowCount := s.RowCount
+func (s *StatsInfo) Scale(factor float64) *StatsInfo {
 	profile := &StatsInfo{
 		RowCount:     s.RowCount * factor,
 		ColNDVs:      make(map[int64]float64, len(s.ColNDVs)),
@@ -76,11 +69,11 @@ func (s *StatsInfo) Scale(vars *variable.SessionVars, factor float64) *StatsInfo
 		GroupNDVs:    make([]GroupNDV, len(s.GroupNDVs)),
 	}
 	for id, c := range s.ColNDVs {
-		profile.ColNDVs[id] = ScaleNDVFunc(vars, c, originalRowCount, profile.RowCount)
+		profile.ColNDVs[id] = c * factor
 	}
 	for i, g := range s.GroupNDVs {
 		profile.GroupNDVs[i] = g
-		profile.GroupNDVs[i].NDV = ScaleNDVFunc(vars, g.NDV, originalRowCount, profile.RowCount)
+		profile.GroupNDVs[i].NDV = g.NDV * factor
 	}
 	return profile
 }
@@ -88,12 +81,12 @@ func (s *StatsInfo) Scale(vars *variable.SessionVars, factor float64) *StatsInfo
 // ScaleByExpectCnt tries to Scale StatsInfo to an expectCnt which must be
 // smaller than the derived cnt.
 // TODO: try to use a better way to do this.
-func (s *StatsInfo) ScaleByExpectCnt(vars *variable.SessionVars, expectCnt float64) *StatsInfo {
+func (s *StatsInfo) ScaleByExpectCnt(expectCnt float64) *StatsInfo {
 	if expectCnt >= s.RowCount {
 		return s
 	}
 	if s.RowCount > 1.0 { // if s.RowCount is too small, it will cause overflow
-		return s.Scale(vars, expectCnt/s.RowCount)
+		return s.Scale(expectCnt / s.RowCount)
 	}
 	return s
 }
@@ -120,18 +113,4 @@ func (s *StatsInfo) GetGroupNDV4Cols(cols []*expression.Column) *GroupNDV {
 		}
 	}
 	return nil
-}
-
-// DeriveLimitStats derives the stats of the top-n plan.
-func DeriveLimitStats(childProfile *StatsInfo, limitCount float64) *StatsInfo {
-	stats := &StatsInfo{
-		RowCount: math.Min(limitCount, childProfile.RowCount),
-		ColNDVs:  make(map[int64]float64, len(childProfile.ColNDVs)),
-		// limit operation does not change the histogram (kind of sample).
-		HistColl: childProfile.HistColl,
-	}
-	for id, c := range childProfile.ColNDVs {
-		stats.ColNDVs[id] = math.Min(c, stats.RowCount)
-	}
-	return stats
 }

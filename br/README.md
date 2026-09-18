@@ -2,7 +2,7 @@
 
 [![Build Status](https://internal.pingcap.net/idc-jenkins/job/build_br_multi_branch/job/master/badge/icon)](https://internal.pingcap.net/idc-jenkins/job/build_br_multi_branch/job/master/)
 [![codecov](https://codecov.io/gh/pingcap/br/branch/master/graph/badge.svg)](https://codecov.io/gh/pingcap/br)
-[![LICENSE](https://img.shields.io/github/license/pingcap/br.svg)](./LICENSE.md)
+[![LICENSE](https://img.shields.io/github/license/pingcap/br.svg)](https://github.com/pingcap/br/blob/master/LICENSE)
 [![Language](https://img.shields.io/badge/Language-Go-blue.svg)](https://golang.org/)
 [![GoDoc](https://img.shields.io/badge/Godoc-reference-blue.svg)](https://godoc.org/github.com/pingcap/br)
 [![Go Report Card](https://goreportcard.com/badge/github.com/pingcap/br)](https://goreportcard.com/report/github.com/pingcap/br)
@@ -30,12 +30,11 @@
 To build binary and run test:
 
 ```bash
-cd ../tidb
-make build_br
-make test
+$ make
+$ make test
 ```
 
-Notice BR supports building with Go version `Go >= 1.23`
+Notice BR supports building with Go version `Go >= 1.16`
 
 When BR is built successfully, you can find binary in the `bin` directory.
 
@@ -101,7 +100,7 @@ tiup bench tpcc --warehouses 1 prepare
 mysql --host 127.0.0.1 --port 4000 -E -e "SELECT COUNT(*) FROM test.order_line" -u root -p
 
 # Build br.
-make build_br
+make build
 
 # Backup TPC-C test data.
 bin/br backup table --db test \

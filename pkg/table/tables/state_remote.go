@@ -20,10 +20,10 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
@@ -78,7 +78,7 @@ type StateRemote interface {
 }
 
 type sqlExec interface {
-	ExecuteInternal(context.Context, string, ...any) (sqlexec.RecordSet, error)
+	ExecuteInternal(context.Context, string, ...interface{}) (sqlexec.RecordSet, error)
 }
 
 type stateRemoteHandle struct {
@@ -211,7 +211,10 @@ func (h *stateRemoteHandle) lockForWriteOnce(ctx context.Context, tid int64, lea
 				_lease = ts
 			}
 		case CachedTableLockRead:
-			newLease := max(ts, lease)
+			newLease := ts
+			if newLease < lease { // Never, never decrease lease
+				newLease = lease
+			}
 			// Change from READ to INTEND
 			if _, err = h.execSQL(ctx,
 				"update mysql.table_cache_meta set lock_type='INTEND', oldReadLease=%?, lease=%? where tid=%?",
@@ -455,7 +458,7 @@ func (h *stateRemoteHandle) updateRow(ctx context.Context, tid int64, lockType s
 	return err
 }
 
-func (h *stateRemoteHandle) execSQL(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
+func (h *stateRemoteHandle) execSQL(ctx context.Context, sql string, args ...interface{}) ([]chunk.Row, error) {
 	rs, err := h.exec.ExecuteInternal(ctx, sql, args...)
 	if rs != nil {
 		//nolint: errcheck

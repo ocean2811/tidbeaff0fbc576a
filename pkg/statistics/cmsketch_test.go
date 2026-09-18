@@ -19,18 +19,17 @@ import (
 	"math"
 	"math/rand"
 	"testing"
-	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
 func (c *CMSketch) insert(val *types.Datum) error {
-	bytes, err := codec.EncodeValue(time.UTC, nil, *val)
+	bytes, err := codec.EncodeValue(nil, nil, *val)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -38,35 +37,10 @@ func (c *CMSketch) insert(val *types.Datum) error {
 	return nil
 }
 
-func TestDecodeColumnTopNValueDuration(t *testing.T) {
-	ft := types.NewFieldType(mysql.TypeDuration)
-	ft.SetDecimal(0)
-	want := types.Duration{Duration: 10*time.Hour + 30*time.Minute, Fsp: 0}
-	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(int64(want.Duration)))
-	require.NoError(t, err)
-
-	got, err := DecodeColumnTopNValue(encoded, ft, time.UTC)
-	require.NoError(t, err)
-	require.Equal(t, types.KindMysqlDuration, got.Kind())
-	require.Equal(t, want, got.GetMysqlDuration())
-}
-
-func TestDecodeColumnTopNValuePreservesStringComparisonBytes(t *testing.T) {
-	ft := types.NewFieldType(mysql.TypeVarchar)
-	want := []byte{0x00, 0xff, 0x42}
-	encoded, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(want))
-	require.NoError(t, err)
-
-	got, err := DecodeColumnTopNValue(encoded, ft, time.UTC)
-	require.NoError(t, err)
-	require.Equal(t, types.KindBytes, got.Kind())
-	require.Equal(t, want, got.GetBytes())
-}
-
 func prepareCMSAndTopN(d, w int32, vals []*types.Datum, n uint32, total uint64) (*CMSketch, *TopN, error) {
 	data := make([][]byte, 0, len(vals))
 	for _, v := range vals {
-		bytes, err := codec.EncodeValue(time.UTC, nil, *v)
+		bytes, err := codec.EncodeValue(nil, nil, *v)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
@@ -227,60 +201,6 @@ func TestCMSketchTopN(t *testing.T) {
 	}
 }
 
-func TestEstimateNDVByGEE(t *testing.T) {
-	tests := []struct {
-		name           string
-		sampleNDV      uint64
-		singletonItems uint64
-		sampleSize     uint64
-		rowCount       uint64
-		expected       uint64
-	}{
-		{
-			name:           "applies singleton correction",
-			sampleNDV:      10,
-			singletonItems: 3,
-			sampleSize:     20,
-			rowCount:       80,
-			expected:       13,
-		},
-		{
-			name:           "rounds half up",
-			sampleNDV:      10,
-			singletonItems: 7,
-			sampleSize:     20,
-			rowCount:       45,
-			expected:       14,
-		},
-		{
-			name:           "keeps sample ndv as lower bound",
-			sampleNDV:      10,
-			singletonItems: 7,
-			sampleSize:     20,
-			rowCount:       10,
-			expected:       10,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.expected, EstimateNDVByGEE(tt.sampleNDV, tt.singletonItems, tt.sampleSize, tt.rowCount))
-		})
-	}
-
-	t.Run("invalid input", func(t *testing.T) {
-		require.PanicsWithValue(t, "assert failed, sampleSize should be greater than 0", func() {
-			EstimateNDVByGEE(1, 1, 0, 1)
-		})
-		require.PanicsWithValue(t, "assert failed, sampleNDV should be greater than 0", func() {
-			EstimateNDVByGEE(0, 0, 1, 1)
-		})
-		require.PanicsWithValue(t, "assert failed, rowCount should be greater than or equal to sampleNDV", func() {
-			EstimateNDVByGEE(10, 3, 20, 9)
-		})
-	})
-}
-
 func TestCMSketchTopNUniqueData(t *testing.T) {
 	d, w := int32(5), int32(2048)
 	total := uint64(1000000)
@@ -314,9 +234,9 @@ func TestCMSketchCodingTopN(t *testing.T) {
 	unsignedLong := types.NewFieldType(mysql.TypeLonglong)
 	unsignedLong.AddFlag(mysql.UnsignedFlag)
 	chk := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeBlob), unsignedLong}, 20, 20)
-	rows := make([]chunk.Row, 0, 20)
-	for i := range 20 {
-		tString := fmt.Appendf(nil, "%20000d", i)
+	var rows []chunk.Row
+	for i := 0; i < 20; i++ {
+		tString := []byte(fmt.Sprintf("%20000d", i))
 		topN[i] = TopNMeta{tString, math.MaxUint64}
 		chk.AppendBytes(0, tString)
 		chk.AppendUint64(1, math.MaxUint64)
@@ -350,7 +270,7 @@ func TestTopNScale(t *testing.T) {
 	for _, scaleFactor := range []float64{0.9999, 1.00001, 1.9999, 4.9999, 5.001, 9.99} {
 		var data []TopNMeta
 		sumCount := uint64(0)
-		for range 20 {
+		for i := 0; i < 20; i++ {
 			cnt := uint64(rand.Intn(100000))
 			data = append(data, TopNMeta{
 				Count: cnt,
@@ -358,9 +278,7 @@ func TestTopNScale(t *testing.T) {
 			sumCount += cnt
 		}
 		topN := TopN{TopN: data}
-		for i := range topN.TopN {
-			topN.TopN[i].Count = uint64(float64(topN.TopN[i].Count) * scaleFactor)
-		}
+		topN.Scale(scaleFactor)
 		scaleCount := float64(sumCount) * scaleFactor
 		delta := math.Abs(float64(topN.TotalCount()) - scaleCount)
 		roundErrorRatio := delta / scaleCount

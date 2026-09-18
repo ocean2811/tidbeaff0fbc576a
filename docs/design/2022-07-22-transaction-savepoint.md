@@ -1,7 +1,7 @@
 # Proposal: Session Manager
 
 - Author(s): [crazycs520](https://github.com/crazycs520)
-- Tracking Issue: https://github.com/pingcap/tidb/issues/6840
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/6840
 
 ## Abstract
 

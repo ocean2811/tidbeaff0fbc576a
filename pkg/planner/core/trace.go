@@ -15,18 +15,15 @@
 package core
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
 )
 
 // Trace represents a trace plan.
 type Trace struct {
-	physicalop.SimpleSchemaProducer
+	baseSchemaProducer
 
-	StmtNode   ast.StmtNode
-	ResolveCtx *resolve.Context
-	Format     string
+	StmtNode ast.StmtNode
+	Format   string
 
 	// OptimizerTrace indicates `trace plan target = 'xxx' <statement>` case
 	OptimizerTrace       bool

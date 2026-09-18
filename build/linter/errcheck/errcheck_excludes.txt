@@ -12,9 +12,9 @@ fmt.Sscanf
 (*strings.Builder).Write
 (*bufio.Writer).Flush
 (*google.golang.org/grpc.ClientConn).Close
-(*github.com/pingcap/tidb/util/sqlexec.RecordSet).Close
-(*github.com/pingcap/tidb/pkg/lightning/mydump.blockParser).Close
-(*github.com/pingcap/tidb/kv.Storage).Close
+(*github.com/ocean2811/tidbeaff0fbc576a/util/sqlexec.RecordSet).Close
+(*github.com/ocean2811/tidbeaff0fbc576a/br/pkg/lightning/mydump.blockParser).Close
+(*github.com/ocean2811/tidbeaff0fbc576a/kv.Storage).Close
 (*database/sql.DB).Close
 (*database/sql.Rows).Close
 (*database/sql.Stmt).Close

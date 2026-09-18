@@ -15,27 +15,25 @@
 package expression
 
 import (
-	"fmt"
 	"math"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/google/uuid"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/testkit/testutil"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
 func TestInetAton(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		Input    any
-		Expected any
+		Input    interface{}
+		Expected interface{}
 	}{
 		{"", nil},
 		{nil, nil},
@@ -57,7 +55,7 @@ func TestInetAton(t *testing.T) {
 	for _, tt := range dtbl {
 		f, err := fc.getFunction(ctx, datumsToConstants(tt["Input"]))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		if tt["Expected"][0].IsNull() && !tt["Input"][0].IsNull() {
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
 		} else {
@@ -71,7 +69,7 @@ func TestIsIPv4(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
-		expect any
+		expect interface{}
 	}{
 		{"192.168.1.1", 1},
 		{"255.255.255.255", 1},
@@ -90,23 +88,23 @@ func TestIsIPv4(t *testing.T) {
 		ip := types.NewStringDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 	// test NULL input for is_ipv4
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	require.True(t, r.IsNull())
+	testutil.DatumEqual(t, types.NewDatum(0), r)
 }
 
 func TestIsUUID(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		uuid   string
-		expect any
+		expect interface{}
 	}{
 		{"6ccd780c-baba-1026-9564-5b8c656024db", 1},
 		{"6CCD780C-BABA-1026-9564-5B8C656024DB", 1},
@@ -114,10 +112,6 @@ func TestIsUUID(t *testing.T) {
 		{"{6ccd780c-baba-1026-9564-5b8c656024db}", 1},
 		{"6ccd780c-baba-1026-9564-5b8c6560", 0},
 		{"6CCD780C-BABA-1026-9564-5B8C656024DQ", 0},
-		// Test leading/trailing spaces should return 0 to match MySQL behavior
-		{" 6ccd780c-baba-1026-9564-5b8c656024db", 0},
-		{"6ccd780c-baba-1026-9564-5b8c656024db ", 0},
-		{" 6ccd780c-baba-1026-9564-5b8c656024db ", 0},
 		// This is a bug in google/uuid#60
 		{"{99a9ad03-5298-11ec-8f5c-00ff90147ac3*", 1},
 		// This is a format google/uuid support, while mysql doesn't
@@ -129,119 +123,49 @@ func TestIsUUID(t *testing.T) {
 		uuid := types.NewStringDatum(test.uuid)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{uuid}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
 }
 
 func TestUUID(t *testing.T) {
-	uuidGenFuncs := []struct {
-		funcName      string
-		expectVersion uuid.Version
-	}{
-		{ast.UUID, uuid.Version(1)},
-		{ast.UUIDv4, uuid.Version(4)},
-		{ast.UUIDv7, uuid.Version(7)},
-	}
-	for _, tf := range uuidGenFuncs {
-		t.Run(tf.funcName, func(t *testing.T) {
-			ctx := createContext(t)
-			f, err := newFunctionForTest(ctx, tf.funcName)
-			require.NoError(t, err)
-			d, err := f.Eval(ctx, chunk.Row{})
-			require.NoError(t, err)
-			u, err := uuid.Parse(d.GetString())
-			require.NoError(t, err)
-			require.Equal(t, tf.expectVersion, u.Version(), "Must generate a UUIDv%d", u.Version())
-			parts := strings.Split(d.GetString(), "-")
-			require.Equal(t, 5, len(parts))
-			for i, p := range parts {
-				switch i {
-				case 0:
-					require.Equal(t, 8, len(p))
-				case 1:
-					require.Equal(t, 4, len(p))
-				case 2:
-					require.Equal(t, 4, len(p))
-				case 3:
-					require.Equal(t, 4, len(p))
-				case 4:
-					require.Equal(t, 12, len(p))
-				}
-			}
-			_, err = funcs[tf.funcName].getFunction(ctx, datumsToConstants(nil))
-			require.NoError(t, err)
-		})
-	}
-}
-
-func TestUUIDVersion(t *testing.T) {
 	ctx := createContext(t)
-	tbl := []struct {
-		arg string
-		ret int
-	}{
-		{"5f13f854-d74a-11f0-9b7a-0ae0156bd76b", 1},
-		{"c6437ef1-5b86-3a4e-a071-c2d4ad414e65", 3},
-		{"a3e3b4a1-ea6d-471e-9860-8303a8b261f6", 4},
-		{"271a8175-dadd-5df9-b0bd-20a4a0b441e6", 5},
-		{"1f0e48c1-7860-69cc-9b3f-35f89c103d4d", 6},
-		{"019b1440-87b7-7380-ab00-ce413e795004", 7},
-	}
-	for _, tt := range tbl {
-		fc := funcs[ast.UUIDVersion]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
-		require.NoError(t, err)
-		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		require.NoError(t, err)
-		testutil.DatumEqual(t, types.NewDatum(tt.ret), r,
-			fmt.Sprintf("UUID_VERSION('%s') = %d (got %v)", tt.arg, tt.ret, r))
-	}
-}
-
-func TestUUIDTimestamp(t *testing.T) {
-	ctx := createContext(t)
-	tbl := []struct {
-		arg  string
-		ret  float64
-		null bool
-	}{
-		{"5f13f854-d74a-11f0-9b7a-0ae0156bd76b", 1765537487.118139, false}, // v1
-		{"c6437ef1-5b86-3a4e-a071-c2d4ad414e65", 0, true},                  // v3
-		{"a3e3b4a1-ea6d-471e-9860-8303a8b261f6", 0, true},                  // v4
-		{"271a8175-dadd-5df9-b0bd-20a4a0b441e6", 0, true},                  // v5
-		{"1f0e48c1-7860-69cc-9b3f-35f89c103d4d", 1766995078.970004, false}, // v6
-		{"019b1440-87b7-7380-ab00-ce413e795004", 1765571332.023000, false}, // v7
-		{"00000000-0000-0000-0000-000000000000", 0, true},                  // Nil UUID
-		{"ffffffff-ffff-ffff-ffff-ffffffffffff", 0, true},                  // Max UUID
-	}
-	for _, tt := range tbl {
-		fc := funcs[ast.UUIDTimestamp]
-		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
-		require.NoError(t, err)
-		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-		require.NoError(t, err)
-		if tt.null {
-			require.True(t, r.IsNull())
-		} else {
-			testutil.DatumEqual(t, types.NewDatum(types.NewDecFromFloatForTest(tt.ret)), r,
-				fmt.Sprintf("UUID_TIMESTAMP('%s') = %v (got %v)", tt.arg, tt.ret, r))
+	f, err := newFunctionForTest(ctx, ast.UUID)
+	require.NoError(t, err)
+	d, err := f.Eval(chunk.Row{})
+	require.NoError(t, err)
+	parts := strings.Split(d.GetString(), "-")
+	require.Equal(t, 5, len(parts))
+	for i, p := range parts {
+		switch i {
+		case 0:
+			require.Equal(t, 8, len(p))
+		case 1:
+			require.Equal(t, 4, len(p))
+		case 2:
+			require.Equal(t, 4, len(p))
+		case 3:
+			require.Equal(t, 4, len(p))
+		case 4:
+			require.Equal(t, 12, len(p))
 		}
 	}
+	_, err = funcs[ast.UUID].getFunction(ctx, datumsToConstants(nil))
+	require.NoError(t, err)
 }
 
 func TestAnyValue(t *testing.T) {
 	ctx := createContext(t)
 	tbl := []struct {
-		arg any
-		ret any
+		arg interface{}
+		ret interface{}
 	}{
 		{nil, nil},
 		{1234, 1234},
@@ -253,73 +177,9 @@ func TestAnyValue(t *testing.T) {
 		fc := funcs[ast.AnyValue]
 		f, err := fc.getFunction(ctx, datumsToConstants(types.MakeDatums(tt.arg)))
 		require.NoError(t, err)
-		r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		r, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(tt.ret), r)
-	}
-}
-
-func TestAnyValueHybridStringEvalWithIntSig(t *testing.T) {
-	ctx := createContext(t)
-	enumTp := types.NewFieldType(mysql.TypeEnum)
-	enumTp.SetElems([]string{"a", "b"})
-	enumTp.AddFlag(mysql.EnumSetAsIntFlag)
-	setTp := types.NewFieldType(mysql.TypeSet)
-	setTp.SetElems([]string{"a", "b"})
-	setTp.AddFlag(mysql.EnumSetAsIntFlag)
-	bitTp := types.NewFieldType(mysql.TypeBit)
-
-	tests := []struct {
-		name     string
-		tp       *types.FieldType
-		appendFn func(*chunk.Chunk)
-		expected string
-	}{
-		{
-			name: "enum",
-			tp:   enumTp,
-			appendFn: func(chk *chunk.Chunk) {
-				chk.AppendEnum(0, types.Enum{Name: "b", Value: 2})
-			},
-			expected: "b",
-		},
-		{
-			name: "set",
-			tp:   setTp,
-			appendFn: func(chk *chunk.Chunk) {
-				chk.AppendSet(0, types.Set{Name: "a,b", Value: 3})
-			},
-			expected: "a,b",
-		},
-		{
-			name: "bit",
-			tp:   bitTp,
-			appendFn: func(chk *chunk.Chunk) {
-				chk.AppendBytes(0, []byte{0x01})
-			},
-			expected: "\x01",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			col := &Column{Index: 0, RetType: tt.tp}
-			f, err := funcs[ast.AnyValue].getFunction(ctx, []Expression{col})
-			require.NoError(t, err)
-			require.IsType(t, &builtinIntAnyValueSig{}, f)
-
-			input := chunk.New([]*types.FieldType{tt.tp}, 1, 1)
-			tt.appendFn(input)
-			got, isNull, err := f.evalString(ctx, input.GetRow(0))
-			require.NoError(t, err)
-			require.False(t, isNull)
-			require.Equal(t, tt.expected, got)
-
-			result := chunk.NewColumn(types.NewFieldType(mysql.TypeString), 1)
-			require.NoError(t, f.vecEvalString(ctx, input, result))
-			require.False(t, result.IsNull(0))
-			require.Equal(t, tt.expected, result.GetString(0))
-		})
 	}
 }
 
@@ -327,7 +187,7 @@ func TestIsIPv6(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
-		expect any
+		expect interface{}
 	}{
 		{"2001:250:207:0:0:eef2::1", 1},
 		{"2001:0250:0207:0001:0000:0000:0000:ff02", 1},
@@ -340,23 +200,23 @@ func TestIsIPv6(t *testing.T) {
 		ip := types.NewStringDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 	// test NULL input for is_ipv6
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	require.True(t, r.IsNull())
+	testutil.DatumEqual(t, types.NewDatum(0), r)
 }
 
 func TestInetNtoa(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		ip     int
-		expect any
+		expect interface{}
 	}{
 		{167773449, "10.0.5.9"},
 		{2063728641, "123.2.0.1"},
@@ -370,14 +230,14 @@ func TestInetNtoa(t *testing.T) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
 }
@@ -386,7 +246,7 @@ func TestInet6NtoA(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
-		expect any
+		expect interface{}
 	}{
 		// Success cases
 		{[]byte{0x00, 0x00, 0x00, 0x00}, "0.0.0.0"},
@@ -408,14 +268,14 @@ func TestInet6NtoA(t *testing.T) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
 }
@@ -424,7 +284,7 @@ func TestInet6AtoN(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		ip     string
-		expect any
+		expect interface{}
 	}{
 		{"0.0.0.0", []byte{0x00, 0x00, 0x00, 0x00}},
 		{"10.0.5.9", []byte{0x0A, 0x00, 0x05, 0x09}},
@@ -441,7 +301,7 @@ func TestInet6AtoN(t *testing.T) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		expect := types.NewDatum(test.expect)
 		if expect.IsNull() {
 			require.True(t, terror.ErrorEqual(err, errWrongValueForType))
@@ -453,7 +313,7 @@ func TestInet6AtoN(t *testing.T) {
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, r.IsNull())
 }
@@ -462,7 +322,7 @@ func TestIsIPv4Mapped(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
-		expect any
+		expect interface{}
 	}{
 		{[]byte{}, 0},
 		{[]byte{0x10, 0x10, 0x10, 0x10}, 0},
@@ -475,23 +335,23 @@ func TestIsIPv4Mapped(t *testing.T) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	require.True(t, r.IsNull())
+	testutil.DatumEqual(t, types.NewDatum(int64(0)), r)
 }
 
 func TestIsIPv4Compat(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
 		ip     []byte
-		expect any
+		expect interface{}
 	}{
 		{[]byte{}, 0},
 		{[]byte{0x10, 0x10, 0x10, 0x10}, 0},
@@ -505,16 +365,16 @@ func TestIsIPv4Compat(t *testing.T) {
 		ip := types.NewDatum(test.ip)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{ip}))
 		require.NoError(t, err)
-		result, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		result, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, types.NewDatum(test.expect), result)
 	}
 
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	r, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	r, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
-	require.True(t, r.IsNull())
+	testutil.DatumEqual(t, types.NewDatum(0), r)
 }
 
 func TestNameConst(t *testing.T) {
@@ -524,7 +384,7 @@ func TestNameConst(t *testing.T) {
 	du := types.Duration{Duration: 12*time.Hour + 1*time.Minute + 1*time.Second, Fsp: types.DefaultFsp}
 	cases := []struct {
 		colName string
-		arg     any
+		arg     interface{}
 		isNil   bool
 		asserts func(d types.Datum)
 	}{
@@ -552,9 +412,9 @@ func TestNameConst(t *testing.T) {
 	}
 
 	for _, c := range cases {
-		f, err := newFunctionForTest(ctx, ast.NameConst, primitiveValsToConstants(ctx, []any{c.colName, c.arg})...)
+		f, err := newFunctionForTest(ctx, ast.NameConst, primitiveValsToConstants(ctx, []interface{}{c.colName, c.arg})...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(chunk.Row{})
 		require.NoError(t, err)
 		c.asserts(d)
 	}
@@ -563,92 +423,70 @@ func TestNameConst(t *testing.T) {
 func TestUUIDToBin(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		args       []any
-		expect     any
+		args       []interface{}
+		expect     interface{}
 		isNil      bool
 		getWarning bool
 		getError   bool
 	}{
 		{
-			[]any{"6ccd780c-baba-1026-9564-5b8c656024db"},
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db"},
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
 			false,
 			false,
 			false,
 		},
 		{
-			[]any{"6CCD780C-BABA-1026-9564-5B8C656024DB"},
+			[]interface{}{"6CCD780C-BABA-1026-9564-5B8C656024DB"},
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
 			false,
 			false,
 			false,
 		},
 		{
-			[]any{"6ccd780cbaba102695645b8c656024db"},
+			[]interface{}{"6ccd780cbaba102695645b8c656024db"},
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
 			false,
 			false,
 			false,
 		},
 		{
-			[]any{"{6ccd780c-baba-1026-9564-5b8c656024db}"},
+			[]interface{}{"{6ccd780c-baba-1026-9564-5b8c656024db}"},
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
 			false,
 			false,
 			false,
 		},
 		{
-			[]any{"6ccd780c-baba-1026-9564-5b8c656024db", 0},
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db", 0},
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
 			false,
 			false,
 			false,
 		},
 		{
-			[]any{"6ccd780c-baba-1026-9564-5b8c656024db", 1},
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db", 1},
 			[]byte{0x10, 0x26, 0xBA, 0xBA, 0x6C, 0xCD, 0x78, 0x0C, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
 			false,
 			false,
 			false,
 		},
 		{
-			[]any{"6ccd780c-baba-1026-9564-5b8c656024db", "a"},
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c656024db", "a"},
 			[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB},
 			false,
 			true,
 			false,
 		},
 		{
-			[]any{"6ccd780c-baba-1026-9564-5b8c6560"},
+			[]interface{}{"6ccd780c-baba-1026-9564-5b8c6560"},
 			[]byte{},
 			false,
 			false,
 			true,
 		},
 		{
-			// Test leading/trailing spaces should cause error to match MySQL behavior
-			[]any{" 6ccd780c-baba-1026-9564-5b8c656024db"},
-			[]byte{},
-			false,
-			false,
-			true,
-		},
-		{
-			[]any{"6ccd780c-baba-1026-9564-5b8c656024db "},
-			[]byte{},
-			false,
-			false,
-			true,
-		},
-		{
-			[]any{" 6ccd780c-baba-1026-9564-5b8c656024db "},
-			[]byte{},
-			false,
-			false,
-			true,
-		},
-		{
-			[]any{nil},
+			[]interface{}{nil},
 			[]byte{},
 			true,
 			false,
@@ -661,7 +499,7 @@ func TestUUIDToBin(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.UUIDToBin, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(chunk.Row{})
 		if test.getError {
 			require.Error(t, err)
 		} else if test.getWarning {
@@ -684,42 +522,42 @@ func TestUUIDToBin(t *testing.T) {
 func TestBinToUUID(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		args       []any
+		args       []interface{}
 		expect     string
 		isNil      bool
 		getWarning bool
 		getError   bool
 	}{
 		{
-			[]any{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}},
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}},
 			"6ccd780c-baba-1026-9564-5b8c656024db",
 			false,
 			false,
 			false,
 		},
 		{
-			[]any{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}, 1},
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}, 1},
 			"baba1026-780c-6ccd-9564-5b8c656024db",
 			false,
 			false,
 			false,
 		},
 		{
-			[]any{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}, "a"},
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60, 0x24, 0xDB}, "a"},
 			"6ccd780c-baba-1026-9564-5b8c656024db",
 			false,
 			true,
 			false,
 		},
 		{
-			[]any{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60}},
+			[]interface{}{[]byte{0x6C, 0xCD, 0x78, 0x0C, 0xBA, 0xBA, 0x10, 0x26, 0x95, 0x64, 0x5B, 0x8C, 0x65, 0x60}},
 			"",
 			false,
 			false,
 			true,
 		},
 		{
-			[]any{nil},
+			[]interface{}{nil},
 			"",
 			true,
 			false,
@@ -732,7 +570,7 @@ func TestBinToUUID(t *testing.T) {
 		f, err := newFunctionForTest(ctx, ast.BinToUUID, primitiveValsToConstants(ctx, test.args)...)
 		require.NoError(t, err)
 
-		result, err := f.Eval(ctx, chunk.Row{})
+		result, err := f.Eval(chunk.Row{})
 		if test.getError {
 			require.Error(t, err)
 		} else if test.getWarning {
@@ -763,7 +601,7 @@ func TestTidbShard(t *testing.T) {
 	for i, arg := range args {
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, res[i], d)
 	}
@@ -774,7 +612,7 @@ func TestTidbShard(t *testing.T) {
 	for _, arg := range args2 {
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoError(t, err)
-		d, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		d, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		testutil.DatumEqual(t, res2[0], d)
 	}

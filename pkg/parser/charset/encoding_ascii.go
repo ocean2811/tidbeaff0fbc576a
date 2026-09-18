@@ -53,7 +53,7 @@ func (*encodingASCII) Peek(src []byte) []byte {
 // IsValid implements Encoding interface.
 func (*encodingASCII) IsValid(src []byte) bool {
 	srcLen := len(src)
-	for i := range srcLen {
+	for i := 0; i < srcLen; i++ {
 		if src[i] > go_unicode.MaxASCII {
 			return false
 		}

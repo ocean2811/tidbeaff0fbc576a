@@ -10,9 +10,9 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/pkg/kv"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 	"go.uber.org/zap"
 )
 
@@ -92,12 +92,6 @@ func StorageCheckpointOf(task string) string {
 // Normally it would be <prefix>/pause/<task-name>.
 func Pause(task string) string {
 	return path.Join(streamKeyPrefix, taskPausePath, task)
-}
-
-// PrefixOfPause returns the prefix for pausing the task.
-// Normally it would be <prefix>/pause/
-func PrefixOfPause() string {
-	return path.Join(streamKeyPrefix, taskPausePath) + "/"
 }
 
 // LastErrorPrefixOf make the prefix for searching last error by some task.

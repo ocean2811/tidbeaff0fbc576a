@@ -6,12 +6,10 @@ go_library(
         "dispatch_policy.go",
         "topo_fetcher.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/tiflashcompute",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/tiflashcompute",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config",
         "//pkg/errno",
-        "//pkg/sessionctx/vardef",
         "//pkg/util/dbterror",
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",

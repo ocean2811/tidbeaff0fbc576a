@@ -8,7 +8,7 @@ go_library(
         "memory_limit_tuner.go",
         "tuner.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/gctuner",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/gctuner",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util",
@@ -33,7 +33,6 @@ go_test(
     race = "on",
     shard_count = 5,
     deps = [
-        "//pkg/util/intest",
         "//pkg/util/memory",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_stretchr_testify//require",

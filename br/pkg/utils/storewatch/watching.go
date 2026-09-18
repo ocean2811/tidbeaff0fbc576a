@@ -7,8 +7,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/conn/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn/util"
 )
 
 // Callback will be called the supported event triggered.

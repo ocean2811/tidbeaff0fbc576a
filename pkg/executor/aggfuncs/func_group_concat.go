@@ -21,15 +21,15 @@ import (
 	"sync/atomic"
 	"unsafe"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set"
 )
 
 const (
@@ -60,21 +60,8 @@ type baseGroupConcat4String struct {
 	truncated *int32
 }
 
-func (*baseGroupConcat4String) AllocPartialResult() (PartialResult, int64) {
-	panic("Not implemented")
-}
-
-func (*baseGroupConcat4String) ResetPartialResult(PartialResult) {
-	panic("Not implemented")
-}
-
-func (*baseGroupConcat4String) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
-	panic("Not implemented")
-}
-
-func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcat)(pr)
-
 	if p.buffer == nil {
 		chk.AppendNull(e.ordinal)
 		return nil
@@ -83,142 +70,22 @@ func (e *baseGroupConcat4String) AppendFinalResult2Chunk(_ AggFuncUpdateContext,
 	return nil
 }
 
-func (e *baseGroupConcat4String) handleTruncateError(ctx AggFuncUpdateContext) (err error) {
-	tc := ctx.TypeCtx()
-
+func (e *baseGroupConcat4String) handleTruncateError(sctx sessionctx.Context) (err error) {
 	if atomic.CompareAndSwapInt32(e.truncated, 0, 1) {
-		if !tc.Flags().TruncateAsWarning() {
-			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].StringWithCtx(ctx, errors.RedactLogDisable))
+		if !sctx.GetSessionVars().StmtCtx.TruncateAsWarning {
+			return expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String())
 		}
-		tc.AppendWarning(expression.ErrCutValueGroupConcat.FastGenByArgs(e.args[0].StringWithCtx(ctx, errors.RedactLogDisable)))
+		sctx.GetSessionVars().StmtCtx.AppendWarning(expression.ErrCutValueGroupConcat.GenWithStackByArgs(e.args[0].String()))
 	}
 	return nil
 }
 
-func (e *baseGroupConcat4String) truncatePartialResultIfNeed(ctx AggFuncUpdateContext, buffer *bytes.Buffer) (err error) {
+func (e *baseGroupConcat4String) truncatePartialResultIfNeed(sctx sessionctx.Context, buffer *bytes.Buffer) (err error) {
 	if e.maxLen > 0 && uint64(buffer.Len()) > e.maxLen {
 		buffer.Truncate(int(e.maxLen))
-		return e.handleTruncateError(ctx)
+		return e.handleTruncateError(sctx)
 	}
 	return nil
-}
-
-type baseGroupConcatDistinct4String struct {
-	baseGroupConcat4String
-}
-
-func (*baseGroupConcatDistinct4String) AllocPartialResult() (pr PartialResult, memDelta int64) {
-	p := new(partialResult4GroupConcatDistinct)
-	p.valsBuf = &bytes.Buffer{}
-	setSize := int64(0)
-	p.valSet, setSize = set.NewStringToStringMapWithMemoryUsage()
-	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + DefBytesBufferSize + setSize
-}
-
-func (*baseGroupConcatDistinct4String) ResetPartialResult(pr PartialResult) {
-	p := (*partialResult4GroupConcatDistinct)(pr)
-	p.valSet, _ = set.NewStringToStringMapWithMemoryUsage()
-}
-
-func (e *baseGroupConcatDistinct4String) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
-	p := (*partialResult4GroupConcatDistinct)(pr)
-	v, isNull := "", false
-	memDelta += int64(-p.valsBuf.Cap()) + (int64(-cap(p.encodeBytesBuffer)))
-
-	defer func() {
-		memDelta += int64(p.valsBuf.Cap()) + (int64(cap(p.encodeBytesBuffer)))
-	}()
-
-	collators := make([]collate.Collator, 0, len(e.args))
-	for _, arg := range e.args {
-		collators = append(collators, collate.GetCollator(arg.GetType(sctx).GetCollate()))
-	}
-
-	for _, row := range rowsInGroup {
-		p.valsBuf.Reset()
-		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
-		for i, arg := range e.args {
-			v, isNull, err = arg.EvalString(sctx, row)
-			if err != nil {
-				return memDelta, err
-			}
-			if isNull {
-				break
-			}
-			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].ImmutableKey(v))
-			p.valsBuf.WriteString(v)
-		}
-		if isNull {
-			continue
-		}
-		joinedVal := string(p.encodeBytesBuffer)
-		if p.valSet.Exist(joinedVal) {
-			continue
-		}
-		valStr := p.valsBuf.String()
-		memDelta += p.valSet.Insert(joinedVal, valStr)
-		memDelta += int64(len(joinedVal))
-		memDelta += int64(len(valStr))
-	}
-
-	return memDelta, nil
-}
-
-func (e *baseGroupConcatDistinct4String) AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*partialResult4GroupConcatDistinct)(pr)
-
-	if p.valSet.Len() == 0 {
-		chk.AppendNull(e.ordinal)
-		return nil
-	}
-
-	buffer := &bytes.Buffer{}
-	for _, val := range p.valSet.M {
-		if buffer.Len() > 0 {
-			buffer.WriteString(e.sep)
-		}
-		buffer.WriteString(val)
-		if e.maxLen > 0 && uint64(buffer.Len()) > e.maxLen {
-			err := e.truncatePartialResultIfNeed(sctx, buffer)
-			if err != nil {
-				return err
-			}
-			break
-		}
-	}
-
-	chk.AppendString(e.ordinal, buffer.String())
-	return nil
-}
-
-func (e *baseGroupConcatDistinct4String) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4GroupConcatDistinct)(partialResult)
-	resBuf := spillHelper.serializePartialResult4GroupConcatDistinct(*pr)
-	chk.AppendBytes(e.ordinal, resBuf)
-}
-
-func (e *baseGroupConcatDistinct4String) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *baseGroupConcatDistinct4String) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	result := (*partialResult4GroupConcatDistinct)(pr)
-	success, dataMemDelta := helper.deserializePartialResult4GroupConcatDistinct(result)
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta + dataMemDelta
-}
-
-// SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
-func (e *baseGroupConcatDistinct4String) SetTruncated(t *int32) {
-	e.truncated = t
-}
-
-// GetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
-func (e *baseGroupConcatDistinct4String) GetTruncated() *int32 {
-	return e.truncated
 }
 
 // nolint:structcheck
@@ -246,7 +113,7 @@ func (*groupConcat) ResetPartialResult(pr PartialResult) {
 	p.buffer = nil
 }
 
-func (e *groupConcat) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *groupConcat) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4GroupConcat)(pr)
 	v, isNull := "", false
 	memDelta += int64(-p.valsBuf.Cap())
@@ -290,7 +157,7 @@ func (e *groupConcat) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup
 	return memDelta, nil
 }
 
-func (e *groupConcat) MergePartialResult(sctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (e *groupConcat) MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4GroupConcat)(src), (*partialResult4GroupConcat)(dst)
 	if p1.buffer == nil {
 		return 0, nil
@@ -306,26 +173,6 @@ func (e *groupConcat) MergePartialResult(sctx AggFuncUpdateContext, src, dst Par
 	return memDelta, e.truncatePartialResultIfNeed(sctx, p2.buffer)
 }
 
-func (e *groupConcat) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4GroupConcat)(partialResult)
-	resBuf := spillHelper.serializePartialResult4GroupConcat(*pr)
-	chk.AppendBytes(e.ordinal, resBuf)
-}
-
-func (e *groupConcat) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *groupConcat) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	result := (*partialResult4GroupConcat)(pr)
-	success := helper.deserializePartialResult4GroupConcat(result)
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta
-}
-
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
 func (e *groupConcat) SetTruncated(t *int32) {
 	e.truncated = t
@@ -337,40 +184,94 @@ func (e *groupConcat) GetTruncated() *int32 {
 }
 
 type partialResult4GroupConcatDistinct struct {
-	valsBuf           *bytes.Buffer
-	valSet            set.StringToStringMapWithMemoryUsage
+	basePartialResult4GroupConcat
+	valSet            set.StringSetWithMemoryUsage
 	encodeBytesBuffer []byte
 }
 
-type groupPartialConcatDistinct struct {
-	baseGroupConcatDistinct4String
+type groupConcatDistinct struct {
+	baseGroupConcat4String
 }
 
-func (*groupPartialConcatDistinct) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
-	s, d := (*partialResult4GroupConcatDistinct)(src), (*partialResult4GroupConcatDistinct)(dst)
+func (*groupConcatDistinct) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	p := new(partialResult4GroupConcatDistinct)
+	p.valsBuf = &bytes.Buffer{}
+	setSize := int64(0)
+	p.valSet, setSize = set.NewStringSetWithMemoryUsage()
+	return PartialResult(p), DefPartialResult4GroupConcatDistinctSize + DefBytesBufferSize + setSize
+}
 
-	for key, val := range s.valSet.M {
-		if d.valSet.Exist(key) {
-			continue
+func (*groupConcatDistinct) ResetPartialResult(pr PartialResult) {
+	p := (*partialResult4GroupConcatDistinct)(pr)
+	p.buffer = nil
+	p.valSet, _ = set.NewStringSetWithMemoryUsage()
+}
+
+func (e *groupConcatDistinct) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+	p := (*partialResult4GroupConcatDistinct)(pr)
+	v, isNull := "", false
+	memDelta += int64(-p.valsBuf.Cap()) + (int64(-cap(p.encodeBytesBuffer)))
+	if p.buffer != nil {
+		memDelta += int64(-p.buffer.Cap())
+	}
+	defer func() {
+		memDelta += int64(p.valsBuf.Cap()) + (int64(cap(p.encodeBytesBuffer)))
+		if p.buffer != nil {
+			memDelta += int64(p.buffer.Cap())
 		}
+	}()
 
-		memDelta += d.valSet.Insert(key, val)
+	collators := make([]collate.Collator, 0, len(e.args))
+	for _, arg := range e.args {
+		collators = append(collators, collate.GetCollator(arg.GetType().GetCollate()))
 	}
 
+	for _, row := range rowsInGroup {
+		p.valsBuf.Reset()
+		p.encodeBytesBuffer = p.encodeBytesBuffer[:0]
+		for i, arg := range e.args {
+			v, isNull, err = arg.EvalString(sctx, row)
+			if err != nil {
+				return memDelta, err
+			}
+			if isNull {
+				break
+			}
+			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].Key(v))
+			p.valsBuf.WriteString(v)
+		}
+		if isNull {
+			continue
+		}
+		joinedVal := string(p.encodeBytesBuffer)
+		if p.valSet.Exist(joinedVal) {
+			continue
+		}
+		memDelta += p.valSet.Insert(joinedVal)
+		memDelta += int64(len(joinedVal))
+		// write separator
+		if p.buffer == nil {
+			p.buffer = &bytes.Buffer{}
+			memDelta += DefBytesBufferSize
+		} else {
+			p.buffer.WriteString(e.sep)
+		}
+		// write values
+		p.buffer.WriteString(p.valsBuf.String())
+	}
+	if p.buffer != nil {
+		return memDelta, e.truncatePartialResultIfNeed(sctx, p.buffer)
+	}
 	return memDelta, nil
 }
 
-type groupOriginalConcatDistinct struct {
-	baseGroupConcatDistinct4String
-}
-
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
-func (e *groupOriginalConcatDistinct) SetTruncated(t *int32) {
+func (e *groupConcatDistinct) SetTruncated(t *int32) {
 	e.truncated = t
 }
 
 // GetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
-func (e *groupOriginalConcatDistinct) GetTruncated() *int32 {
+func (e *groupConcatDistinct) GetTruncated() *int32 {
 	return e.truncated
 }
 
@@ -382,9 +283,8 @@ type sortRow struct {
 type topNRows struct {
 	rows []sortRow
 	desc []bool
-	sctx AggFuncUpdateContext
-	// TODO: this err is never assigned now. Please choose to make use of it or just remove it.
-	err error
+	sctx sessionctx.Context
+	err  error
 
 	currSize  uint64
 	limitSize uint64
@@ -403,19 +303,10 @@ func (h topNRows) Len() int {
 
 func (h topNRows) Less(i, j int) bool {
 	n := len(h.rows[i].byItems)
-	for k := range n {
-		ret, err := h.rows[i].byItems[k].Compare(h.sctx.TypeCtx(), h.rows[j].byItems[k], h.collators[k])
+	for k := 0; k < n; k++ {
+		ret, err := h.rows[i].byItems[k].Compare(h.sctx.GetSessionVars().StmtCtx, h.rows[j].byItems[k], h.collators[k])
 		if err != nil {
-			// TODO: check whether it's appropriate to just ignore the error here.
-			//
-			// Previously, the error is assigned to `h.err` and hope it can be accessed from outside. However,
-			// the `h` is copied when calling this method, and the assignment to `h.err` is meaningless.
-			//
-			// The linter `unusedwrite` found this issue. Therefore, the unused write to `h.err` is removed and
-			// it doesn't change the behavior. But we need to confirm whether it's correct to just ignore the error
-			// here.
-			//
-			// Ref https://github.com/pingcap/tidb/issues/52449
+			h.err = err
 			return false
 		}
 		if h.desc[k] {
@@ -435,11 +326,11 @@ func (h topNRows) Swap(i, j int) {
 	h.rows[i], h.rows[j] = h.rows[j], h.rows[i]
 }
 
-func (h *topNRows) Push(x any) {
+func (h *topNRows) Push(x interface{}) {
 	h.rows = append(h.rows, x.(sortRow))
 }
 
-func (h *topNRows) Pop() any {
+func (h *topNRows) Pop() interface{} {
 	n := len(h.rows)
 	x := h.rows[n-1]
 	h.rows = h.rows[:n-1]
@@ -509,11 +400,9 @@ type partialResult4GroupConcatOrder struct {
 
 type groupConcatOrder struct {
 	baseGroupConcat4String
-	ctors []collate.Collator
-	desc  []bool
 }
 
-func (e *groupConcatOrder) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *groupConcatOrder) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcatOrder)(pr)
 	if p.topN.Len() == 0 {
 		chk.AppendNull(e.ordinal)
@@ -524,14 +413,20 @@ func (e *groupConcatOrder) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr Pa
 }
 
 func (e *groupConcatOrder) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	desc := make([]bool, len(e.byItems))
+	ctors := make([]collate.Collator, 0, len(e.byItems))
+	for i, byItem := range e.byItems {
+		desc[i] = byItem.Desc
+		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().GetCollate()))
+	}
 	p := &partialResult4GroupConcatOrder{
 		topN: &topNRows{
-			desc:           e.desc,
+			desc:           desc,
 			currSize:       0,
 			limitSize:      e.maxLen,
 			sepSize:        uint64(len(e.sep)),
 			isSepTruncated: false,
-			collators:      e.ctors,
+			collators:      ctors,
 		},
 	}
 	return PartialResult(p), DefPartialResult4GroupConcatOrderSize + DefTopNRowsSize
@@ -542,7 +437,7 @@ func (*groupConcatOrder) ResetPartialResult(pr PartialResult) {
 	p.topN.reset()
 }
 
-func (e *groupConcatOrder) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *groupConcatOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4GroupConcatOrder)(pr)
 	p.topN.sctx = sctx
 	v, isNull := "", false
@@ -566,7 +461,7 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx AggFuncUpdateContext, rowsIn
 			byItems: make([]*types.Datum, 0, len(e.byItems)),
 		}
 		for _, byItem := range e.byItems {
-			d, err := byItem.Expr.Eval(sctx, row)
+			d, err := byItem.Expr.Eval(row)
 			if err != nil {
 				return memDelta, err
 			}
@@ -586,10 +481,10 @@ func (e *groupConcatOrder) UpdatePartialResult(sctx AggFuncUpdateContext, rowsIn
 	return memDelta, nil
 }
 
-func (*groupConcatOrder) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
+func (*groupConcatOrder) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return 0, plannererrors.ErrInternal.GenWithStack("groupConcatOrder.MergePartialResult should not be called")
+	return 0, plannercore.ErrInternal.GenWithStack("groupConcatOrder.MergePartialResult should not be called")
 }
 
 // SetTruncated will be called in `executorBuilder#buildHashAgg` with duck-type.
@@ -610,11 +505,9 @@ type partialResult4GroupConcatOrderDistinct struct {
 
 type groupConcatDistinctOrder struct {
 	baseGroupConcat4String
-	ctors []collate.Collator
-	desc  []bool
 }
 
-func (e *groupConcatDistinctOrder) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *groupConcatDistinctOrder) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4GroupConcatOrderDistinct)(pr)
 	if p.topN.Len() == 0 {
 		chk.AppendNull(e.ordinal)
@@ -625,15 +518,21 @@ func (e *groupConcatDistinctOrder) AppendFinalResult2Chunk(_ AggFuncUpdateContex
 }
 
 func (e *groupConcatDistinctOrder) AllocPartialResult() (pr PartialResult, memDelta int64) {
+	desc := make([]bool, len(e.byItems))
+	ctors := make([]collate.Collator, 0, len(e.byItems))
+	for i, byItem := range e.byItems {
+		desc[i] = byItem.Desc
+		ctors = append(ctors, collate.GetCollator(byItem.Expr.GetType().GetCollate()))
+	}
 	valSet, setSize := set.NewStringSetWithMemoryUsage()
 	p := &partialResult4GroupConcatOrderDistinct{
 		topN: &topNRows{
-			desc:           e.desc,
+			desc:           desc,
 			currSize:       0,
 			limitSize:      e.maxLen,
 			sepSize:        uint64(len(e.sep)),
 			isSepTruncated: false,
-			collators:      e.ctors,
+			collators:      ctors,
 		},
 		valSet: valSet,
 	}
@@ -646,7 +545,7 @@ func (*groupConcatDistinctOrder) ResetPartialResult(pr PartialResult) {
 	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
-func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4GroupConcatOrderDistinct)(pr)
 	p.topN.sctx = sctx
 	v, isNull := "", false
@@ -655,7 +554,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx AggFuncUpdateContext
 
 	collators := make([]collate.Collator, 0, len(e.args))
 	for _, arg := range e.args {
-		collators = append(collators, collate.GetCollator(arg.GetType(sctx).GetCollate()))
+		collators = append(collators, collate.GetCollator(arg.GetType().GetCollate()))
 	}
 
 	for _, row := range rowsInGroup {
@@ -669,7 +568,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx AggFuncUpdateContext
 			if isNull {
 				break
 			}
-			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].ImmutableKey(v))
+			p.encodeBytesBuffer = codec.EncodeBytes(p.encodeBytesBuffer, collators[i].Key(v))
 			buffer.WriteString(v)
 		}
 		if isNull {
@@ -686,7 +585,7 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx AggFuncUpdateContext
 			byItems: make([]*types.Datum, 0, len(e.byItems)),
 		}
 		for _, byItem := range e.byItems {
-			d, err := byItem.Expr.Eval(sctx, row)
+			d, err := byItem.Expr.Eval(row)
 			if err != nil {
 				return memDelta, err
 			}
@@ -706,10 +605,10 @@ func (e *groupConcatDistinctOrder) UpdatePartialResult(sctx AggFuncUpdateContext
 	return memDelta, nil
 }
 
-func (*groupConcatDistinctOrder) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
+func (*groupConcatDistinctOrder) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
 	// If order by exists, the parallel hash aggregation is forbidden in executorBuilder.buildHashAgg.
 	// So MergePartialResult will not be called.
-	return 0, plannererrors.ErrInternal.GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
+	return 0, plannercore.ErrInternal.GenWithStack("groupConcatDistinctOrder.MergePartialResult should not be called")
 }
 
 // GetDatumMemSize calculates the memory size of each types.Datum in sortRow.byItems.

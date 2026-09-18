@@ -19,9 +19,9 @@ import (
 	"testing"
 
 	"github.com/docker/go-units"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/syncutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,7 +41,7 @@ func TestMemoryLeak(t *testing.T) {
 	runtime.ReadMemStats(&memStat)
 	oldHeapInUse := memStat.HeapInuse
 
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		initAndCloseTiDB()
 	}
 
@@ -49,8 +49,8 @@ func TestMemoryLeak(t *testing.T) {
 	runtime.ReadMemStats(&memStat)
 	// before the fix, initAndCloseTiDB for 20 times will cost 900 MB memory, so we test for a quite loose upper bound.
 	if syncutil.EnableDeadlock {
-		require.Less(t, memStat.HeapInuse-oldHeapInUse, uint64(5400*units.MiB))
+		require.Less(t, memStat.HeapInuse-oldHeapInUse, uint64(1800*units.MiB))
 	} else {
-		require.Less(t, memStat.HeapInuse-oldHeapInUse, uint64(900*units.MiB))
+		require.Less(t, memStat.HeapInuse-oldHeapInUse, uint64(300*units.MiB))
 	}
 }

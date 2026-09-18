@@ -1,8 +1,8 @@
 # Proposal: MySQL-Compatible `AUTO_INCREMENT`
 
 - **Author(s)**: [tiancaiamao](https://github.com/tiancaiamao)
-- **Discussion PR**: [#38449](https://github.com/pingcap/tidb/pull/38449)
-- **Tracking Issue**: [#38442](https://github.com/pingcap/tidb/issues/38442)
+- **Discussion PR**: [#38449](https://github.com/ocean2811/tidbeaff0fbc576a/pull/38449)
+- **Tracking Issue**: [#38442](https://github.com/ocean2811/tidbeaff0fbc576a/issues/38442)
 
 ## Abstract
 
@@ -77,7 +77,7 @@ service AutoIDAlloc {
 }
 ```
 
-The fields increment and offset may seem to have no special significance here, but they are used to ensure compatibility with MySQL's behavior after setting @@auto_increment_increment and @@auto_increment_offset. It is worth noting that configuring two TiDB clusters for bidirectional master-master replication via this mechanism is not a common use case. Additional details can be found at [#14245](https://github.com/pingcap/tidb/issues/14245).
+The fields increment and offset may seem to have no special significance here, but they are used to ensure compatibility with MySQL's behavior after setting @@auto_increment_increment and @@auto_increment_offset. It is worth noting that configuring two TiDB clusters for bidirectional master-master replication via this mechanism is not a common use case. Additional details can be found at [#14245](https://github.com/ocean2811/tidbeaff0fbc576a/issues/14245).
 
 ### High Availability (HA) of the Service
 

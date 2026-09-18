@@ -15,12 +15,11 @@
 package metrics
 
 import (
-	"github.com/pingcap/tidb/pkg/config"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
-	namespace = string(config.StoreTypeUniStore)
+	namespace = "unistore"
 	raft      = "raft"
 )
 

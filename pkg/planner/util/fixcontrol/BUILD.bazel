@@ -6,7 +6,7 @@ go_library(
         "get.go",
         "set.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/planner/util/fixcontrol",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util/fixcontrol",
     visibility = ["//visibility:public"],
     deps = ["@com_github_pingcap_errors//:errors"],
 )
@@ -20,7 +20,6 @@ go_test(
     ],
     data = glob(["testdata/**"]),
     flaky = True,
-    shard_count = 2,
     deps = [
         ":fixcontrol",
         "//pkg/testkit",
@@ -28,6 +27,7 @@ go_test(
         "//pkg/testkit/testmain",
         "//pkg/testkit/testsetup",
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//maps",
         "@org_uber_go_goleak//:goleak",
     ],
 )

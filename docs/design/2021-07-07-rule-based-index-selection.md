@@ -1,8 +1,8 @@
 # Proposal: Improve rule based index selection
 
 - Author(s): [xuyifangreeneyes](https://github.com/xuyifangreeneyes)
-- Discussion PR: https://github.com/pingcap/tidb/pull/27223
-- Tracking Issue: https://github.com/pingcap/tidb/issues/26020
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/pull/27223
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/26020
 
 ## Abstract
 
@@ -37,7 +37,7 @@ SELECT b, c FROM t WHERE b = 5 AND c > 10;
 
 ### Skyline Pruning
 
-TiDB has [skyline pruning](https://github.com/pingcap/tidb/blob/master/docs/design/2019-01-25-skyline-pruning.md) to prune the index which is strictly worse than another index. When comparing two indices, it considers three dimensions: single scan or double scan, the set of columns in the access condition, matching of the physical property. There are two improvements we can make for the first dimension and the third dimension respectively.
+TiDB has [skyline pruning](https://github.com/ocean2811/tidbeaff0fbc576a/blob/master/docs/design/2019-01-25-skyline-pruning.md) to prune the index which is strictly worse than another index. When comparing two indices, it considers three dimensions: single scan or double scan, the set of columns in the access condition, matching of the physical property. There are two improvements we can make for the first dimension and the third dimension respectively.
 
 1. If both indices need double scan, the current implementation regards the two indices equal on the first dimension. However, we can check the set of columns in `AccessPath.IndexFilters` to compare the number of table-read rows. For example, though `idx_b` and `idx_b_c` have the same access condition `b > 5` and both need double scan, `idx_b_c` has the filter condition `c > 5` but `idx_b` doesn't. Hence `idx_b_c` is better than `idx_b`.
 ```sql

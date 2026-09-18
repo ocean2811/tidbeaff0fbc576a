@@ -17,7 +17,7 @@ package stmtstats
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/state"
 	"github.com/stretchr/testify/assert"
 	"github.com/tikv/client-go/v2/tikvrpc"
 )
@@ -27,12 +27,12 @@ func TestKvExecCounter(t *testing.T) {
 	stats := CreateStatementStats()
 	counter := stats.CreateKvExecCounter([]byte("SQL-1"), []byte(""))
 	interceptor := counter.RPCInterceptor()
-	for range 10 {
+	for n := 0; n < 10; n++ {
 		_, _ = interceptor.Wrap(func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 			return nil, nil
 		})("TIKV-1", nil)
 	}
-	for range 10 {
+	for n := 0; n < 10; n++ {
 		_, _ = interceptor.Wrap(func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 			return nil, nil
 		})("TIKV-2", nil)

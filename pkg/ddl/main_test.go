@@ -21,14 +21,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/keyspace"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testsetup"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
@@ -41,6 +40,7 @@ func TestMain(m *testing.M) {
 	domain.SchemaOutOfDateRetryTimes.Store(50)
 
 	autoid.SetStep(5000)
+	ddl.ReorgWaitTimeout = 30 * time.Millisecond
 	ddl.CheckBackfillJobFinishInterval = 50 * time.Millisecond
 	ddl.RunInGoTest = true
 	ddl.SetBatchInsertDeleteRangeSize(2)
@@ -54,7 +54,7 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, true, nil)
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), "t", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, true)
 	if err != nil {
 		_, _ = fmt.Fprintf(os.Stderr, "ddl: infosync.GlobalInfoSyncerInit: %v\n", err)
 		os.Exit(1)
@@ -62,15 +62,12 @@ func TestMain(m *testing.M) {
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
-		goleak.IgnoreAnyFunction("github.com/tikv/client-go/v2/tikv.(*KVStore).SplitRegions"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
-		goleak.Cleanup(testutil.CheckIngestLeakageForTest),
 	}
 
 	goleak.VerifyTestMain(m, opts...)

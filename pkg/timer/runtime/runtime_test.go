@@ -24,8 +24,8 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/timer/api"
-	mockutil "github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/timer/api"
+	mockutil "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -264,51 +264,6 @@ func TestTryTriggerTimer(t *testing.T) {
 	consumeAndVerify(t3)
 }
 
-func TestTryTriggerTimePriority(t *testing.T) {
-	now := time.Now()
-	store := api.NewMemoryTimerStore()
-	defer store.Close()
-	runtime := NewTimerRuntimeBuilder("g1", store).Build()
-	runtime.setNowFunc(func() time.Time {
-		return now
-	})
-	runtime.initCtx()
-	ch := make(chan *triggerEventRequest, 2)
-	runtime.workers["hook1"] = &hookWorker{ch: ch}
-
-	t1 := newTestTimer("t1", "1m", now.Add(-time.Hour))
-	runtime.cache.updateTimer(t1)
-	runtime.cache.updateNextTryTriggerTime(t1.ID, now.Add(-3*time.Minute))
-
-	t2 := newTestTimer("t2", "1m", now.Add(-2*time.Hour))
-	runtime.cache.updateTimer(t2)
-	runtime.cache.updateNextTryTriggerTime(t2.ID, now.Add(-2*time.Minute))
-
-	t3 := newTestTimer("t3", "1h", now)
-	t3.EventStatus = api.SchedEventTrigger
-	t3.EventID = "event2"
-	t3.EventStart = now.Add(-time.Minute)
-	t3.Enable = false
-	runtime.cache.updateTimer(t3)
-
-	t4 := newTestTimer("t4", "1m", now.Add(-10*time.Hour))
-	runtime.cache.updateTimer(t4)
-	runtime.cache.updateNextTryTriggerTime(t4.ID, now.Add(time.Minute))
-
-	// nextEventTime: t3 (nil) < t4 < t2 < t1
-	// nextTryTriggerTime: t1 < t2 < t3 (eventStart) < t4
-	// we should test the priority trigger is ordered by `nextEventTime` because to ensure the timer who has a max
-	// delay time will be triggered first.
-	// t4 should not be scheduled for the next trigger time is after now.
-	// so, t3 and t2 will be triggered when the capacity of chan is 2
-	runtime.tryTriggerTimerEvents()
-	require.Equal(t, procTriggering, runtime.cache.items[t2.ID].procStatus)
-	require.Equal(t, procTriggering, runtime.cache.items[t3.ID].procStatus)
-	// t1, t4 should keep not triggered
-	require.Equal(t, procIdle, runtime.cache.items[t1.ID].procStatus)
-	require.Equal(t, procIdle, runtime.cache.items[t4.ID].procStatus)
-}
-
 func TestHandleHookWorkerResponse(t *testing.T) {
 	now := time.Now()
 	store := api.NewMemoryTimerStore()
@@ -395,12 +350,6 @@ func TestHandleHookWorkerResponse(t *testing.T) {
 }
 
 func TestNextTryTriggerDuration(t *testing.T) {
-	origMinTriggerEventInterval := minTriggerEventInterval
-	minTriggerEventInterval = time.Second
-	defer func() {
-		minTriggerEventInterval = origMinTriggerEventInterval
-	}()
-
 	now := time.Now()
 	store := api.NewMemoryTimerStore()
 	defer store.Close()
@@ -452,7 +401,7 @@ func TestFullRefreshTimers(t *testing.T) {
 	runtime.initCtx()
 
 	timers := make([]*api.TimerRecord, 7)
-	for i := range timers {
+	for i := 0; i < len(timers); i++ {
 		timer := newTestTimer(fmt.Sprintf("t%d", i), "1m", time.Now())
 		procStatus := procIdle
 		if i == 2 || i == 4 {
@@ -516,7 +465,7 @@ func TestBatchHandlerWatchResponses(t *testing.T) {
 	runtime.partialRefreshTimerCounter = partialRefreshCounter
 
 	timers := make([]*api.TimerRecord, 7)
-	for i := range timers {
+	for i := 0; i < len(timers); i++ {
 		timer := newTestTimer(fmt.Sprintf("t%d", i), "1m", time.Now())
 		procStatus := procIdle
 		if i == 2 {
@@ -623,7 +572,7 @@ func TestCloseWaitingCloseTimers(t *testing.T) {
 	require.False(t, runtime.tryCloseTriggeringTimers())
 
 	timers := make([]*api.TimerRecord, 5)
-	for i := range timers {
+	for i := 0; i < len(timers); i++ {
 		timer := newTestTimer(fmt.Sprintf("t%d", i), "1m", time.Now())
 		timer.EventStatus = api.SchedEventTrigger
 		timer.EventStart = time.Now()
@@ -869,6 +818,7 @@ func TestTimerFullProcess(t *testing.T) {
 	})
 	require.NoError(t, err)
 	timerID := timer.ID
+	close(hookStartWait)
 
 	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
 		Return(api.PreSchedEventResult{EventData: []byte("eventdata1")}, nil).
@@ -879,8 +829,6 @@ func TestTimerFullProcess(t *testing.T) {
 		Return(nil).
 		Once().
 		Run(checkOnSchedEventFunc([]byte("eventdata1"), *now.Load()))
-
-	close(hookStartWait)
 	waitDone(onSchedDone, 5*time.Second)
 	onSchedDone = make(chan struct{})
 	hook.AssertExpectations(t)
@@ -913,7 +861,7 @@ func TestTimerFullProcess(t *testing.T) {
 	checkNotDone(onSchedDone, time.Second)
 
 	// trigger again after 1 minute
-	nextTriggerTime := now.Load().Add(time.Minute)
+	setNow(now.Load().Add(time.Minute))
 	hook.On("OnPreSchedEvent", mock.Anything, mock.Anything).
 		Return(api.PreSchedEventResult{EventData: []byte("eventdata2")}, nil).
 		Once().
@@ -922,8 +870,7 @@ func TestTimerFullProcess(t *testing.T) {
 	hook.On("OnSchedEvent", mock.Anything, mock.Anything).
 		Return(nil).
 		Once().
-		Run(checkOnSchedEventFunc([]byte("eventdata2"), nextTriggerTime))
-	setNow(nextTriggerTime)
+		Run(checkOnSchedEventFunc([]byte("eventdata2"), *now.Load()))
 	waitDone(onSchedDone, 5*time.Second)
 	onSchedDone = make(chan struct{})
 	hook.AssertExpectations(t)

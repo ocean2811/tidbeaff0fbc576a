@@ -16,7 +16,6 @@ package tikv
 
 import (
 	"bytes"
-	"fmt"
 	"math"
 	"sync"
 	"sync/atomic"
@@ -25,9 +24,10 @@ import (
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/lockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/dbreader"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/mvcc"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -102,7 +102,7 @@ func (w writeDBWorker) run() {
 			batches = append(batches, batch)
 		}
 		chLen := len(w.batchCh)
-		for range chLen {
+		for i := 0; i < chLen; i++ {
 			batches = append(batches, <-w.batchCh)
 		}
 		if len(batches) > 0 {
@@ -154,7 +154,7 @@ func (w writeLockWorker) run() {
 			batches = append(batches, batch)
 		}
 		chLen := len(w.batchCh)
-		for range chLen {
+		for i := 0; i < chLen; i++ {
 			batches = append(batches, <-w.batchCh)
 		}
 		hint := new(lockstore.Hint)
@@ -167,11 +167,6 @@ func (w writeLockWorker) run() {
 					// Ignore if the key doesn't exist
 					ls.DeleteWithHint(entry.Key.UserKey, hint)
 				default:
-					// Make sure it fits into an arena block.
-					if len(entry.Key.UserKey)+len(entry.Value) > ls.MaxEntrySize() {
-						batch.err = fmt.Errorf("unistore lock entry too big %d > %d", len(entry.Key.UserKey)+len(entry.Value), ls.MaxEntrySize())
-						break
-					}
 					insertCnt++
 					ls.PutWithHint(entry.Key.UserKey, entry.Value, hint)
 				}
@@ -337,7 +332,7 @@ func (writer *dbWriter) collectRangeKeys(it *badger.Iterator, startKey, endKey [
 
 func (writer *dbWriter) deleteKeysInBatch(latchHandle mvcc.LatchHandle, keys []y.Key, batchSize int) error {
 	for len(keys) > 0 {
-		batchSize := min(len(keys), batchSize)
+		batchSize := mathutil.Min(len(keys), batchSize)
 		batchKeys := keys[:batchSize]
 		keys = keys[batchSize:]
 		hashVals := userKeysToHashVals(batchKeys...)

@@ -5,7 +5,7 @@ package export
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/util/promutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/promutil"
 )
 
 func TestMetricsRegistration(t *testing.T) {

@@ -1,26 +1,22 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "metricsutil",
     srcs = ["common.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/metricsutil",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/metricsutil",
     visibility = ["//visibility:public"],
     deps = [
-        "//br/pkg/task",
         "//pkg/config",
-        "//pkg/config/kerneltype",
         "//pkg/domain/metrics",
         "//pkg/executor/metrics",
         "//pkg/infoschema/metrics",
         "//pkg/keyspace",
         "//pkg/metrics",
-        "//pkg/metrics/common",
         "//pkg/planner/core/metrics",
         "//pkg/server/metrics",
         "//pkg/session/metrics",
         "//pkg/session/txninfo",
         "//pkg/sessiontxn/isolation/metrics",
-        "//pkg/statistics/handle/cache/metrics",
         "//pkg/statistics/handle/metrics",
         "//pkg/store",
         "//pkg/store/copr/metrics",
@@ -29,21 +25,7 @@ go_library(
         "//pkg/util",
         "//pkg/util/topsql/reporter/metrics",
         "@com_github_pingcap_kvproto//pkg/keyspacepb",
+        "@com_github_tikv_client_go_v2//config",
         "@com_github_tikv_pd_client//:client",
-        "@com_github_tikv_pd_client//opt",
-        "@com_github_tikv_pd_client//pkg/caller",
-    ],
-)
-
-go_test(
-    name = "metricsutil_test",
-    timeout = "short",
-    srcs = ["common_test.go"],
-    embed = [":metricsutil"],
-    flaky = True,
-    deps = [
-        "//pkg/config",
-        "//pkg/metrics/common",
-        "@com_github_stretchr_testify//require",
     ],
 )

@@ -6,13 +6,10 @@ go_library(
         "partition_table.go",
         "util.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/executor/internal/util",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/util",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
-        "//pkg/config",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",
-        "@com_github_stretchr_testify//require",
     ],
 )

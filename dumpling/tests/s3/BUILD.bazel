@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 go_library(
     name = "s3_lib",
     srcs = ["import.go"],
-    importpath = "github.com/pingcap/tidb/dumpling/tests/s3",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/dumpling/tests/s3",
     visibility = ["//visibility:private"],
     deps = [
         "@com_github_go_sql_driver_mysql//:mysql",

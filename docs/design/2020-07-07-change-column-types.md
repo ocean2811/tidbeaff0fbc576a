@@ -103,4 +103,4 @@ When columns of the modified type have a related expression index, the implement
 
 ## Open issues (if applicable)
 
-https://github.com/pingcap/tidb/issues/17526
+https://github.com/ocean2811/tidbeaff0fbc576a/issues/17526

@@ -26,13 +26,14 @@ package parser
 
 import (
 	// needed to connect to MySQL
+
 	dbsql "database/sql"
 	gio "io"
 	"os"
 	"testing"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
 	requires "github.com/stretchr/testify/require"
 )
 
@@ -64,14 +65,8 @@ func TestCompareReservedWordsWithMySQL(t *testing.T) {
 
 	for _, kw := range reservedKeywords {
 		switch kw {
-		case "CURRENT_ROLE", // Present in both, reserved only in TiDB
-			"STATS_EXTENDED",   // Only in TiDB
-			"TABLESAMPLE",      // Only in TiDB
-			"ARRAY",            // added in 8.0.17 (reserved); became nonreserved in 8.0.19
-			"ILIKE",            // Only in TiDB
-			"TIDB_CURRENT_TSO", // Only in TiDB
-			"UNTIL":            // Present in both, reserved only in TiDB
-			// special cases: we do reserve these words but MySQL didn't,
+		case "CURRENT_ROLE", "INTERSECT", "STATS_EXTENDED", "TABLESAMPLE":
+			// special case: we do reserve these words but MySQL didn't,
 			// and unreservering it causes legit parser conflict.
 			continue
 		}
@@ -88,18 +83,15 @@ func TestCompareReservedWordsWithMySQL(t *testing.T) {
 			requires.Regexp(t, errRegexp, err.Error())
 		}
 		_, err = db.Exec(query)
-		requires.Error(t, err, query)
+		requires.Error(t, err)
 		requires.Regexp(t, errRegexp, err.Error(), "MySQL suggests that '%s' should *not* be reserved!", kw)
 	}
 
 	for _, kws := range [][]string{unreservedKeywords, notKeywordTokens, tidbKeywords} {
 		for _, kw := range kws {
 			switch kw {
-			case "FUNCTION", // Reserved in MySQL 8.0.1
-				"PURGE",     // Reserved in MySQL
-				"SYSTEM",    // Reserved in MySQL 8.0.3
-				"SEPARATOR", // Reserved in MySQL
-				"DECLARE":   // Reserved in MySQL
+			case "FUNCTION", // reserved in 8.0.1
+				"PURGE", "SYSTEM", "SEPARATOR": // ?
 				continue
 			}
 
@@ -111,6 +103,7 @@ func TestCompareReservedWordsWithMySQL(t *testing.T) {
 			requires.IsType(t, &ast.DoStmt{}, stmts[0])
 
 			_, err = db.Exec(query)
+			println(query)
 			requires.NoErrorf(t, err, "MySQL suggests that '%s' should be reserved!", kw)
 		}
 	}

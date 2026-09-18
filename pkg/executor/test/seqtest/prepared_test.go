@@ -21,17 +21,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
@@ -67,7 +66,7 @@ func TestPrepared(t *testing.T) {
 
 		// Statement not found.
 		err = tk.ExecToErr("deallocate prepare stmt_test_5")
-		require.True(t, plannererrors.ErrStmtNotFound.Equal(err))
+		require.True(t, plannercore.ErrStmtNotFound.Equal(err))
 
 		// incorrect SQLs in prepare. issue #3738, SQL in prepare stmt is parsed in DoPrepare.
 		tk.MustGetErrMsg(`prepare p from "delete from t where a = 7 or 1=1/*' and b = 'p'";`,
@@ -75,7 +74,7 @@ func TestPrepared(t *testing.T) {
 
 		// The `stmt_test5` should not be found.
 		err = tk.ExecToErr(`set @a = 1; execute stmt_test_5 using @a;`)
-		require.True(t, plannererrors.ErrStmtNotFound.Equal(err))
+		require.True(t, plannercore.ErrStmtNotFound.Equal(err))
 
 		// Use parameter marker with argument will run prepared statement.
 		result := tk.MustQuery("select distinct c1, c2 from prepare_test where c1 = ?", 1)
@@ -145,7 +144,7 @@ func TestPrepared(t *testing.T) {
 		require.NoError(t, err)
 
 		// Check that rebuild plan works.
-		err = tk.Session().PrepareTxnCtx(ctx, nil)
+		err = tk.Session().PrepareTxnCtx(ctx)
 		require.NoError(t, err)
 		_, err = stmt.RebuildPlan(ctx)
 		require.NoError(t, err)
@@ -174,11 +173,11 @@ func TestPrepared(t *testing.T) {
 		tk.MustExec("alter table prepare_test drop column c2")
 
 		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
-		require.True(t, plannererrors.ErrUnknownColumn.Equal(err))
+		require.True(t, plannercore.ErrUnknownColumn.Equal(err))
 
 		tk.MustExec("drop table prepare_test")
 		_, err = tk.Session().ExecutePreparedStmt(ctx, stmtID, expression.Args2Expressions4Test(1))
-		require.True(t, plannererrors.ErrSchemaChanged.Equal(err))
+		require.True(t, plannercore.ErrSchemaChanged.Equal(err))
 
 		// issue 3381
 		tk.MustExec("drop table if exists prepare3")
@@ -246,7 +245,6 @@ func TestPrepared(t *testing.T) {
 		tk.MustQuery("select a from prepare1;").Check(testkit.Rows("7"))
 
 		// Coverage.
-		//nolint:constructor
 		exec := &executor.ExecuteExec{}
 		err = exec.Next(ctx, nil)
 		require.NoError(t, err)
@@ -283,11 +281,11 @@ func TestPreparedLimitOffset(t *testing.T) {
 
 		tk.MustExec(`set @a=1.1`)
 		_, err := tk.Exec(`execute stmt_test_1 using @a, @b;`)
-		require.True(t, plannererrors.ErrWrongArguments.Equal(err))
+		require.True(t, plannercore.ErrWrongArguments.Equal(err))
 
 		tk.MustExec(`set @c="-1"`)
 		_, err = tk.Exec("execute stmt_test_1 using @c, @c")
-		require.True(t, plannererrors.ErrWrongArguments.Equal(err))
+		require.True(t, plannercore.ErrWrongArguments.Equal(err))
 
 		stmtID, _, _, err := tk.Session().PrepareStmt("select id from prepare_test limit ?")
 		require.NoError(t, err)
@@ -609,15 +607,6 @@ func TestPreparedIssue8153(t *testing.T) {
 		r = tk.MustQuery(`execute stmt using @param;`)
 		r.Check(testkit.Rows("1 3", "2 2", "3 1"))
 
-		// issue #62556: string parameter should not be treated as a positional reference in ORDER BY.
-		tk.MustExec("drop table if exists t_gc")
-		tk.MustExec("create table t_gc (a int)")
-		tk.MustExec("insert into t_gc values (1)")
-		tk.MustExec(`prepare stmt_gc from 'select group_concat(a order by ?) from t_gc'`)
-		tk.MustExec(`set @param = '0'`)
-		r = tk.MustQuery(`execute stmt_gc using @param;`)
-		r.Check(testkit.Rows("1"))
-
 		tk.MustExec("insert into t (a, b) values (1,1), (1,2), (2,1), (2,3), (3,2), (3,3)")
 		tk.MustExec(`prepare stmt from 'select ?, sum(a) from t group by ?'`)
 
@@ -628,11 +617,6 @@ func TestPreparedIssue8153(t *testing.T) {
 		tk.MustExec(`set @a=1,@b=2`)
 		_, err = tk.Exec(`execute stmt using @a,@b;`)
 		require.EqualError(t, err, "[planner:1056]Can't group on 'sum(a)'")
-
-		// issue #62556: string parameter should be treated as a value in GROUP BY.
-		tk.MustExec(`set @a=1,@b='0'`)
-		r = tk.MustQuery(`execute stmt using @a,@b;`)
-		r.Check(testkit.Rows("1 18"))
 	}
 }
 
@@ -667,8 +651,47 @@ func TestPreparedIssue17419(t *testing.T) {
 
 	dom.ExpensiveQueryHandle().LogOnQueryExceedMemQuota(tk.Session().GetSessionVars().ConnectionID)
 
-	// After entirely fixing https://github.com/pingcap/tidb/issues/17419
+	// After entirely fixing https://github.com/ocean2811/tidbeaff0fbc576a/issues/17419
 	// require.NotNil(t, tk1.Session().ShowProcess().Plan)
 	// _, ok := tk1.Session().ShowProcess().Plan.(*plannercore.Execute)
 	// require.True(t, ok)
+}
+
+func TestLimitUnsupportedCase(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, key(a))")
+	tk.MustExec("prepare stmt from 'select * from t limit ?'")
+
+	tk.MustExec("set @a = 1.2")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = 1.")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = '0'")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = '1'")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+	tk.MustExec("set @a = 1_2")
+	tk.MustGetErrMsg("execute stmt using @a", "[planner:1210]Incorrect arguments to LIMIT")
+}
+
+func TestIssue38323(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(id int, k int);")
+
+	tk.MustExec("prepare stmt from 'explain select * from t where id = ? and k = ? group by id, k';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
+	tk.MustExec("set @a = 1;")
+	tk.MustExec("execute stmt using @a, @a")
+	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where id = 1 and k = 1 group by id, k").Rows())
+
+	tk.MustExec("prepare stmt from 'explain select * from t where ? = id and ? = k group by id, k';")
+	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1105 skip prepared plan-cache: not a SELECT/UPDATE/INSERT/DELETE/SET statement"))
+	tk.MustExec("set @a = 1;")
+	tk.MustQuery("execute stmt using @a, @a").Check(tk.MustQuery("explain select * from t where 1 = id and 1 = k group by id, k").Rows())
 }

@@ -20,8 +20,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/plugin"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/plugin"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
@@ -71,7 +71,7 @@ func TestLoadPlugin(t *testing.T) {
 	require.NoErrorf(t, err, "query event fail, error [%s]\n", err)
 
 	connectionNum := 5
-	for range connectionNum {
+	for i := 0; i < connectionNum; i++ {
 		err = plugin.ForeachPlugin(plugin.Audit, func(auditPlugin *plugin.Plugin) error {
 			return plugin.DeclareAuditManifest(auditPlugin.Manifest).OnConnectionEvent(context.Background(), plugin.Connected, &variable.ConnectionInfo{Host: "localhost"})
 		})

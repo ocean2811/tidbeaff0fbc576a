@@ -21,7 +21,7 @@ import (
 
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/config"
 	"github.com/stretchr/testify/require"
 )
 

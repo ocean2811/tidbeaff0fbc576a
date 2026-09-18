@@ -2,7 +2,7 @@
 
 - Author(s): @kennytm
 - Discussion: N/A
-- Tracking Issue: [#29501](https://github.com/pingcap/tidb/issues/29501)
+- Tracking Issue: [#29501](https://github.com/ocean2811/tidbeaff0fbc576a/issues/29501)
 
 ## Table of Contents
 

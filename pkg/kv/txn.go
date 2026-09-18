@@ -25,9 +25,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/intest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
@@ -115,7 +115,7 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 		globalInnerTxnTsBox.deleteInnerTxnTS(originalTxnTS)
 	}()
 
-	for i := range MaxRetryCnt {
+	for i := uint(0); i < maxRetryCnt; i++ {
 		txn, err = store.Begin()
 		if err != nil {
 			logutil.BgLogger().Error("RunInNewTxn", zap.Error(err))
@@ -177,8 +177,8 @@ func RunInNewTxn(ctx context.Context, store Storage, retryable bool, f func(ctx 
 }
 
 var (
-	// MaxRetryCnt represents maximum retry times.
-	MaxRetryCnt uint = 100
+	// maxRetryCnt represents maximum retry times in RunInNewTxn.
+	maxRetryCnt uint = 100
 	// retryBackOffBase is the initial duration, in microsecond, a failed transaction stays dormancy before it retries
 	retryBackOffBase = 1
 	// retryBackOffCap is the max amount of duration, in microsecond, a failed transaction stays dormancy before it retries
@@ -212,10 +212,13 @@ func setRequestSourceForInnerTxn(ctx context.Context, txn Transaction) {
 	}
 	// panic in test mode in case there are requests without source in the future.
 	// log warnings in production mode.
-	intest.Assert(true, "unexpected no source type context, if you see this error, "+
-		"the `RequestSourceTypeKey` is missing in your context")
-	logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
-		"the `RequestSourceTypeKey` is missing in the context")
+	if intest.InTest {
+		panic("unexpected no source type context, if you see this error, " +
+			"the `RequestSourceTypeKey` is missing in your context")
+	} else {
+		logutil.Logger(ctx).Warn("unexpected no source type context, if you see this warning, " +
+			"the `RequestSourceTypeKey` is missing in the context")
+	}
 }
 
 // SetTxnResourceGroup update the resource group name of target txn.
@@ -226,7 +229,6 @@ func SetTxnResourceGroup(txn Transaction, name string) {
 		validateRNameInterceptor := func(next interceptor.RPCInterceptorFunc) interceptor.RPCInterceptorFunc {
 			return func(target string, req *tikvrpc.Request) (*tikvrpc.Response, error) {
 				var rgName *string
-				tikvrpc.AttachContext(req, req.Context)
 				switch r := req.Req.(type) {
 				case *kvrpcpb.PrewriteRequest:
 					rgName = &r.Context.ResourceControlContext.ResourceGroupName

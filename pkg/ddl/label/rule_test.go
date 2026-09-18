@@ -15,16 +15,10 @@
 package label
 
 import (
-	"encoding/hex"
 	"testing"
 
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client/http"
 )
 
 func TestApplyAttributesSpec(t *testing.T) {
@@ -61,7 +55,7 @@ func TestDefaultOrEmpty(t *testing.T) {
 		err := rule.ApplyAttributesSpec(specs[i])
 		require.NoError(t, err)
 
-		rule.Reset(tikv.NewCodecV1(tikv.ModeTxn), "db", "t", "", 1)
+		rule.Reset("db", "t", "", 1)
 		require.Len(t, rule.Labels, 0)
 	}
 }
@@ -71,7 +65,7 @@ func TestReset(t *testing.T) {
 	rule := NewRule()
 	require.NoError(t, rule.ApplyAttributesSpec(spec))
 
-	rule.Reset(tikv.NewCodecV1(tikv.ModeTxn), "db1", "t1", "", 1, 2, 3)
+	rule.Reset("db1", "t1", "", 1, 2, 3)
 	require.Equal(t, "schema/db1/t1", rule.ID)
 	require.Equal(t, ruleType, rule.RuleType)
 	require.Len(t, rule.Labels, 3)
@@ -80,20 +74,20 @@ func TestReset(t *testing.T) {
 	require.Equal(t, "t1", rule.Labels[2].Value)
 	require.Equal(t, rule.Index, 2)
 
-	r := rule.Data.([]any)[0].(map[string]string)
+	r := rule.Data[0].(map[string]string)
 	require.Equal(t, "7480000000000000ff0100000000000000f8", r["start_key"])
 	require.Equal(t, "7480000000000000ff0200000000000000f8", r["end_key"])
-	r = rule.Data.([]any)[1].(map[string]string)
+	r = rule.Data[1].(map[string]string)
 	require.Equal(t, "7480000000000000ff0200000000000000f8", r["start_key"])
 	require.Equal(t, "7480000000000000ff0300000000000000f8", r["end_key"])
-	r = rule.Data.([]any)[2].(map[string]string)
+	r = rule.Data[2].(map[string]string)
 	require.Equal(t, "7480000000000000ff0300000000000000f8", r["start_key"])
 	require.Equal(t, "7480000000000000ff0400000000000000f8", r["end_key"])
 
 	r1 := rule.Clone()
 	require.Equal(t, r1, rule)
 
-	r2 := rule.Reset(tikv.NewCodecV1(tikv.ModeTxn), "db2", "t2", "p2", 2)
+	r2 := rule.Reset("db2", "t2", "p2", 2)
 	require.Equal(t, "schema/db2/t2/p2", r2.ID)
 	require.Len(t, rule.Labels, 4)
 	require.Equal(t, "value", rule.Labels[0].Value)
@@ -102,56 +96,15 @@ func TestReset(t *testing.T) {
 	require.Equal(t, "p2", rule.Labels[3].Value)
 	require.Equal(t, rule.Index, 3)
 
-	r = r2.Data.([]any)[0].(map[string]string)
+	r = r2.Data[0].(map[string]string)
 	require.Equal(t, "7480000000000000ff0200000000000000f8", r["start_key"])
 	require.Equal(t, "7480000000000000ff0300000000000000f8", r["end_key"])
 
 	// default case
 	spec = &ast.AttributesSpec{Default: true}
 	rule, expected := NewRule(), NewRule()
-	expected.ID, expected.Labels = "schema/db3/t3/p3", []pd.RegionLabel{}
+	expected.ID, expected.Labels = "schema/db3/t3/p3", []Label{}
 	require.NoError(t, rule.ApplyAttributesSpec(spec))
-	r3 := rule.Reset(tikv.NewCodecV1(tikv.ModeTxn), "db3", "t3", "p3", 3)
+	r3 := rule.Reset("db3", "t3", "p3", 3)
 	require.Equal(t, r3, expected)
-}
-
-func TestResetWithKeyspaceCodec(t *testing.T) {
-	keyspaceID := uint32(42)
-	codecV2, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: keyspaceID}})
-	require.NoError(t, err)
-
-	spec := &ast.AttributesSpec{Attributes: "key=value"}
-	rule := NewRule()
-	require.NoError(t, rule.ApplyAttributesSpec(spec))
-	rule.Reset(tikv.NewCodecV1(tikv.ModeTxn), "db1", "t1", "", 1)
-	require.Equal(t, "schema/db1/t1", rule.ID)
-	require.Len(t, rule.Labels, 3)
-	require.Equal(t, "7480000000000000ff0100000000000000f8", rule.Data.([]any)[0].(map[string]string)["start_key"])
-
-	if kerneltype.IsClassic() {
-		rule.Reset(codecV2, "db1", "t1", "", 1)
-		require.Equal(t, "schema/db1/t1", rule.ID)
-		require.Len(t, rule.Labels, 3)
-		require.Equal(t, "7480000000000000ff0100000000000000f8", rule.Data.([]any)[0].(map[string]string)["start_key"])
-		return
-	}
-
-	nextGenRule := NewRule()
-	require.NoError(t, nextGenRule.ApplyAttributesSpec(spec))
-	nextGenRule.Reset(codecV2, "db1", "t1", "", 1)
-	require.Equal(t, "keyspace/42/schema/db1/t1", nextGenRule.ID)
-	require.Equal(t, "schema/db1/t1", RestoreRuleID(nextGenRule.ID))
-	require.Contains(t, nextGenRule.Labels, pd.RegionLabel{Key: keyspaceKey, Value: "42"})
-	require.Contains(t, nextGenRule.Labels, pd.RegionLabel{Key: dbKey, Value: "db1"})
-	require.Contains(t, nextGenRule.Labels, pd.RegionLabel{Key: tableKey, Value: "t1"})
-
-	startKey, endKey := codecV2.EncodeRegionRange(tablecodec.GenTablePrefix(1), tablecodec.GenTablePrefix(2))
-	data := nextGenRule.Data.([]any)[0].(map[string]string)
-	require.Equal(t, hex.EncodeToString(startKey), data["start_key"])
-	require.Equal(t, hex.EncodeToString(endKey), data["end_key"])
-
-	partitionRule := nextGenRule.Reset(codecV2, "db2", "t2", "p2", 2)
-	require.Equal(t, "keyspace/42/schema/db2/t2/p2", partitionRule.ID)
-	require.Equal(t, "schema/db2/t2/p2", RestoreRuleID(partitionRule.ID))
-	require.Contains(t, partitionRule.Labels, pd.RegionLabel{Key: partitionKey, Value: "p2"})
 }

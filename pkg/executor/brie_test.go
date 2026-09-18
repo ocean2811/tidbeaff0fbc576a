@@ -16,31 +16,22 @@ package executor
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,128 +41,6 @@ func TestGlueGetVersion(t *testing.T) {
 	require.Contains(t, version, `Release Version`)
 	require.Contains(t, version, `Git Commit Hash`)
 	require.Contains(t, version, `GoVersion`)
-}
-
-func TestBRIEKillMonitorHandlesWrappedQueryInterrupted(t *testing.T) {
-	sctx := mock.NewContext()
-	taskCtx, cancelTaskCtx := context.WithCancel(context.Background())
-	t.Cleanup(cancelTaskCtx)
-	tickCh := make(chan time.Time, 1)
-	cancelled := make(chan struct{})
-
-	go cancelBRIEOnKill(taskCtx, sctx, tickCh, func() {
-		close(cancelled)
-	})
-	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	tickCh <- time.Now()
-
-	select {
-	case <-cancelled:
-	case <-time.After(time.Second):
-		t.Fatal("BRIE task was not cancelled after receiving QueryInterrupted")
-	}
-}
-
-func TestMapBRIEErrPreservesCancelCause(t *testing.T) {
-	sctx := mock.NewContext()
-
-	err := mapBRIEErr(sctx, errors.New("disk full"), exeerrors.ErrBRIEBackupFailed)
-	require.True(t, exeerrors.ErrBRIEBackupFailed.Equal(err), err)
-
-	sctx.GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	err = mapBRIEErr(sctx, context.Canceled, exeerrors.ErrBRIEBackupFailed)
-	require.True(t, exeerrors.ErrQueryInterrupted.Equal(err), err)
-	require.False(t, exeerrors.ErrBRIEBackupFailed.Equal(err))
-
-	sctxNoKill := mock.NewContext()
-	// CANCEL BR JOB cancels taskCtx without SQLKiller; keep 8124/8125.
-	err = mapBRIEErr(sctxNoKill, context.Canceled, exeerrors.ErrBRIEBackupFailed)
-	require.True(t, exeerrors.ErrBRIEBackupFailed.Equal(err), err)
-	require.False(t, exeerrors.ErrQueryInterrupted.Equal(err))
-
-	err = mapBRIEErr(sctxNoKill, context.Canceled, nil)
-	require.ErrorIs(t, err, context.Canceled)
-}
-
-func TestClearTaskKeepsUnfinishedBRIETasks(t *testing.T) {
-	ResetGlobalBRIEQueueForTest()
-	t.Cleanup(ResetGlobalBRIEQueueForTest)
-	sctx := mock.NewContext()
-	ctx := context.Background()
-
-	running := &brieTaskInfo{
-		kind:    ast.BRIEKindBackup,
-		storage: "noop://running",
-	}
-	_, runningID := globalBRIEQueue.registerTask(ctx, running)
-	require.True(t, running.finishTime.IsZero())
-
-	globalBRIEQueue.lastClearTime = time.Now().Add(-clearInterval - time.Second)
-	globalBRIEQueue.clearTask(sctx.GetSessionVars().StmtCtx)
-
-	_, ok := globalBRIEQueue.queryTask(runningID)
-	require.True(t, ok, "still-running BRIE tasks must survive queue cleanup")
-	require.True(t, globalBRIEQueue.cancelTask(runningID))
-
-	finished := &brieTaskInfo{
-		kind:       ast.BRIEKindBackup,
-		storage:    "noop://finished",
-		finishTime: types.NewTime(types.FromGoTime(time.Now().Add(-outdatedDuration.Duration-time.Minute)), mysql.TypeDatetime, 0),
-	}
-	_, finishedID := globalBRIEQueue.registerTask(ctx, finished)
-	globalBRIEQueue.lastClearTime = time.Now().Add(-clearInterval - time.Second)
-	globalBRIEQueue.clearTask(sctx.GetSessionVars().StmtCtx)
-	_, ok = globalBRIEQueue.queryTask(finishedID)
-	require.False(t, ok, "outdated finished BRIE tasks should still be garbage-collected")
-}
-
-func TestBRIEAcquireTaskCancellationRecordsTerminalState(t *testing.T) {
-	ResetGlobalBRIEQueueForTest()
-	t.Cleanup(ResetGlobalBRIEQueueForTest)
-	bq := globalBRIEQueue
-	bq.workerCh <- struct{}{}
-	t.Cleanup(func() {
-		select {
-		case <-bq.workerCh:
-		default:
-		}
-	})
-
-	sctx := mock.NewContext()
-	e := &BRIEExec{
-		BaseExecutor: exec.NewBaseExecutor(sctx, nil, 0),
-		info: &brieTaskInfo{
-			kind:    ast.BRIEKindBackup,
-			storage: "noop://queued",
-		},
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	errCh := make(chan error, 1)
-	go func() {
-		errCh <- e.Next(ctx, exec.NewFirstChunk(e))
-	}()
-
-	require.Eventually(t, func() bool {
-		_, ok := bq.queryTask(1)
-		return ok
-	}, time.Second, 10*time.Millisecond)
-	cancel()
-	var err error
-	select {
-	case err = <-errCh:
-	case <-time.After(time.Second):
-		t.Fatal("queued BRIE task did not return after cancellation")
-	}
-	require.ErrorIs(t, err, context.Canceled)
-	require.False(t, e.info.finishTime.IsZero())
-	require.Equal(t, err.Error(), e.info.message)
-
-	e.info.finishTime = types.NewTime(types.FromGoTime(time.Now().Add(-outdatedDuration.Duration-time.Minute)), mysql.TypeDatetime, 0)
-	bq.lastClearTime = time.Now().Add(-clearInterval - time.Second)
-	bq.clearTask(sctx.GetSessionVars().StmtCtx)
-	_, ok := bq.queryTask(1)
-	require.False(t, ok, "cancelled queued BRIE tasks should be garbage-collected after expiry")
 }
 
 func brieTaskInfoToResult(info *brieTaskInfo) string {
@@ -209,8 +78,7 @@ func TestFetchShowBRIE(t *testing.T) {
 	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
 	stmt, err := p.ParseOneStmt("show backups", "", "")
 	require.NoError(t, err)
-	nodeW := resolve.NewNodeW(stmt)
-	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable(), coretestsdk.MockView()}))
+	plan, _, err := core.BuildLogicalPlanForTest(ctx, sctx, stmt, infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable(), core.MockView()}))
 	require.NoError(t, err)
 	schema := plan.Schema()
 
@@ -219,7 +87,7 @@ func TestFetchShowBRIE(t *testing.T) {
 		BaseExecutor: exec.NewBaseExecutor(sctx, schema, 0),
 		Tp:           ast.ShowBackups,
 	}
-	require.NoError(t, exec.Open(ctx, e))
+	require.NoError(t, e.Open(ctx))
 
 	tp := mysql.TypeDatetime
 	lateTime := types.NewTime(types.FromGoTime(time.Now().Add(-outdatedDuration.Duration+1)), tp, 0)
@@ -271,88 +139,4 @@ func TestFetchShowBRIE(t *testing.T) {
 	info2Res := brieTaskInfoToResult(info2)
 	globalBRIEQueue.clearTask(e.Ctx().GetSessionVars().StmtCtx)
 	require.Equal(t, info2Res, fetchShowBRIEResult(t, e, brieColTypes))
-}
-
-func TestBRIEBuilderOptions(t *testing.T) {
-	sctx := mock.NewContext()
-	sctx.GetSessionVars().User = &auth.UserIdentity{Username: "test"}
-	is := infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
-	ResetGlobalBRIEQueueForTest()
-	builder := NewMockExecutorBuilderForTest(sctx, is, nil)
-	ctx := context.Background()
-	p := parser.New()
-	p.SetParserConfig(parser.ParserConfig{EnableWindowFunction: true, EnableStrictDoubleTypeCheck: true})
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/executor/modifyStore", `return("tikv")`)
-	require.NoError(t, err)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/executor/modifyStore")
-	err = os.WriteFile("/tmp/keyfile", []byte(strings.Repeat("A", 128)), 0644)
-
-	require.NoError(t, err)
-	stmt, err := p.ParseOneStmt("BACKUP TABLE `a` TO 'noop://' CHECKSUM_CONCURRENCY = 4 IGNORE_STATS = 1 COMPRESSION_LEVEL = 4 COMPRESSION_TYPE = 'lz4' ENCRYPTION_METHOD = 'aes256-ctr' ENCRYPTION_KEYFILE = '/tmp/keyfile'", "", "")
-	require.NoError(t, err)
-	nodeW := resolve.NewNodeW(stmt)
-	plan, err := core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable(), coretestsdk.MockView()}))
-	require.NoError(t, err)
-	s, ok := stmt.(*ast.BRIEStmt)
-	require.True(t, ok)
-	require.True(t, s.Kind == ast.BRIEKindBackup)
-	for _, opt := range s.Options {
-		switch opt.Tp {
-		case ast.BRIEOptionChecksumConcurrency:
-			require.Equal(t, uint64(4), opt.UintValue)
-		case ast.BRIEOptionCompressionLevel:
-			require.Equal(t, uint64(4), opt.UintValue)
-		case ast.BRIEOptionIgnoreStats:
-			require.Equal(t, uint64(1), opt.UintValue)
-		case ast.BRIEOptionCompression:
-			require.Equal(t, "lz4", opt.StrValue)
-		case ast.BRIEOptionEncryptionMethod:
-			require.Equal(t, "aes256-ctr", opt.StrValue)
-		case ast.BRIEOptionEncryptionKeyFile:
-			require.Equal(t, "/tmp/keyfile", opt.StrValue)
-		}
-	}
-	schema := plan.Schema()
-	exec := builder.buildBRIE(s, schema)
-	require.NoError(t, builder.err)
-	e, ok := exec.(*BRIEExec)
-	require.True(t, ok)
-	require.False(t, e.backupCfg.Checksum)
-	require.Equal(t, uint(4), e.backupCfg.ChecksumConcurrency)
-	require.Equal(t, int32(4), e.backupCfg.CompressionLevel)
-	require.Equal(t, true, e.backupCfg.IgnoreStats)
-	require.Equal(t, backuppb.CompressionType_LZ4, e.backupCfg.CompressionConfig.CompressionType)
-	require.Equal(t, encryptionpb.EncryptionMethod_AES256_CTR, e.backupCfg.CipherInfo.CipherType)
-	require.Greater(t, len(e.backupCfg.CipherInfo.CipherKey), 0)
-
-	stmt, err = p.ParseOneStmt("RESTORE TABLE `a` FROM 'noop://' CHECKSUM_CONCURRENCY = 4 WAIT_TIFLASH_READY = 1 WITH_SYS_TABLE = 1 LOAD_STATS = 1", "", "")
-	require.NoError(t, err)
-	nodeW = resolve.NewNodeW(stmt)
-	plan, err = core.BuildLogicalPlanForTest(ctx, sctx, nodeW, infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable(), coretestsdk.MockView()}))
-	require.NoError(t, err)
-	s, ok = stmt.(*ast.BRIEStmt)
-	require.True(t, ok)
-	require.True(t, s.Kind == ast.BRIEKindRestore)
-	for _, opt := range s.Options {
-		switch opt.Tp {
-		case ast.BRIEOptionChecksumConcurrency:
-			require.Equal(t, uint64(4), opt.UintValue)
-		case ast.BRIEOptionWaitTiflashReady:
-			require.Equal(t, uint64(1), opt.UintValue)
-		case ast.BRIEOptionWithSysTable:
-			require.Equal(t, uint64(1), opt.UintValue)
-		case ast.BRIEOptionLoadStats:
-			require.Equal(t, uint64(1), opt.UintValue)
-		}
-	}
-	schema = plan.Schema()
-	exec = builder.buildBRIE(s, schema)
-	require.NoError(t, builder.err)
-	e, ok = exec.(*BRIEExec)
-	require.True(t, ok)
-	require.Equal(t, uint(4), e.restoreCfg.ChecksumConcurrency)
-	require.False(t, e.restoreCfg.Checksum)
-	require.True(t, e.restoreCfg.WaitTiflashReady)
-	require.True(t, e.restoreCfg.WithSysTable)
-	require.True(t, e.restoreCfg.LoadStats)
 }

@@ -16,55 +16,18 @@ package executor
 
 import (
 	"context"
-	stderrors "errors"
 	"strconv"
+	"strings"
 	"sync"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/tiancaiamao/gp"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
 	"go.uber.org/atomic"
-	"go.uber.org/zap"
 )
-
-func adaptiveAnlayzeDistSQLConcurrency(ctx context.Context, sctx sessionctx.Context) int {
-	concurrency := sctx.GetSessionVars().AnalyzeDistSQLScanConcurrency()
-	if concurrency > 0 {
-		return concurrency
-	}
-	tikvStore, ok := sctx.GetStore().(helper.Storage)
-	if !ok {
-		logutil.BgLogger().Warn("Information about TiKV store status can be gotten only when the storage is TiKV")
-		return vardef.DefAnalyzeDistSQLScanConcurrency
-	}
-	tikvHelper := helper.NewHelper(tikvStore)
-	pdCli, err := tikvHelper.TryGetPDHTTPClient()
-	if err != nil {
-		logutil.BgLogger().Warn("fail to TryGetPDHTTPClient", zap.Error(err))
-		return vardef.DefAnalyzeDistSQLScanConcurrency
-	}
-	storesStat, err := pdCli.GetStores(ctx)
-	if err != nil {
-		logutil.BgLogger().Warn("fail to get stores info", zap.Error(err))
-		return vardef.DefAnalyzeDistSQLScanConcurrency
-	}
-	if storesStat.Count <= 5 {
-		return vardef.DefAnalyzeDistSQLScanConcurrency
-	} else if storesStat.Count <= 10 {
-		return storesStat.Count
-	} else if storesStat.Count <= 20 {
-		return storesStat.Count * 2
-	} else if storesStat.Count <= 50 {
-		return storesStat.Count * 3
-	}
-	return storesStat.Count * 4
-}
 
 func getIntFromSessionVars(ctx sessionctx.Context, name string) (int, error) {
 	sessionVars := ctx.GetSessionVars()
@@ -77,11 +40,11 @@ func getIntFromSessionVars(ctx sessionctx.Context, name string) (int, error) {
 }
 
 func getBuildStatsConcurrency(ctx sessionctx.Context) (int, error) {
-	return getIntFromSessionVars(ctx, vardef.TiDBBuildStatsConcurrency)
+	return getIntFromSessionVars(ctx, variable.TiDBBuildStatsConcurrency)
 }
 
 func getBuildSamplingStatsConcurrency(ctx sessionctx.Context) (int, error) {
-	return getIntFromSessionVars(ctx, vardef.TiDBBuildSamplingStatsConcurrency)
+	return getIntFromSessionVars(ctx, variable.TiDBBuildSamplingStatsConcurrency)
 }
 
 var errAnalyzeWorkerPanic = errors.New("analyze worker panic")
@@ -91,10 +54,13 @@ func isAnalyzeWorkerPanic(err error) bool {
 	return err == errAnalyzeWorkerPanic || err == errAnalyzeOOM
 }
 
-func getAnalyzePanicErr(r any) error {
+func getAnalyzePanicErr(r interface{}) error {
 	if msg, ok := r.(string); ok {
 		if msg == globalPanicAnalyzeMemoryExceed {
 			return errors.Trace(errAnalyzeOOM)
+		}
+		if strings.Contains(msg, memory.PanicMemoryExceedWarnMsg) {
+			return errors.Errorf("%s, %s", msg, errAnalyzeOOM)
 		}
 	}
 	if err, ok := r.(error); ok {
@@ -104,18 +70,6 @@ func getAnalyzePanicErr(r any) error {
 		return err
 	}
 	return errors.Trace(errAnalyzeWorkerPanic)
-}
-
-func normalizeCtxErrWithCause(ctx context.Context, err error) error {
-	if err == nil {
-		return nil
-	}
-	if stderrors.Is(err, context.Canceled) || stderrors.Is(err, context.DeadlineExceeded) {
-		if cause := context.Cause(ctx); cause != nil {
-			return cause
-		}
-	}
-	return err
 }
 
 // analyzeResultsNotifyWaitGroupWrapper is a wrapper for sync.WaitGroup
@@ -153,17 +107,16 @@ func (w *analyzeResultsNotifyWaitGroupWrapper) Run(exec func()) {
 // notifyErrorWaitGroupWrapper is a wrapper for sync.WaitGroup
 // Please add all goroutine count when to `Add` to avoid exiting in advance.
 type notifyErrorWaitGroupWrapper struct {
-	*util.WaitGroupPool
+	sync.WaitGroup
 	notify chan error
 	cnt    atomic.Uint64
 }
 
 // newNotifyErrorWaitGroupWrapper is to create notifyErrorWaitGroupWrapper
-func newNotifyErrorWaitGroupWrapper(gp *gp.Pool, notify chan error) *notifyErrorWaitGroupWrapper {
+func newNotifyErrorWaitGroupWrapper(notify chan error) *notifyErrorWaitGroupWrapper {
 	return &notifyErrorWaitGroupWrapper{
-		WaitGroupPool: util.NewWaitGroupPool(gp),
-		notify:        notify,
-		cnt:           *atomic.NewUint64(0),
+		notify: notify,
+		cnt:    *atomic.NewUint64(0),
 	}
 }
 

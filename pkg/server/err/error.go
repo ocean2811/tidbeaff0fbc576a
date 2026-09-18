@@ -15,8 +15,8 @@
 package err
 
 import (
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
 )
 
 var (
@@ -32,12 +32,8 @@ var (
 	ErrAccessDeniedNoPassword = dbterror.ClassServer.NewStd(errno.ErrAccessDeniedNoPassword)
 	// ErrConCount is returned when too many connections are established by the user.
 	ErrConCount = dbterror.ClassServer.NewStd(errno.ErrConCount)
-	// ErrTooManyUserConnections is returned when too mang user connections are established.
-	ErrTooManyUserConnections = dbterror.ClassServer.NewStd(errno.ErrTooManyUserConnections)
 	// ErrSecureTransportRequired is returned when the user tries to connect without SSL.
 	ErrSecureTransportRequired = dbterror.ClassServer.NewStd(errno.ErrSecureTransportRequired)
-	// ErrUserPrefixMismatch is returned when prefixed username does not match the assigned keyspace.
-	ErrUserPrefixMismatch = dbterror.ClassServer.NewStd(errno.ErrUserPrefixMismatch)
 	// ErrMultiStatementDisabled is returned when the user tries to send multiple statements in one statement.
 	ErrMultiStatementDisabled = dbterror.ClassServer.NewStd(errno.ErrMultiStatementDisabled)
 	// ErrNewAbortingConnection is returned when the user tries to connect with an aborting connection.
@@ -48,6 +44,4 @@ var (
 	ErrNetPacketTooLarge = dbterror.ClassServer.NewStd(errno.ErrNetPacketTooLarge)
 	// ErrMustChangePassword is returned when the user must change the password.
 	ErrMustChangePassword = dbterror.ClassServer.NewStd(errno.ErrMustChangePassword)
-	// ErrServerShutdown is returned when the server is shutting down.
-	ErrServerShutdown = dbterror.ClassServer.NewStd(errno.ErrServerShutdown)
 )

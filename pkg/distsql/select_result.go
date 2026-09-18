@@ -20,36 +20,39 @@ import (
 	"context"
 	"fmt"
 	"strconv"
-	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	rmpb "github.com/pingcap/kvproto/pkg/resource_manager"
-	"github.com/pingcap/tidb/pkg/config"
-	dcontext "github.com/pingcap/tidb/pkg/distsql/context"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/telemetry"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/telemetry"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/execdetails"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
 	"github.com/pingcap/tipb/go-tipb"
 	tikvmetrics "github.com/tikv/client-go/v2/metrics"
 	"github.com/tikv/client-go/v2/tikv"
-	clientutil "github.com/tikv/client-go/v2/util"
+	"github.com/tikv/client-go/v2/tikvrpc"
 	"go.uber.org/zap"
+	"golang.org/x/exp/maps"
+)
+
+var (
+	errQueryInterrupted = dbterror.ClassExecutor.NewStd(errno.ErrQueryInterrupted)
 )
 
 var (
@@ -70,42 +73,6 @@ type SelectResult interface {
 	NextRaw(context.Context) ([]byte, error)
 	// Next reads the data into chunk.
 	Next(context.Context, *chunk.Chunk) error
-	// IntoIter converts the SelectResult into an iterator.
-	IntoIter([][]*types.FieldType) (SelectResultIter, error)
-	// Close closes the iterator.
-	Close() error
-}
-
-// GetSelectResultConcurrency returns the internal cop iterator concurrency for a SelectResult.
-// The bool return value indicates whether the underlying implementation exposes this information.
-func GetSelectResultConcurrency(sr SelectResult) (concurrency int, extraConcurrency int, ok bool) {
-	r, ok := sr.(*selectResult)
-	if !ok || r == nil {
-		return 0, 0, false
-	}
-	ci, ok := r.resp.(copr.CopInfo)
-	if !ok {
-		return 0, 0, false
-	}
-	concurrency, extraConcurrency = ci.GetConcurrency()
-	return concurrency, extraConcurrency, true
-}
-
-// SelectResultRow indicates the row returned by the SelectResultIter
-type SelectResultRow struct {
-	// `ChannelIndex` indicates the index where this row locates.
-	// When ChannelIndex < len(IntermediateChannels), it means this row is from intermediate result.
-	// Otherwise, if ChannelIndex == len(IntermediateChannels), it means this row is from final result.
-	ChannelIndex int
-	// Row is the actual data of this row.
-	chunk.Row
-}
-
-// SelectResultIter is an iterator that is used to iterate the rows from SelectResult.
-type SelectResultIter interface {
-	// Next returns the next row.
-	// If the iterator is drained, the `SelectResultRow.IsEmpty()` returns true.
-	Next(ctx context.Context) (SelectResultRow, error)
 	// Close closes the iterator.
 	Close() error
 }
@@ -129,11 +96,11 @@ func (h chunkRowHeap) Swap(i, j int) {
 	h.rowPtrs[i], h.rowPtrs[j] = h.rowPtrs[j], h.rowPtrs[i]
 }
 
-func (h *chunkRowHeap) Push(x any) {
+func (h *chunkRowHeap) Push(x interface{}) {
 	h.rowPtrs = append(h.rowPtrs, x.(chunk.RowPtr))
 }
 
-func (h *chunkRowHeap) Pop() any {
+func (h *chunkRowHeap) Pop() interface{} {
 	ret := h.rowPtrs[len(h.rowPtrs)-1]
 	h.rowPtrs = h.rowPtrs[0 : len(h.rowPtrs)-1]
 	return ret
@@ -141,14 +108,14 @@ func (h *chunkRowHeap) Pop() any {
 
 // NewSortedSelectResults is only for partition table
 // If schema == nil, sort by first few columns.
-func NewSortedSelectResults(ectx expression.EvalContext, selectResult []SelectResult, schema *expression.Schema, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
+func NewSortedSelectResults(selectResult []SelectResult, schema *expression.Schema, byitems []*util.ByItems, memTracker *memory.Tracker) SelectResult {
 	s := &sortedSelectResults{
 		schema:       schema,
 		selectResult: selectResult,
 		byItems:      byitems,
 		memTracker:   memTracker,
 	}
-	s.initCompareFuncs(ectx)
+	s.initCompareFuncs()
 	s.buildKeyColumns()
 	s.heap = &chunkRowHeap{s}
 	s.cachedChunks = make([]*chunk.Chunk, len(selectResult))
@@ -182,10 +149,10 @@ func (ssr *sortedSelectResults) updateCachedChunk(ctx context.Context, idx uint3
 	return nil
 }
 
-func (ssr *sortedSelectResults) initCompareFuncs(ectx expression.EvalContext) {
+func (ssr *sortedSelectResults) initCompareFuncs() {
 	ssr.compareFuncs = make([]chunk.CompareFunc, len(ssr.byItems))
 	for i, item := range ssr.byItems {
-		keyType := item.Expr.GetType(ectx)
+		keyType := item.Expr.GetType()
 		ssr.compareFuncs[i] = chunk.GetCompareFunc(keyType)
 	}
 }
@@ -257,10 +224,6 @@ func (ssr *sortedSelectResults) Next(ctx context.Context, c *chunk.Chunk) (err e
 	return nil
 }
 
-func (*sortedSelectResults) IntoIter(_ [][]*types.FieldType) (SelectResultIter, error) {
-	return nil, errors.New("not implemented")
-}
-
 func (ssr *sortedSelectResults) Close() (err error) {
 	for i, sr := range ssr.selectResult {
 		err = sr.Close()
@@ -314,10 +277,6 @@ func (ssr *serialSelectResults) Next(ctx context.Context, chk *chunk.Chunk) erro
 	return nil
 }
 
-func (*serialSelectResults) IntoIter(_ [][]*types.FieldType) (SelectResultIter, error) {
-	return nil, errors.New("not implemented")
-}
-
 func (ssr *serialSelectResults) Close() (err error) {
 	for _, r := range ssr.selectResults {
 		if rerr := r.Close(); rerr != nil {
@@ -331,15 +290,9 @@ type selectResult struct {
 	label string
 	resp  kv.Response
 
-	rowLen                  int
-	fieldTypes              []*types.FieldType
-	intermediateOutputTypes [][]*types.FieldType
-	ctx                     *dcontext.DistSQLContext
-	isAnalyze               bool // Selects the Analyze close path even when execution-info collection is disabled.
-	// collectExecDetailsForRaw enables statistics collection for raw responses,
-	// which bypass the SelectResponse decoding and statistics path in fetchResp.
-	// Only Analyze currently opts in, using the execution-info setting captured at request creation.
-	collectExecDetailsForRaw bool
+	rowLen     int
+	fieldTypes []*types.FieldType
+	ctx        sessionctx.Context
 
 	selectResp       *tipb.SelectResponse
 	selectRespSize   int64 // record the selectResp.Size() when it is initialized.
@@ -355,40 +308,22 @@ type selectResult struct {
 	rootPlanID int
 
 	storeType kv.StoreType
-	// Non-nil only for MPP; follows the current coordinator after recovery.
-	// Direct ReportMPPTaskStatus reporting is selected when a Limit lies on the
-	// path above this TableReader and the coordinator address is available.
-	// Skip streamed raw summaries in that case to avoid counting both routes.
-	mppReportsDirectly func() bool
 
 	fetchDuration    time.Duration
 	durationReported bool
 	memTracker       *memory.Tracker
 
 	stats *selectResultRuntimeStats
-
-	// scanDetailForRaw accumulates raw-response scan details for this request.
-	// Analyze uses these request totals to estimate scan bytes before combining requests.
-	scanDetailForRaw clientutil.ScanDetail
 	// distSQLConcurrency and paging are only for collecting information, and they don't affect the process of execution.
 	distSQLConcurrency int
 	paging             bool
-
-	iter *selectResultIter
-
-	closeOnce sync.Once
-	closeErr  error
 }
 
 func (r *selectResult) fetchResp(ctx context.Context) error {
-	return r.fetchRespWithIntermediateResults(ctx, nil)
-}
-
-func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, intermediateOutputTypes [][]*types.FieldType) error {
 	defer func() {
 		if r.stats != nil {
 			// Ignore internal sql.
-			if !r.ctx.InRestrictedSQL && r.stats.copRespTime.Size() > 0 {
+			if !r.ctx.GetSessionVars().InRestrictedSQL && r.stats.copRespTime.Size() > 0 {
 				ratio := r.stats.calcCacheHit()
 				if ratio >= 1 {
 					telemetry.CurrentCoprCacheHitRatioGTE100Count.Inc()
@@ -421,19 +356,6 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		duration := time.Since(startTime)
 		r.fetchDuration += duration
 		if err != nil {
-			// On error paths with a non-nil resultSubset (e.g. ErrMaxKeysReadExceeded),
-			// still merge CopExecDetails so ProcessedKeys reaches StmtCtx.ExecDetails
-			// (feeds tidb_keys_examined and the slow query log). Skip
-			// updateCopRuntimeStats because r.selectResp is not unmarshaled on this
-			// path, so there are no ExecutionSummaries for per-operator stats.
-			if resultSubset != nil {
-				if hasStats, ok := resultSubset.(CopRuntimeStats); ok {
-					if copStats := hasStats.GetCopRuntimeStats(); copStats != nil {
-						r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
-						r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
-					}
-				}
-			}
 			return errors.Trace(err)
 		}
 		if r.selectResp != nil {
@@ -445,7 +367,7 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 			if !r.durationReported {
 				// final round of fetch
 				// TODO: Add a label to distinguish between success or failure.
-				// https://github.com/pingcap/tidb/issues/11397
+				// https://github.com/ocean2811/tidbeaff0fbc576a/issues/11397
 				if r.paging {
 					metrics.DistSQLQueryHistogram.WithLabelValues(r.label, r.sqlType, "paging").Observe(r.fetchDuration.Seconds())
 				} else {
@@ -460,32 +382,19 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		if err != nil {
 			return errors.Trace(err)
 		}
-
 		respSize := int64(r.selectResp.Size())
 		atomic.StoreInt64(&r.selectRespSize, respSize)
 		r.memConsume(respSize)
 		if err := r.selectResp.Error; err != nil {
 			return dbterror.ClassTiKV.Synthesize(terror.ErrCode(err.Code), err.Msg)
 		}
-
-		if len(r.selectResp.IntermediateOutputs) != len(intermediateOutputTypes) {
-			return errors.Errorf(
-				"The length of intermediate output types %d mismatches the length of got intermediate outputs %d."+
-					" If a response contains intermediate outputs, you should use the SelectResultIter to read the data.",
-				len(intermediateOutputTypes), len(r.selectResp.IntermediateOutputs),
-			)
+		sessVars := r.ctx.GetSessionVars()
+		if atomic.LoadUint32(&sessVars.Killed) == 1 {
+			return errors.Trace(errQueryInterrupted)
 		}
-		r.intermediateOutputTypes = intermediateOutputTypes
-
-		if err = r.ctx.SQLKiller.HandleSignal(); err != nil {
-			return err
-		}
+		sc := sessVars.StmtCtx
 		for _, warning := range r.selectResp.Warnings {
-			r.ctx.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
-		}
-
-		if r.mppReportsDirectly != nil && !r.mppReportsDirectly() && r.ctx.RuntimeStatsColl != nil {
-			r.ctx.RuntimeStatsColl.RecordTiFlashExecutionSummaries(r.copPlanIDs, r.selectResp.GetExecutionSummaries())
+			sc.AppendWarning(dbterror.ClassTiKV.Synthesize(terror.ErrCode(warning.Code), warning.Msg))
 		}
 
 		r.partialCount++
@@ -494,35 +403,19 @@ func (r *selectResult) fetchRespWithIntermediateResults(ctx context.Context, int
 		if ok {
 			copStats := hasStats.GetCopRuntimeStats()
 			if copStats != nil {
-				if err := r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime(), false); err != nil {
-					return err
-				}
-				r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, duration)
-				r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
+				r.updateCopRuntimeStats(ctx, copStats, resultSubset.RespTime())
+				copStats.CopTime = duration
+				sc.MergeExecDetails(&copStats.ExecDetails, nil)
 			}
 		}
 		if len(r.selectResp.Chunks) != 0 {
 			break
-		}
-
-		if intermediate := r.selectResp.IntermediateOutputs; len(intermediate) > 0 {
-			for _, output := range intermediate {
-				if len(output.Chunks) != 0 {
-					// some intermediate output contains data,
-					// we should return the response even if the main output is empty.
-					return nil
-				}
-			}
 		}
 	}
 	return nil
 }
 
 func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
-	if r.iter != nil {
-		return errors.New("selectResult is invalid after IntoIter()")
-	}
-
 	chk.Reset()
 	if r.selectResp == nil || r.respChkIdx == len(r.selectResp.Chunks) {
 		err := r.fetchResp(ctx)
@@ -532,9 +425,6 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 		if r.selectResp == nil {
 			return nil
 		}
-		failpoint.Inject("mockConsumeSelectRespSlow", func(val failpoint.Value) {
-			time.Sleep(time.Duration(val.(int) * int(time.Millisecond)))
-		})
 	}
 	// TODO(Shenghui Wu): add metrics
 	encodeType := r.selectResp.GetEncodeType()
@@ -547,13 +437,6 @@ func (r *selectResult) Next(ctx context.Context, chk *chunk.Chunk) error {
 	return errors.Errorf("unsupported encode type:%v", encodeType)
 }
 
-func (r *selectResult) IntoIter(intermediateFieldTypes [][]*types.FieldType) (SelectResultIter, error) {
-	if r.iter != nil {
-		return nil, errors.New("selectResult is invalid after IntoIter()")
-	}
-	return newSelectResultIter(r, intermediateFieldTypes), nil
-}
-
 // NextRaw returns the next raw partial result.
 func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 	failpoint.Inject("mockNextRawError", func(val failpoint.Value) {
@@ -562,17 +445,8 @@ func (r *selectResult) NextRaw(ctx context.Context) (data []byte, err error) {
 		}
 	})
 
-	if r.iter != nil {
-		return nil, errors.New("selectResult is invalid after IntoIter()")
-	}
-
 	resultSubset, err := r.resp.Next(ctx)
 	r.partialCount++
-	if r.collectExecDetailsForRaw && resultSubset != nil {
-		if withStats, ok := resultSubset.(CopRuntimeStats); ok {
-			r.recordCopRuntimeStatsForRaw(withStats.GetCopRuntimeStats(), resultSubset.RespTime())
-		}
-	}
 	if resultSubset != nil && err == nil {
 		data = resultSubset.GetData()
 	}
@@ -636,32 +510,46 @@ func (r *selectResult) readFromChunk(ctx context.Context, chk *chunk.Chunk) erro
 }
 
 // FillDummySummariesForTiFlashTasks fills dummy execution summaries for mpp tasks which lack summaries
-func FillDummySummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, storeType kv.StoreType, allPlanIDs []int, recordedPlanIDs map[int]int) {
+func FillDummySummariesForTiFlashTasks(sctx *stmtctx.StatementContext, callee string, storeTypeName string, allPlanIDs []int, recordedPlanIDs map[int]int) {
 	num := uint64(0)
 	dummySummary := &tipb.ExecutorExecutionSummary{TimeProcessedNs: &num, NumProducedRows: &num, NumIterations: &num, ExecutorId: nil}
 	for _, planID := range allPlanIDs {
 		if _, ok := recordedPlanIDs[planID]; !ok {
-			runtimeStatsColl.RecordOneCopTask(planID, storeType, dummySummary)
+			sctx.RuntimeStatsColl.RecordOneCopTask(planID, storeTypeName, callee, dummySummary)
 		}
 	}
 }
 
 // recordExecutionSummariesForTiFlashTasks records mpp task execution summaries
-func recordExecutionSummariesForTiFlashTasks(runtimeStatsColl *execdetails.RuntimeStatsColl, executionSummaries []*tipb.ExecutorExecutionSummary, storeType kv.StoreType, allPlanIDs []int) {
+func recordExecutionSummariesForTiFlashTasks(sctx *stmtctx.StatementContext, executionSummaries []*tipb.ExecutorExecutionSummary, callee string, storeTypeName string, allPlanIDs []int) {
 	var recordedPlanIDs = make(map[int]int)
 	for _, detail := range executionSummaries {
 		if detail != nil && detail.TimeProcessedNs != nil &&
 			detail.NumProducedRows != nil && detail.NumIterations != nil {
-			recordedPlanIDs[runtimeStatsColl.
-				RecordOneCopTask(-1, storeType, detail)] = 0
+			recordedPlanIDs[sctx.RuntimeStatsColl.
+				RecordOneCopTask(-1, storeTypeName, callee, detail)] = 0
 		}
 	}
-	FillDummySummariesForTiFlashTasks(runtimeStatsColl, storeType, allPlanIDs, recordedPlanIDs)
+	FillDummySummariesForTiFlashTasks(sctx, callee, storeTypeName, allPlanIDs, recordedPlanIDs)
 }
 
-func (r *selectResult) getOrCreateRuntimeStats() *selectResultRuntimeStats {
+func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration) {
+	callee := copStats.CalleeAddress
+	if r.rootPlanID <= 0 || r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl == nil || callee == "" {
+		return
+	}
+
+	if copStats.ScanDetail != nil {
+		readKeys := copStats.ScanDetail.ProcessedKeys
+		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
+		readSize := float64(copStats.ScanDetail.ProcessedKeysSize)
+		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
+	}
+
 	if r.stats == nil {
 		r.stats = &selectResultRuntimeStats{
+			backoffSleep:       make(map[string]time.Duration),
+			rpcStat:            tikv.NewRegionRequestRuntimeStats(),
 			distSQLConcurrency: r.distSQLConcurrency,
 		}
 		if ci, ok := r.resp.(copr.CopInfo); ok {
@@ -670,44 +558,10 @@ func (r *selectResult) getOrCreateRuntimeStats() *selectResultRuntimeStats {
 			r.stats.extraConcurrency = extraConc
 		}
 	}
-	return r.stats
-}
-
-func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr.CopRuntimeStats, respTime time.Duration, forUnconsumedStats bool) (err error) {
-	callee := copStats.CalleeAddress
-	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil || (callee == "" && (copStats.ReqStats == nil || copStats.ReqStats.GetRPCStatsCount() == 0)) {
-		return
-	}
-	if (copStats.ScanDetail != nil && copStats.ScanDetail.ProcessedKeys > 0) || copStats.TimeDetail.KvReadWallTime > 0 {
-		var readKeys int64
-		var readSize float64
-		if copStats.ScanDetail != nil {
-			readKeys = copStats.ScanDetail.ProcessedKeys
-			readSize = float64(copStats.ScanDetail.ProcessedKeysSize)
-		}
-		readTime := copStats.TimeDetail.KvReadWallTime.Seconds()
-		tikvmetrics.ObserveReadSLI(uint64(readKeys), readTime, readSize)
-	}
-
-	r.getOrCreateRuntimeStats()
 	r.stats.mergeCopRuntimeStats(copStats, respTime)
-	if forUnconsumedStats {
-		if r.storeType == kv.TiKV && len(r.copPlanIDs) > 0 {
-			r.ctx.RuntimeStatsColl.RecordCopStats(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType, copStats.ScanDetail, copStats.TimeDetail, copStats.ReadPoolTaskDetails, nil)
-		}
-		// selectResp still refers to the last consumed response. Keep the generic
-		// RPC/scan/time evidence above, but do not invent a response-summary
-		// expectation or replay summaries from the last consumed response.
-		if copStats.TimeDetail.ProcessTime > 0 {
-			r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
-		}
-		return nil
-	}
-	if r.storeType == kv.TiKV {
-		// Every consumed TiKV response is expected to carry one execution summary
-		// for each cop plan ID. Record that expectation before validating the
-		// returned summary slice so missing summaries remain explicit.
-		r.ctx.RuntimeStatsColl.RecordExpectedCopResponseSummaries(r.copPlanIDs)
+
+	if copStats.ScanDetail != nil && len(r.copPlanIDs) > 0 {
+		r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RecordScanDetail(r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType.Name(), copStats.ScanDetail)
 	}
 
 	// If hasExecutor is true, it means the summary is returned from TiFlash.
@@ -721,110 +575,37 @@ func (r *selectResult) updateCopRuntimeStats(ctx context.Context, copStats *copr
 			break
 		}
 	}
-
-	if r.storeType == kv.TiFlash {
-		ruv2Metrics := execdetails.RUV2MetricsFromContext(ctx)
-		if ruv2Metrics == nil || !ruv2Metrics.Bypass() {
-			if ruDetailsRaw := ctx.Value(clientutil.RUDetailsCtxKey); ruDetailsRaw != nil {
-				if err = execdetails.MergeTiFlashRUConsumption(r.selectResp.GetExecutionSummaries(), ruDetailsRaw.(*clientutil.RUDetails)); err != nil {
-					return err
-				}
-			}
-		}
-	}
-	if copStats.TimeDetail.ProcessTime > 0 {
-		r.ctx.CPUUsage.MergeTikvCPUTime(copStats.TimeDetail.ProcessTime)
-	}
-	if r.storeType == kv.TiKV {
-		summaries := r.selectResp.GetExecutionSummaries()
-		if len(summaries) == 0 {
-			// The response contributes no operator rows, but its request-root scan,
-			// time, and read-pool evidence remain chargeable.
-			if len(r.copPlanIDs) > 0 {
-				r.ctx.RuntimeStatsColl.RecordCopStats(
-					r.copPlanIDs[len(r.copPlanIDs)-1], r.storeType,
-					copStats.ScanDetail, copStats.TimeDetail, copStats.ReadPoolTaskDetails, nil)
-			}
-			return nil
-		}
-		malformed := len(summaries) != len(r.copPlanIDs)
-		for _, summary := range summaries {
-			if summary == nil || summary.TimeProcessedNs == nil ||
-				summary.NumProducedRows == nil || summary.NumIterations == nil {
-				malformed = true
-				break
-			}
-		}
-		if malformed {
-			r.ctx.RuntimeStatsColl.InvalidateCopResponseSummaries(r.copPlanIDs)
-			logutil.Logger(ctx).Warn("invalid cop task execution summaries",
-				zap.Int("expected", len(r.copPlanIDs)), zap.Int("received", len(summaries)))
-			return nil
-		}
-	}
-	if r.storeType != kv.TiKV && !hasExecutor &&
-		len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
-		// TiFlash streaming responses carry positional execution summaries only
-		// in the last response, so an empty summary slice is expected.
-		if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
-			logutil.Logger(ctx).Warn("invalid cop task execution summaries length",
-				zap.Int("expected", len(r.copPlanIDs)),
-				zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
-		}
-		return nil
-	}
 	if hasExecutor {
-		if len(r.copPlanIDs) > 0 {
-			r.ctx.RuntimeStatsColl.RecordCopStats(
-				r.copPlanIDs[len(r.copPlanIDs)-1],
-				r.storeType,
-				copStats.ScanDetail,
-				copStats.TimeDetail,
-				copStats.ReadPoolTaskDetails,
-				nil,
-			)
-		}
-		recordExecutionSummariesForTiFlashTasks(r.ctx.RuntimeStatsColl, r.selectResp.GetExecutionSummaries(), r.storeType, r.copPlanIDs)
-		// report MPP cross AZ network traffic bytes to resource control manager.
-		interZoneBytes := r.ctx.RuntimeStatsColl.GetStmtCopRuntimeStats().TiflashNetworkStats.GetInterZoneTrafficBytes()
-		if interZoneBytes > 0 {
-			consumption := &rmpb.Consumption{
-				ReadCrossAzTrafficBytes: interZoneBytes,
-			}
-			if r.ctx.RUConsumptionReporter != nil {
-				r.ctx.RUConsumptionReporter.ReportConsumption(r.ctx.ResourceGroupName, consumption)
-			}
-		}
+		recordExecutionSummariesForTiFlashTasks(r.ctx.GetSessionVars().StmtCtx, r.selectResp.GetExecutionSummaries(), callee, r.storeType.Name(), r.copPlanIDs)
 	} else {
+		// For cop task cases, we still need this protection.
+		if len(r.selectResp.GetExecutionSummaries()) != len(r.copPlanIDs) {
+			// for TiFlash streaming call(BatchCop and MPP), it is by design that only the last response will
+			// carry the execution summaries, so it is ok if some responses have no execution summaries, should
+			// not trigger an error log in this case.
+			if !(r.storeType == kv.TiFlash && len(r.selectResp.GetExecutionSummaries()) == 0) {
+				logutil.Logger(ctx).Error("invalid cop task execution summaries length",
+					zap.Int("expected", len(r.copPlanIDs)),
+					zap.Int("received", len(r.selectResp.GetExecutionSummaries())))
+			}
+			return
+		}
 		for i, detail := range r.selectResp.GetExecutionSummaries() {
-			var summary *tipb.ExecutorExecutionSummary
 			if detail != nil && detail.TimeProcessedNs != nil &&
 				detail.NumProducedRows != nil && detail.NumIterations != nil {
-				summary = detail
-			}
-			planID := r.copPlanIDs[i]
-			if i == len(r.copPlanIDs)-1 {
-				r.ctx.RuntimeStatsColl.RecordCopStats(
-					planID,
-					r.storeType,
-					copStats.ScanDetail,
-					copStats.TimeDetail,
-					copStats.ReadPoolTaskDetails,
-					summary,
-				)
-			} else if summary != nil {
-				r.ctx.RuntimeStatsColl.RecordOneCopTask(planID, r.storeType, summary)
+				planID := r.copPlanIDs[i]
+				r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.
+					RecordOneCopTask(planID, r.storeType.Name(), callee, detail)
 			}
 		}
 	}
-	return
 }
 
 func (r *selectResult) readRowsData(chk *chunk.Chunk) (err error) {
 	rowsData := r.selectResp.Chunks[r.respChkIdx].RowsData
-	decoder := codec.NewDecoder(chk, r.ctx.Location)
+	decoder := codec.NewDecoder(chk, r.ctx.GetSessionVars().Location())
 	for !chk.IsFull() && len(rowsData) > 0 {
-		for i := range r.rowLen {
+		for i := 0; i < r.rowLen; i++ {
 			rowsData, err = decoder.DecodeOne(rowsData, i, r.fieldTypes[i])
 			if err != nil {
 				return err
@@ -843,330 +624,27 @@ func (r *selectResult) memConsume(bytes int64) {
 
 // Close closes selectResult.
 func (r *selectResult) Close() error {
-	if r.iter != nil {
-		return errors.New("selectResult is invalid after IntoIter()")
+	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
+	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
+	if respSize > 0 {
+		r.memConsume(-respSize)
 	}
-	return r.close()
-}
-
-// recordCopRuntimeStatsForRaw records coprocessor statistics without decoding a
-// SelectResponse or relying on per-executor summaries. Callers must honor
-// collectExecDetailsForRaw; plan-level statistics are attributed to rootPlanID.
-// respTime is the response duration, or zero for unconsumed statistics.
-func (r *selectResult) recordCopRuntimeStatsForRaw(copStats *copr.CopRuntimeStats, respTime time.Duration) {
-	if copStats == nil || r.ctx == nil {
-		return
-	}
-	if r.ctx.ExecDetails != nil {
-		// The raw path does not measure local fetch time for statement Cop_time.
-		r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
-		r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
-	}
-	if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
-		if r.stats == nil {
-			r.stats = &selectResultRuntimeStats{distSQLConcurrency: r.distSQLConcurrency}
+	if r.stats != nil {
+		defer func() {
 			if ci, ok := r.resp.(copr.CopInfo); ok {
-				r.stats.distSQLConcurrency, r.stats.extraConcurrency = ci.GetConcurrency()
-			}
-		}
-		r.stats.mergeCopRuntimeStats(copStats, respTime)
-		r.ctx.RuntimeStatsColl.RecordCopStats(
-			r.rootPlanID,
-			r.storeType,
-			copStats.ScanDetail,
-			copStats.TimeDetail,
-			copStats.ReadPoolTaskDetails,
-			nil,
-		)
-	}
-	if copStats.ScanDetail != nil {
-		r.scanDetailForRaw.Merge(copStats.ScanDetail)
-	}
-}
-
-func (r *selectResult) closeAnalyze() error {
-	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
-	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
-	if respSize > 0 {
-		r.memConsume(-respSize)
-	}
-
-	closeErr := r.resp.Close()
-	if !r.collectExecDetailsForRaw || r.ctx == nil {
-		return closeErr
-	}
-	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
-		for _, copStats := range unconsumed.CollectUnconsumedCopRuntimeStats() {
-			r.recordCopRuntimeStatsForRaw(copStats, 0)
-		}
-	}
-	if r.ctx.RuntimeStatsColl != nil && r.rootPlanID > 0 {
-		if r.stats != nil {
-			r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
-		}
-		if scanBytes, ok := execdetails.EstimateScanBytes(
-			r.scanDetailForRaw.TotalKeys,
-			r.scanDetailForRaw.ProcessedKeys,
-			r.scanDetailForRaw.ProcessedKeysSize,
-		); ok {
-			r.ctx.RuntimeStatsColl.RecordAnalyzeScanBytes(r.rootPlanID, scanBytes)
-		}
-	}
-	return closeErr
-}
-
-func (r *selectResult) close() error {
-	r.closeOnce.Do(func() {
-		r.closeErr = r.closeImpl()
-	})
-	return r.closeErr
-}
-
-func (r *selectResult) closeImpl() error {
-	if r.isAnalyze {
-		return r.closeAnalyze()
-	}
-	metrics.DistSQLPartialCountHistogram.Observe(float64(r.partialCount))
-	respSize := atomic.SwapInt64(&r.selectRespSize, 0)
-	if respSize > 0 {
-		r.memConsume(-respSize)
-	}
-	closeErr := r.resp.Close()
-	if r.ctx == nil {
-		return closeErr
-	}
-
-	if unconsumed, ok := r.resp.(copr.HasUnconsumedCopRuntimeStats); ok && unconsumed != nil {
-		unconsumedCopStats := unconsumed.CollectUnconsumedCopRuntimeStats()
-		for _, copStats := range unconsumedCopStats {
-			_ = r.updateCopRuntimeStats(context.Background(), copStats, time.Duration(0), true)
-			r.ctx.ExecDetails.MergeCopExecDetails(&copStats.CopExecDetails, 0)
-			r.ctx.ExecDetails.MergeReadPoolTaskDetails(copStats.ReadPoolTaskDetails)
-		}
-	}
-
-	if r.rootPlanID <= 0 || r.ctx.RuntimeStatsColl == nil {
-		return closeErr
-	}
-
-	if provider, ok := r.resp.(copr.HasLimiterWaitStats); ok && provider != nil {
-		if limiterWait := provider.GetLimiterWaitStats(); !limiterWait.IsZero() {
-			r.getOrCreateRuntimeStats().limiterWait.Merge(limiterWait)
-		}
-	}
-
-	if r.stats == nil {
-		return closeErr
-	}
-
-	if ci, ok := r.resp.(copr.CopInfo); ok {
-		r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
-		batched, fallback := ci.GetStoreBatchInfo()
-		if batched != 0 || fallback != 0 {
-			r.stats.storeBatchedNum = batched
-			r.stats.storeBatchedFallbackNum = fallback
-			telemetryStoreBatchedCnt.Add(float64(batched))
-			telemetryStoreBatchedFallbackCnt.Add(float64(fallback))
-			telemetryBatchedQueryTaskCnt.Add(float64(r.stats.copRespTime.Size()))
-		}
-	}
-
-	r.stats.fetchRspDuration = r.fetchDuration
-	r.ctx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
-	return closeErr
-}
-
-type selRespChannelIter struct {
-	channel    int
-	loc        *time.Location
-	rowLen     int
-	fieldTypes []*types.FieldType
-	encodeType tipb.EncodeType
-	chkData    []tipb.Chunk
-
-	// reserveChkSize indicates the reserved size for each chunk. (Only for default encoding)
-	reserveChkSize int
-	// curChkIdx indicates the index of the current chunk in chkData read currently.
-	curChkIdx int
-	// chk buffers the rows read from the current response
-	chk *chunk.Chunk
-	// offset indicates the read offset in iter.chk
-	chkOffset int
-}
-
-func newSelRespChannelIter(result *selectResult, channel int) (*selRespChannelIter, error) {
-	intest.Assert(result != nil && result.selectResp != nil && len(result.selectResp.IntermediateOutputs) == len(result.intermediateOutputTypes))
-
-	var rowLen int
-	var fieldTypes []*types.FieldType
-	var encodeType tipb.EncodeType
-	var chkData []tipb.Chunk
-	intermediateOutputs := result.selectResp.IntermediateOutputs
-	if intermediateOutputsLen := len(intermediateOutputs); channel < intermediateOutputsLen {
-		fieldTypes = result.intermediateOutputTypes[channel]
-		rowLen = len(fieldTypes)
-		encodeType = intermediateOutputs[channel].GetEncodeType()
-		chkData = intermediateOutputs[channel].GetChunks()
-	} else if channel == intermediateOutputsLen {
-		rowLen = result.rowLen
-		fieldTypes = result.fieldTypes
-		encodeType = result.selectResp.GetEncodeType()
-		chkData = result.selectResp.GetChunks()
-	} else {
-		return nil, errors.Errorf(
-			"invalid channel %d for selectResp with %d intermediate outputs",
-			channel, intermediateOutputsLen,
-		)
-	}
-
-	return &selRespChannelIter{
-		channel:        channel,
-		loc:            result.ctx.Location,
-		rowLen:         rowLen,
-		fieldTypes:     fieldTypes,
-		encodeType:     encodeType,
-		chkData:        chkData,
-		reserveChkSize: vardef.DefInitChunkSize,
-	}, nil
-}
-
-func (iter *selRespChannelIter) Channel() int {
-	return iter.channel
-}
-
-func (iter *selRespChannelIter) Next() (SelectResultRow, error) {
-	if iter.chk != nil && iter.chkOffset < iter.chk.NumRows() {
-		iter.chkOffset++
-		return SelectResultRow{
-			ChannelIndex: iter.channel,
-			Row:          iter.chk.GetRow(iter.chkOffset - 1),
-		}, nil
-	}
-
-	if err := iter.nextChunk(); err != nil || iter.chk == nil {
-		return SelectResultRow{}, err
-	}
-
-	iter.chkOffset = 1
-	return SelectResultRow{
-		ChannelIndex: iter.channel,
-		Row:          iter.chk.GetRow(0),
-	}, nil
-}
-
-func (iter *selRespChannelIter) nextChunk() error {
-	iter.chk = nil
-	for iter.curChkIdx < len(iter.chkData) {
-		curData := &iter.chkData[iter.curChkIdx]
-		if len(curData.RowsData) == 0 {
-			iter.curChkIdx++
-			continue
-		}
-
-		switch iter.encodeType {
-		case tipb.EncodeType_TypeDefault:
-			var err error
-			newChk, leftRowsData, err := iter.fillChunkFromDefault(iter.chk, curData.RowsData)
-			if err != nil {
-				return err
-			}
-			iter.chk = newChk
-			curData.RowsData = leftRowsData
-			if newChk.NumRows() < newChk.RequiredRows() {
-				continue
-			}
-		case tipb.EncodeType_TypeChunk:
-			iter.chk = chunk.NewChunkWithCapacity(iter.fieldTypes, 0)
-			chunk.NewDecoder(iter.chk, iter.fieldTypes).Reset(curData.RowsData)
-			curData.RowsData = nil
-		default:
-			return errors.Errorf("unsupported encode type: %v", iter.encodeType)
-		}
-
-		if iter.chk.NumRows() > 0 {
-			break
-		}
-	}
-	return nil
-}
-
-func (iter *selRespChannelIter) fillChunkFromDefault(chk *chunk.Chunk, rowsData []byte) (*chunk.Chunk, []byte, error) {
-	if chk == nil {
-		chk = chunk.NewChunkWithCapacity(iter.fieldTypes, iter.reserveChkSize)
-	}
-	decoder := codec.NewDecoder(chk, iter.loc)
-	for len(rowsData) > 0 && chk.NumRows() < chk.RequiredRows() {
-		for i := range iter.rowLen {
-			var err error
-			rowsData, err = decoder.DecodeOne(rowsData, i, iter.fieldTypes[i])
-			if err != nil {
-				return nil, nil, err
-			}
-		}
-	}
-	return chk, rowsData, nil
-}
-
-type selectResultIter struct {
-	result                  *selectResult
-	channels                []*selRespChannelIter
-	intermediateOutputTypes [][]*types.FieldType
-}
-
-func newSelectResultIter(result *selectResult, intermediateOutputTypes [][]*types.FieldType) *selectResultIter {
-	intest.Assert(result != nil && result.iter == nil)
-	result.iter = &selectResultIter{
-		result:                  result,
-		intermediateOutputTypes: intermediateOutputTypes,
-	}
-	return result.iter
-}
-
-// Next implements the SelectResultIter interface.
-func (iter *selectResultIter) Next(ctx context.Context) (SelectResultRow, error) {
-	for {
-		if r := iter.result; r.selectResp == nil {
-			if err := r.fetchRespWithIntermediateResults(ctx, iter.intermediateOutputTypes); err != nil {
-				return SelectResultRow{}, err
-			}
-
-			if r.selectResp == nil {
-				return SelectResultRow{}, nil
-			}
-
-			if iter.channels == nil {
-				iter.channels = make([]*selRespChannelIter, 0, len(iter.intermediateOutputTypes)+1)
-			}
-
-			for i := 0; i <= len(iter.intermediateOutputTypes); i++ {
-				ch, err := newSelRespChannelIter(r, i)
-				if err != nil {
-					return SelectResultRow{}, err
+				r.stats.buildTaskDuration = ci.GetBuildTaskElapsed()
+				batched, fallback := ci.GetStoreBatchInfo()
+				if batched != 0 || fallback != 0 {
+					r.stats.storeBatchedNum, r.stats.storeBatchedFallbackNum = batched, fallback
+					telemetryStoreBatchedCnt.Add(float64(r.stats.storeBatchedNum))
+					telemetryStoreBatchedFallbackCnt.Add(float64(r.stats.storeBatchedFallbackNum))
+					telemetryBatchedQueryTaskCnt.Add(float64(r.stats.copRespTime.Size()))
 				}
-				iter.channels = append(iter.channels, ch)
 			}
-		}
-
-		for len(iter.channels) > 0 {
-			// here we read the channel in reverse order to make sure the "more complete" data should be read first.
-			// For example, if a cop-request contains IndexLookUp, we should read the final rows first (with the biggest channel index),
-			// and then read the index rows (with smaller channel index) that have not been looked up.
-			lastPos := len(iter.channels) - 1
-			channel := iter.channels[lastPos]
-			row, err := channel.Next()
-			if err != nil || !row.IsEmpty() {
-				return row, err
-			}
-			iter.channels = iter.channels[:lastPos]
-		}
-
-		iter.result.selectResp = nil
+			r.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(r.rootPlanID, r.stats)
+		}()
 	}
-}
-
-// Close implements the SelectResultIter interface.
-func (iter *selectResultIter) Close() error {
-	return iter.result.close()
+	return r.resp.Close()
 }
 
 // CopRuntimeStats is an interface uses to check whether the result has cop runtime stats.
@@ -1181,41 +659,26 @@ type selectResultRuntimeStats struct {
 	backoffSleep            map[string]time.Duration
 	totalProcessTime        time.Duration
 	totalWaitTime           time.Duration
-	reqStat                 *tikv.RegionRequestRuntimeStats
+	rpcStat                 tikv.RegionRequestRuntimeStats
 	distSQLConcurrency      int
 	extraConcurrency        int
 	CoprCacheHitNum         int64
 	storeBatchedNum         uint64
 	storeBatchedFallbackNum uint64
 	buildTaskDuration       time.Duration
-	fetchRspDuration        time.Duration
-	limiterWait             copr.LimiterWaitStats
 }
 
 func (s *selectResultRuntimeStats) mergeCopRuntimeStats(copStats *copr.CopRuntimeStats, respTime time.Duration) {
 	s.copRespTime.Add(execdetails.Duration(respTime))
-	procKeys := execdetails.Int64(0)
 	if copStats.ScanDetail != nil {
-		procKeys = execdetails.Int64(copStats.ScanDetail.ProcessedKeys)
+		s.procKeys.Add(execdetails.Int64(copStats.ScanDetail.ProcessedKeys))
+	} else {
+		s.procKeys.Add(0)
 	}
-	s.procKeys.Add(procKeys)
-	if len(copStats.BackoffSleep) > 0 {
-		if s.backoffSleep == nil {
-			s.backoffSleep = make(map[string]time.Duration)
-		}
-		for k, v := range copStats.BackoffSleep {
-			s.backoffSleep[k] += v
-		}
-	}
+	maps.Copy(s.backoffSleep, copStats.BackoffSleep)
 	s.totalProcessTime += copStats.TimeDetail.ProcessTime
 	s.totalWaitTime += copStats.TimeDetail.WaitTime
-	if copStats.ReqStats != nil {
-		if s.reqStat == nil {
-			s.reqStat = copStats.ReqStats
-		} else {
-			s.reqStat.Merge(copStats.ReqStats)
-		}
-	}
+	s.rpcStat.Merge(copStats.RegionRequestRuntimeStats)
 	if copStats.CoprCacheHit {
 		s.CoprCacheHitNum++
 	}
@@ -1226,14 +689,13 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 		copRespTime:             execdetails.Percentile[execdetails.Duration]{},
 		procKeys:                execdetails.Percentile[execdetails.Int64]{},
 		backoffSleep:            make(map[string]time.Duration, len(s.backoffSleep)),
+		rpcStat:                 tikv.NewRegionRequestRuntimeStats(),
 		distSQLConcurrency:      s.distSQLConcurrency,
 		extraConcurrency:        s.extraConcurrency,
 		CoprCacheHitNum:         s.CoprCacheHitNum,
 		storeBatchedNum:         s.storeBatchedNum,
 		storeBatchedFallbackNum: s.storeBatchedFallbackNum,
 		buildTaskDuration:       s.buildTaskDuration,
-		fetchRspDuration:        s.fetchRspDuration,
-		limiterWait:             s.limiterWait,
 	}
 	newRs.copRespTime.MergePercentile(&s.copRespTime)
 	newRs.procKeys.MergePercentile(&s.procKeys)
@@ -1242,9 +704,7 @@ func (s *selectResultRuntimeStats) Clone() execdetails.RuntimeStats {
 	}
 	newRs.totalProcessTime += s.totalProcessTime
 	newRs.totalWaitTime += s.totalWaitTime
-	if s.reqStat != nil {
-		newRs.reqStat = s.reqStat.Clone()
-	}
+	maps.Copy(newRs.rpcStat.Stats, s.rpcStat.Stats)
 	return &newRs
 }
 
@@ -1256,23 +716,12 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.copRespTime.MergePercentile(&other.copRespTime)
 	s.procKeys.MergePercentile(&other.procKeys)
 
-	if len(other.backoffSleep) > 0 {
-		if s.backoffSleep == nil {
-			s.backoffSleep = make(map[string]time.Duration)
-		}
-		for k, v := range other.backoffSleep {
-			s.backoffSleep[k] += v
-		}
+	for k, v := range other.backoffSleep {
+		s.backoffSleep[k] += v
 	}
 	s.totalProcessTime += other.totalProcessTime
 	s.totalWaitTime += other.totalWaitTime
-	if other.reqStat != nil {
-		if s.reqStat == nil {
-			s.reqStat = other.reqStat.Clone()
-		} else {
-			s.reqStat.Merge(other.reqStat)
-		}
-	}
+	s.rpcStat.Merge(other.rpcStat)
 	s.CoprCacheHitNum += other.CoprCacheHitNum
 	if other.distSQLConcurrency > s.distSQLConcurrency {
 		s.distSQLConcurrency = other.distSQLConcurrency
@@ -1283,13 +732,11 @@ func (s *selectResultRuntimeStats) Merge(rs execdetails.RuntimeStats) {
 	s.storeBatchedNum += other.storeBatchedNum
 	s.storeBatchedFallbackNum += other.storeBatchedFallbackNum
 	s.buildTaskDuration += other.buildTaskDuration
-	s.fetchRspDuration += other.fetchRspDuration
-	s.limiterWait.Merge(other.limiterWait)
 }
 
 func (s *selectResultRuntimeStats) String() string {
 	buf := bytes.NewBuffer(nil)
-	reqStat := s.reqStat
+	rpcStat := s.rpcStat
 	if s.copRespTime.Size() > 0 {
 		size := s.copRespTime.Size()
 		if size == 1 {
@@ -1320,6 +767,15 @@ func (s *selectResultRuntimeStats) String() string {
 				buf.WriteString(execdetails.FormatDuration(s.totalWaitTime))
 			}
 		}
+		copRPC := rpcStat.Stats[tikvrpc.CmdCop]
+		if copRPC != nil && copRPC.Count > 0 {
+			rpcStat = rpcStat.Clone()
+			delete(rpcStat.Stats, tikvrpc.CmdCop)
+			buf.WriteString(", rpc_num: ")
+			buf.WriteString(strconv.FormatInt(copRPC.Count, 10))
+			buf.WriteString(", rpc_time: ")
+			buf.WriteString(execdetails.FormatDuration(time.Duration(copRPC.Consume)))
+		}
 		if config.GetGlobalConfig().TiKVClient.CoprCache.CapacityMB > 0 {
 			fmt.Fprintf(buf, ", copr_cache_hit_ratio: %v",
 				strconv.FormatFloat(s.calcCacheHit(), 'f', 2, 64))
@@ -1329,13 +785,6 @@ func (s *selectResultRuntimeStats) String() string {
 		if s.buildTaskDuration > 0 {
 			buf.WriteString(", build_task_duration: ")
 			buf.WriteString(execdetails.FormatDuration(s.buildTaskDuration))
-		}
-		if !s.limiterWait.IsZero() {
-			buf.WriteString(", limiter_wait:{total:")
-			buf.WriteString(execdetails.FormatDuration(s.limiterWait.TotalTime))
-			buf.WriteString(", max:")
-			buf.WriteString(execdetails.FormatDuration(s.limiterWait.MaxTime))
-			buf.WriteString("}")
 		}
 		if s.distSQLConcurrency > 0 {
 			buf.WriteString(", max_distsql_concurrency: ")
@@ -1354,17 +803,12 @@ func (s *selectResultRuntimeStats) String() string {
 			buf.WriteString(strconv.FormatInt(int64(s.storeBatchedFallbackNum), 10))
 		}
 		buf.WriteString("}")
-		if s.fetchRspDuration > 0 {
-			buf.WriteString(", fetch_resp_duration: ")
-			buf.WriteString(execdetails.FormatDuration(s.fetchRspDuration))
-		}
 	}
 
-	rpcStatsStr := reqStat.String()
+	rpcStatsStr := rpcStat.String()
 	if len(rpcStatsStr) > 0 {
-		buf.WriteString(", rpc_info:{")
+		buf.WriteString(", ")
 		buf.WriteString(rpcStatsStr)
-		buf.WriteString("}")
 	}
 
 	if len(s.backoffSleep) > 0 {

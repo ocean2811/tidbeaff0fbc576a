@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "deadlockhistory",
     srcs = ["deadlock_history.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/deadlockhistory",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/deadlockhistory",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/mysql",
@@ -25,9 +25,8 @@ go_test(
     embed = [":deadlockhistory"],
     flaky = True,
     deps = [
-        "//pkg/meta/model",
         "//pkg/parser",
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "@com_github_pingcap_kvproto//pkg/deadlock",

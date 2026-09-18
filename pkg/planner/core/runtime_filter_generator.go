@@ -15,24 +15,21 @@
 package core
 
 import (
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // RuntimeFilterGenerator One plan one generator
 type RuntimeFilterGenerator struct {
 	rfIDGenerator                 *util.IDGenerator
-	columnUniqueIDToRF            map[int64][]*physicalop.RuntimeFilter
-	parentPhysicalPlan            base.PhysicalPlan
+	columnUniqueIDToRF            map[int64][]*RuntimeFilter
+	parentPhysicalPlan            PhysicalPlan
 	childIdxForParentPhysicalPlan int
 }
 
@@ -58,18 +55,18 @@ PhysicalPlanTree:
  TableScan   ExchangeNode
 (assign RF1)
 */
-func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.PhysicalPlan) {
+func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan PhysicalPlan) {
 	switch physicalPlan := plan.(type) {
-	case *physicalop.PhysicalHashJoin:
+	case *PhysicalHashJoin:
 		generator.generateRuntimeFilterInterval(physicalPlan)
-	case *physicalop.PhysicalTableScan:
+	case *PhysicalTableScan:
 		generator.assignRuntimeFilter(physicalPlan)
-	case *physicalop.PhysicalTableReader:
+	case *PhysicalTableReader:
 		generator.parentPhysicalPlan = plan
 		generator.childIdxForParentPhysicalPlan = 0
-		generator.GenerateRuntimeFilter(physicalPlan.TablePlan)
+		generator.GenerateRuntimeFilter(physicalPlan.tablePlan)
 		if physicalPlan.StoreType == kv.TiFlash {
-			physicalPlan.TablePlans = physicalop.FlattenListPushDownPlan(physicalPlan.TablePlan)
+			physicalPlan.TablePlans = flattenPushDownPlan(physicalPlan.tablePlan)
 		}
 	}
 
@@ -80,21 +77,23 @@ func (generator *RuntimeFilterGenerator) GenerateRuntimeFilter(plan base.Physica
 	}
 }
 
-func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinPlan *physicalop.PhysicalHashJoin) {
+func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinPlan *PhysicalHashJoin) {
 	// precondition: the storage type of hash join must be TiFlash
-	if hashJoinPlan.StoreTp != kv.TiFlash {
+	if hashJoinPlan.storeTp != kv.TiFlash {
+		logutil.BgLogger().Warn("RF only support TiFlash compute engine while storage type of hash join node is not TiFlash",
+			zap.Int("PhysicalHashJoinId", hashJoinPlan.ID()),
+			zap.String("StoreTP", hashJoinPlan.storeTp.Name()))
 		return
 	}
 	// check hash join pattern
 	if !generator.matchRFJoinType(hashJoinPlan) {
 		return
 	}
-	ectx := hashJoinPlan.SCtx().GetExprCtx().GetEvalCtx()
 	// check eq predicate pattern
 	for _, eqPredicate := range hashJoinPlan.EqualConditions {
-		if generator.matchEQPredicate(ectx, eqPredicate, hashJoinPlan.RightIsBuildSide()) {
+		if generator.matchEQPredicate(eqPredicate, hashJoinPlan.RightIsBuildSide()) {
 			// construct runtime filter
-			newRFList, targetColumnUniqueID := physicalop.NewRuntimeFilter(generator.rfIDGenerator, eqPredicate, hashJoinPlan)
+			newRFList, targetColumnUniqueID := NewRuntimeFilter(generator.rfIDGenerator, eqPredicate, hashJoinPlan)
 			// update generator rf list
 			rfList := generator.columnUniqueIDToRF[targetColumnUniqueID]
 			if rfList == nil {
@@ -106,32 +105,32 @@ func (generator *RuntimeFilterGenerator) generateRuntimeFilterInterval(hashJoinP
 	}
 }
 
-func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *physicalop.PhysicalTableScan) {
+func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *PhysicalTableScan) {
 	// match rf for current scan node
-	cacheBuildNodeIDToRFMode := map[int]physicalop.RuntimeFilterMode{}
-	var currentRFList []*physicalop.RuntimeFilter
-	for _, scanOutputColumn := range physicalTableScan.Schema().Columns {
+	cacheBuildNodeIDToRFMode := map[int]RuntimeFilterMode{}
+	var currentRFList []*RuntimeFilter
+	for _, scanOutputColumn := range physicalTableScan.schema.Columns {
 		currentColumnRFList := generator.columnUniqueIDToRF[scanOutputColumn.UniqueID]
 		for _, runtimeFilter := range currentColumnRFList {
 			// compute rf mode
-			var rfMode physicalop.RuntimeFilterMode
-			if cacheBuildNodeIDToRFMode[runtimeFilter.BuildNode.ID()] != 0 {
-				rfMode = cacheBuildNodeIDToRFMode[runtimeFilter.BuildNode.ID()]
+			var rfMode RuntimeFilterMode
+			if cacheBuildNodeIDToRFMode[runtimeFilter.buildNode.ID()] != 0 {
+				rfMode = cacheBuildNodeIDToRFMode[runtimeFilter.buildNode.ID()]
 			} else {
-				rfMode = generator.calculateRFMode(runtimeFilter.BuildNode, physicalTableScan)
-				cacheBuildNodeIDToRFMode[runtimeFilter.BuildNode.ID()] = rfMode
+				rfMode = generator.calculateRFMode(runtimeFilter.buildNode, physicalTableScan)
+				cacheBuildNodeIDToRFMode[runtimeFilter.buildNode.ID()] = rfMode
 			}
 			// todo support global RF
 			if rfMode == variable.RFGlobal {
 				logutil.BgLogger().Debug("Now we don't support global RF. Remove it",
-					zap.Int("BuildNodeId", runtimeFilter.BuildNode.ID()),
+					zap.Int("BuildNodeId", runtimeFilter.buildNode.ID()),
 					zap.Int("TargetNodeId", physicalTableScan.ID()))
 				continue
 			}
-			runtimeFilter.RfMode = rfMode
+			runtimeFilter.rfMode = rfMode
 
 			// assign rf to current node
-			runtimeFilter.Assign(physicalTableScan, scanOutputColumn)
+			runtimeFilter.assign(physicalTableScan, scanOutputColumn)
 			currentRFList = append(currentRFList, runtimeFilter)
 		}
 	}
@@ -145,7 +144,7 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 	// supply selection if there is no predicates above target scan node
 	//if parent, ok := generator.parentPhysicalPlan.(*PhysicalSelection); !ok {
 	//	// StatsInfo: Just set a placeholder value here, and this value will not be used in subsequent optimizations
-	//	sel := PhysicalSelection{hasRFConditions: true}.Init(plan.SCtx(), plan.statsInfo(), plan.SelectOffset())
+	//	sel := PhysicalSelection{hasRFConditions: true}.Init(plan.SCtx(), plan.statsInfo(), plan.SelectBlockOffset())
 	//	sel.fromDataSource = true
 	//	sel.SetChildren(plan)
 	//	generator.parentPhysicalPlan.SetChild(generator.childIdxForParentPhysicalPlan, sel)
@@ -157,17 +156,11 @@ func (generator *RuntimeFilterGenerator) assignRuntimeFilter(physicalTableScan *
 	// filter predicate selectivity, A scan node does not need many RFs, and the same column does not need many RFs
 }
 
-func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *physicalop.PhysicalHashJoin) bool {
-	if hashJoinPlan.JoinType == base.FullOuterJoin {
-		logutil.BgLogger().Debug("Join type does not match RF pattern",
-			zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
-			zap.String("JoinType", hashJoinPlan.JoinType.String()))
-		return false
-	}
+func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *PhysicalHashJoin) bool {
 	if hashJoinPlan.RightIsBuildSide() {
 		// case1: build side is on the right
-		if hashJoinPlan.JoinType == base.LeftOuterJoin || hashJoinPlan.JoinType == base.AntiSemiJoin ||
-			hashJoinPlan.JoinType == base.LeftOuterSemiJoin || hashJoinPlan.JoinType == base.AntiLeftOuterSemiJoin {
+		if hashJoinPlan.JoinType == LeftOuterJoin || hashJoinPlan.JoinType == AntiSemiJoin ||
+			hashJoinPlan.JoinType == LeftOuterSemiJoin || hashJoinPlan.JoinType == AntiLeftOuterSemiJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the right",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
@@ -175,7 +168,7 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *physicalop.Physical
 		}
 	} else {
 		// case2: build side is on the left
-		if hashJoinPlan.JoinType == base.RightOuterJoin {
+		if hashJoinPlan.JoinType == RightOuterJoin {
 			logutil.BgLogger().Debug("Join type does not match RF pattern when build side is on the left",
 				zap.Int32("PlanNodeId", int32(hashJoinPlan.ID())),
 				zap.String("JoinType", hashJoinPlan.JoinType.String()))
@@ -185,22 +178,21 @@ func (*RuntimeFilterGenerator) matchRFJoinType(hashJoinPlan *physicalop.Physical
 	return true
 }
 
-func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPredicate *expression.ScalarFunction,
+func (*RuntimeFilterGenerator) matchEQPredicate(eqPredicate *expression.ScalarFunction,
 	rightIsBuildSide bool) bool {
 	// exclude null safe equal predicate
 	if eqPredicate.FuncName.L == ast.NullEQ {
 		logutil.BgLogger().Debug("The runtime filter doesn't support null safe eq predicate",
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)))
+			zap.String("EQPredicate", eqPredicate.String()))
 		return false
 	}
 	var targetColumn, srcColumn *expression.Column
-	l, r := expression.ExtractColumnsFromColOpCol(eqPredicate)
 	if rightIsBuildSide {
-		targetColumn = l
-		srcColumn = r
+		targetColumn = eqPredicate.GetArgs()[0].(*expression.Column)
+		srcColumn = eqPredicate.GetArgs()[1].(*expression.Column)
 	} else {
-		targetColumn = r
-		srcColumn = l
+		targetColumn = eqPredicate.GetArgs()[1].(*expression.Column)
+		srcColumn = eqPredicate.GetArgs()[0].(*expression.Column)
 	}
 	// match target column
 	// condition1: the target column must be real column
@@ -208,39 +200,39 @@ func (*RuntimeFilterGenerator) matchEQPredicate(ctx expression.EvalContext, eqPr
 	// todo: cast expr in target column
 	if targetColumn.IsHidden || targetColumn.OrigName == "" {
 		logutil.BgLogger().Debug("Target column does not match RF pattern",
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)),
+			zap.String("EQPredicate", eqPredicate.String()),
 			zap.String("TargetColumn", targetColumn.String()),
 			zap.Bool("IsHidden", targetColumn.IsHidden),
 			zap.String("OrigName", targetColumn.OrigName))
 		return false
 	}
 	// match data type
-	srcColumnType := srcColumn.GetStaticType().GetType()
+	srcColumnType := srcColumn.GetType().GetType()
 	if srcColumnType == mysql.TypeJSON || srcColumnType == mysql.TypeBlob ||
 		srcColumnType == mysql.TypeLongBlob || srcColumnType == mysql.TypeMediumBlob ||
-		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetStaticType().Hybrid() || srcColumn.GetStaticType().IsArray() {
+		srcColumnType == mysql.TypeTinyBlob || srcColumn.GetType().Hybrid() || srcColumn.GetType().IsArray() {
 		logutil.BgLogger().Debug("Src column type does not match RF pattern",
-			zap.String("EQPredicate", eqPredicate.StringWithCtx(ctx, errors.RedactLogDisable)),
+			zap.String("EQPredicate", eqPredicate.String()),
 			zap.String("SrcColumn", srcColumn.String()),
-			zap.String("SrcColumnType", srcColumn.GetStaticType().String()))
+			zap.String("SrcColumnType", srcColumn.GetType().String()))
 		return false
 	}
 	return true
 }
 
-func (generator *RuntimeFilterGenerator) calculateRFMode(buildNode *physicalop.PhysicalHashJoin, targetNode *physicalop.PhysicalTableScan) variable.RuntimeFilterMode {
+func (generator *RuntimeFilterGenerator) calculateRFMode(buildNode *PhysicalHashJoin, targetNode *PhysicalTableScan) variable.RuntimeFilterMode {
 	if generator.belongsToSameFragment(buildNode, targetNode) {
 		return variable.RFLocal
 	}
 	return variable.RFGlobal
 }
 
-func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode base.PhysicalPlan, targetNode *physicalop.PhysicalTableScan) bool {
+func (generator *RuntimeFilterGenerator) belongsToSameFragment(currentNode PhysicalPlan, targetNode *PhysicalTableScan) bool {
 	switch currentNode.(type) {
-	case *physicalop.PhysicalExchangeReceiver:
+	case *PhysicalExchangeReceiver:
 		// terminal traversal
 		return false
-	case *physicalop.PhysicalTableScan:
+	case *PhysicalTableScan:
 		if currentNode.ID() == targetNode.ID() {
 			return true
 		}

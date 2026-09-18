@@ -18,19 +18,18 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggfuncs"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 )
 
-func getJSONValue(secondArg types.Datum, valueType *types.FieldType) any {
+func getJSONValue(secondArg types.Datum, valueType *types.FieldType) interface{} {
 	if valueType.GetType() == mysql.TypeString && valueType.GetCharset() == charset.CharsetBin {
 		buf := make([]byte, valueType.GetFlen())
 		copy(buf, secondArg.GetBytes())
@@ -57,28 +56,28 @@ func TestMergePartialResult4JsonObjectagg(t *testing.T) {
 		types.NewFieldType(mysql.TypeDuration),
 	}
 	var argCombines [][]*types.FieldType
-	for i := range typeList {
+	for i := 0; i < len(typeList); i++ {
 		if typeList[i].GetCharset() == charset.CharsetBin {
 			// skip because binary charset cannot be used as key.
 			continue
 		}
-		for j := range typeList {
+		for j := 0; j < len(typeList); j++ {
 			argTypes := []*types.FieldType{typeList[i], typeList[j]}
 			argCombines = append(argCombines, argTypes)
 		}
 	}
 
-	tests := make([]multiArgsAggTest, 0, len(argCombines))
+	var tests []multiArgsAggTest
 	numRows := 5
 
-	for k := range argCombines {
-		entries1 := make(map[string]any)
-		entries2 := make(map[string]any)
+	for k := 0; k < len(argCombines); k++ {
+		entries1 := make(map[string]interface{})
+		entries2 := make(map[string]interface{})
 
 		fGenFunc := getDataGenFunc(argCombines[k][0])
 		sGenFunc := getDataGenFunc(argCombines[k][1])
 
-		for m := range numRows {
+		for m := 0; m < numRows; m++ {
 			firstArg := fGenFunc(m)
 			secondArg := sGenFunc(m)
 			keyString, _ := firstArg.ToString()
@@ -119,28 +118,28 @@ func TestJsonObjectagg(t *testing.T) {
 		types.NewFieldType(mysql.TypeDuration),
 	}
 	var argCombines [][]*types.FieldType
-	for i := range typeList {
+	for i := 0; i < len(typeList); i++ {
 		if typeList[i].GetCharset() == charset.CharsetBin {
 			// skip because binary charset cannot be used as key.
 			continue
 		}
-		for j := range typeList {
+		for j := 0; j < len(typeList); j++ {
 			argTypes := []*types.FieldType{typeList[i], typeList[j]}
 			argCombines = append(argCombines, argTypes)
 		}
 	}
 
-	tests := make([]multiArgsAggTest, 0, len(argCombines))
+	var tests []multiArgsAggTest
 	numRows := 5
 
-	for k := range argCombines {
-		entries := make(map[string]any)
+	for k := 0; k < len(argCombines); k++ {
+		entries := make(map[string]interface{})
 
 		argTypes := argCombines[k]
 		fGenFunc := getDataGenFunc(argTypes[0])
 		sGenFunc := getDataGenFunc(argTypes[1])
 
-		for m := range numRows {
+		for m := 0; m < numRows; m++ {
 			firstArg := fGenFunc(m)
 			secondArg := sGenFunc(m)
 			keyString, _ := firstArg.ToString()
@@ -163,21 +162,21 @@ func TestJsonObjectagg(t *testing.T) {
 func TestMemJsonObjectagg(t *testing.T) {
 	typeList := []byte{mysql.TypeLonglong, mysql.TypeDouble, mysql.TypeFloat, mysql.TypeString, mysql.TypeJSON, mysql.TypeDuration, mysql.TypeNewDecimal, mysql.TypeDate}
 	var argCombines [][]byte
-	for i := range typeList {
-		for j := range typeList {
+	for i := 0; i < len(typeList); i++ {
+		for j := 0; j < len(typeList); j++ {
 			argTypes := []byte{typeList[i], typeList[j]}
 			argCombines = append(argCombines, argTypes)
 		}
 	}
 	numRows := 5
-	for k := range argCombines {
-		entries := make(map[string]any)
+	for k := 0; k < len(argCombines); k++ {
+		entries := make(map[string]interface{})
 
 		argTypes := argCombines[k]
 		fGenFunc := getDataGenFunc(types.NewFieldType(argTypes[0]))
 		sGenFunc := getDataGenFunc(types.NewFieldType(argTypes[1]))
 
-		for m := range numRows {
+		for m := 0; m < numRows; m++ {
 			firstArg := fGenFunc(m)
 			secondArg := sGenFunc(m)
 			keyString, _ := firstArg.ToString()
@@ -206,10 +205,10 @@ func TestMemJsonObjectagg(t *testing.T) {
 	}
 }
 
-func jsonMultiArgsMemDeltaGens(_ sessionctx.Context, srcChk *chunk.Chunk, dataTypes []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
+func jsonMultiArgsMemDeltaGens(srcChk *chunk.Chunk, dataTypes []*types.FieldType, byItems []*util.ByItems) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	m := make(map[string]bool)
-	for i := range srcChk.NumRows() {
+	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, int64(0))

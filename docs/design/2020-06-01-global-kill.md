@@ -2,7 +2,7 @@
 
 - Author(s):     [pingyu](https://github.com/pingyu) (Ping Yu)
 - Last updated:  2021-05-05
-- Discussion at: https://github.com/pingcap/tidb/issues/8854
+- Discussion at: https://github.com/ocean2811/tidbeaff0fbc576a/issues/8854
 
 ## Abstract
 
@@ -10,7 +10,7 @@ This document introduces the design of global connection id, and the global `KIL
 
 ## Background
 
-Currently connection ids are local to TiDB instances, which means that a `KILL x` must be directed to the correct instance, and can not safely be load balanced across the cluster, as discussed [here](https://github.com/pingcap/tidb/issues/8854).
+Currently connection ids are local to TiDB instances, which means that a `KILL x` must be directed to the correct instance, and can not safely be load balanced across the cluster, as discussed [here](https://github.com/ocean2811/tidbeaff0fbc576a/issues/8854).
 
 ## Proposal
 
@@ -70,7 +70,7 @@ Bit 63 is always __ZERO__, making `connID` in range of non-negative int64, to be
 
 - For 32 bits `connID`, `local connID` is possible to be integer-overflow and/or used up, especially on system being busy and/or with long running SQL. So we use a __lock-free queue__ to maintain available `local connID`, dequeue on client connecting, and enqueue on disconnecting. When `local connID` exhausted, upgrade to 64 bits.
 
-- For 64 bits `connID`, allocate `local connID` by __auto-increment__. Besides, flip to zero if integer-overflow, and check `local connID` existed or not by [Server.clients](https://github.com/pingcap/tidb/blob/7e1533392030514440d27ba98001c374cdf8808f/server/server.go#L122) for correctness with trivial cost, as the conflict is very unlikely to happen (It needs more than 3 years to use up 2^40 `local connID` in a 1w TPS instance). At last, return _"Too many connections"_ error if exhausted.
+- For 64 bits `connID`, allocate `local connID` by __auto-increment__. Besides, flip to zero if integer-overflow, and check `local connID` existed or not by [Server.clients](https://github.com/ocean2811/tidbeaff0fbc576a/blob/7e1533392030514440d27ba98001c374cdf8808f/server/server.go#L122) for correctness with trivial cost, as the conflict is very unlikely to happen (It needs more than 3 years to use up 2^40 `local connID` in a 1w TPS instance). At last, return _"Too many connections"_ error if exhausted.
 
 #### 6. Global kill
 On processing `KILL x` command, first extract `serverID` from `x`. Then if `serverID` aims to a remote TiDB instance, get the address from [`CLUSTER_INFO`](https://docs.pingcap.com/tidb/stable/information-schema-cluster-info#cluster_info), and redirect the command to it by "Coprocessor API" provided by the remote TiDB, along with the original user authentication.

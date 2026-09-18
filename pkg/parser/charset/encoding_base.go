@@ -16,11 +16,12 @@ package charset
 import (
 	"bytes"
 	"fmt"
+	"reflect"
 	"strings"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
 	"golang.org/x/text/encoding"
 	"golang.org/x/text/transform"
 )
@@ -48,7 +49,7 @@ func (encodingBase) ToLower(src string) string {
 
 func (b encodingBase) IsValid(src []byte) bool {
 	isValid := true
-	b.self.Foreach(src, opFromUTF8, func(_, _ []byte, ok bool) bool {
+	b.self.Foreach(src, opFromUTF8, func(from, to []byte, ok bool) bool {
 		isValid = ok
 		return ok
 	})
@@ -85,28 +86,20 @@ func (b encodingBase) Transform(dest *bytes.Buffer, src []byte, op Op) (result [
 }
 
 func (b encodingBase) Foreach(src []byte, op Op, fn func(from, to []byte, ok bool) bool) {
-	var (
-		tfm              transform.Transformer
-		runeErrorChecker runeErrorMaybeInputTransformer
-		ok               bool
-	)
+	var tfm transform.Transformer
 	var peek func([]byte) []byte
 	if op&opFromUTF8 != 0 {
 		tfm = b.enc.NewEncoder()
 		peek = EncodingUTF8Impl.Peek
 	} else {
-		dec := b.enc.NewDecoder()
-		tfm = dec
-		runeErrorChecker, ok = dec.Transformer.(runeErrorMaybeInputTransformer)
+		tfm = b.enc.NewDecoder()
 		peek = b.self.Peek
 	}
 	var buf [4]byte
 	for i, w := 0, 0; i < len(src); i += w {
 		w = len(peek(src[i:]))
 		nDst, _, err := tfm.Transform(buf[:], src[i:i+w], false)
-		meetErr := err != nil || (op&opToUTF8 != 0 &&
-			beginWithReplacementChar(buf[:nDst]) &&
-			(!ok || !runeErrorChecker.runeErrorIsLastInput()))
+		meetErr := err != nil || (op&opToUTF8 != 0 && beginWithReplacementChar(buf[:nDst]))
 		if !fn(src[i:i+w], buf[:nDst], !meetErr) {
 			return
 		}
@@ -130,10 +123,12 @@ func generateEncodingErr(name string, invalidBytes []byte) error {
 // HackSlice converts string to slice without copy.
 // Use at your own risk.
 func HackSlice(s string) (b []byte) {
-	if len(s) == 0 {
-		return []byte{}
-	}
-	return unsafe.Slice(unsafe.StringData(s), len(s))
+	pBytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pString := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pBytes.Data = pString.Data
+	pBytes.Len = pString.Len
+	pBytes.Cap = pString.Len
+	return
 }
 
 // HackString converts slice to string without copy.
@@ -142,5 +137,9 @@ func HackString(b []byte) (s string) {
 	if len(b) == 0 {
 		return ""
 	}
-	return unsafe.String(unsafe.SliceData(b), len(b))
+	pbytes := (*reflect.SliceHeader)(unsafe.Pointer(&b))
+	pstring := (*reflect.StringHeader)(unsafe.Pointer(&s))
+	pstring.Data = pbytes.Data
+	pstring.Len = pbytes.Len
+	return
 }

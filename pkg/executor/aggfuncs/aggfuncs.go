@@ -17,11 +17,10 @@ package aggfuncs
 import (
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 // All the AggFunc implementations are listed here for navigation.
@@ -34,16 +33,7 @@ var (
 	_ AggFunc = (*countOriginal4Time)(nil)
 	_ AggFunc = (*countOriginal4Duration)(nil)
 	_ AggFunc = (*countOriginal4JSON)(nil)
-	_ AggFunc = (*countOriginal4VectorFloat32)(nil)
 	_ AggFunc = (*countOriginal4String)(nil)
-
-	_ AggFunc = (*countPartialWithDistinct4Int)(nil)
-	_ AggFunc = (*countPartialWithDistinct4Real)(nil)
-	_ AggFunc = (*countPartialWithDistinct4Decimal)(nil)
-	_ AggFunc = (*countPartialWithDistinct4Duration)(nil)
-	_ AggFunc = (*countPartialWithDistinct4String)(nil)
-	_ AggFunc = (*countPartialWithDistinct)(nil)
-
 	_ AggFunc = (*countOriginalWithDistinct4Int)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Real)(nil)
 	_ AggFunc = (*countOriginalWithDistinct4Decimal)(nil)
@@ -71,7 +61,6 @@ var (
 	_ AggFunc = (*firstRow4Float32)(nil)
 	_ AggFunc = (*firstRow4Float64)(nil)
 	_ AggFunc = (*firstRow4JSON)(nil)
-	_ AggFunc = (*firstRow4VectorFloat32)(nil)
 	_ AggFunc = (*firstRow4Enum)(nil)
 	_ AggFunc = (*firstRow4Set)(nil)
 
@@ -82,75 +71,29 @@ var (
 	_ AggFunc = (*maxMin4Float64)(nil)
 	_ AggFunc = (*maxMin4Decimal)(nil)
 	_ AggFunc = (*maxMin4String)(nil)
-	_ AggFunc = (*maxMin4Time)(nil)
 	_ AggFunc = (*maxMin4Duration)(nil)
 	_ AggFunc = (*maxMin4JSON)(nil)
-	_ AggFunc = (*maxMin4VectorFloat32)(nil)
 	_ AggFunc = (*maxMin4Enum)(nil)
 	_ AggFunc = (*maxMin4Set)(nil)
-	_ AggFunc = (*maxMinCount4Int)(nil)
-	_ AggFunc = (*maxMinCount4Uint)(nil)
-	_ AggFunc = (*maxMinCount4Float32)(nil)
-	_ AggFunc = (*maxMinCount4Float64)(nil)
-	_ AggFunc = (*maxMinCount4Decimal)(nil)
-	_ AggFunc = (*maxMinCount4String)(nil)
-	_ AggFunc = (*maxMinCount4Time)(nil)
-	_ AggFunc = (*maxMinCount4Duration)(nil)
-	_ AggFunc = (*maxMinCount4JSON)(nil)
-	_ AggFunc = (*maxMinCount4VectorFloat32)(nil)
-	_ AggFunc = (*maxMinCount4Enum)(nil)
-	_ AggFunc = (*maxMinCount4Set)(nil)
-	_ AggFunc = (*unsupportedRowBasedFinalMaxMinCount)(nil)
 
 	// All the AggFunc implementations for "AVG" are listed here.
-	_ AggFunc = (*avgPartial4Decimal)(nil)
 	_ AggFunc = (*avgOriginal4Decimal)(nil)
-
-	_ AggFunc = (*avgPartial4Float64)(nil)
-	_ AggFunc = (*avgOriginal4Float64)(nil)
-
-	_ AggFunc = (*avgPartial4DistinctDecimal)(nil)
-	_ AggFunc = (*avgPartial4DistinctFloat64)(nil)
 	_ AggFunc = (*avgOriginal4DistinctDecimal)(nil)
+	_ AggFunc = (*avgPartial4Decimal)(nil)
+
+	_ AggFunc = (*avgOriginal4Float64)(nil)
+	_ AggFunc = (*avgPartial4Float64)(nil)
 	_ AggFunc = (*avgOriginal4DistinctFloat64)(nil)
 
 	// All the AggFunc implementations for "SUM" are listed here.
-	_ AggFunc = (*sum4PartialDistinctFloat64)(nil)
-	_ AggFunc = (*sum4PartialDistinct4Decimal)(nil)
-
-	_ AggFunc = (*sum4OriginalDistinct4Float64)(nil)
-	_ AggFunc = (*sum4OriginalDistinct4Decimal)(nil)
-
+	_ AggFunc = (*sum4DistinctFloat64)(nil)
+	_ AggFunc = (*sum4DistinctDecimal)(nil)
 	_ AggFunc = (*sum4Decimal)(nil)
 	_ AggFunc = (*sum4Float64)(nil)
 
-	// All the AggFunc implementations for "SUM_INT" are listed here.
-	_ AggFunc = (*sumDistinctUint64)(nil)
-	_ AggFunc = (*sumDistinctInt64)(nil)
-
-	_ AggFunc = (*sumUint)(nil)
-	_ AggFunc = (*sumInt)(nil)
-
 	// All the AggFunc implementations for "GROUP_CONCAT" are listed here.
+	_ AggFunc = (*groupConcatDistinct)(nil)
 	_ AggFunc = (*groupConcat)(nil)
-
-	_ AggFunc = (*groupPartialConcatDistinct)(nil)
-	_ AggFunc = (*groupOriginalConcatDistinct)(nil)
-
-	// All the AggFunc implementations for "STDDEV_POP/STDDEV_SAMP/VAR_POP/VAR_SAMP" are listed here.
-	_ AggFunc = (*stdDevPop4Float64)(nil)
-	_ AggFunc = (*stddevSamp4Float64)(nil)
-	_ AggFunc = (*varPop4Float64)(nil)
-	_ AggFunc = (*varSamp4Float64)(nil)
-
-	_ AggFunc = (*stdDevPopOriginal4DistinctFloat64)(nil)
-	_ AggFunc = (*stdDevPopPartial4DistinctFloat64)(nil)
-	_ AggFunc = (*stddevSampOriginal4DistinctFloat64)(nil)
-	_ AggFunc = (*stddevSampPartial4DistinctFloat64)(nil)
-	_ AggFunc = (*varPopOriginal4DistinctFloat64)(nil)
-	_ AggFunc = (*varPopPartial4DistinctFloat64)(nil)
-	_ AggFunc = (*varSampOriginal4DistinctFloat64)(nil)
-	_ AggFunc = (*varSampPartial4DistinctFloat64)(nil)
 
 	// All the AggFunc implementations for "BIT_OR" are listed here.
 	_ AggFunc = (*bitOrUint64)(nil)
@@ -196,34 +139,8 @@ const (
 // to be any type.
 type PartialResult unsafe.Pointer
 
-// AggPartialResultMapper contains aggregate function results
-type AggPartialResultMapper = *hack.MemAwareMap[string, []PartialResult]
-
-// NewAggPartialResultMapper creates a new AggPartialResultMapper
-func NewAggPartialResultMapper() AggPartialResultMapper {
-	return NewAggPartialResultMapperWithCap(0)
-}
-
-// NewAggPartialResultMapperWithCap creates a new AggPartialResultMapper with specified capacity
-func NewAggPartialResultMapperWithCap(capacity int) AggPartialResultMapper {
-	return hack.NewMemAwareMap[string, []PartialResult](capacity)
-}
-
-type serializer interface {
-	// SerializePartialResult will serialize meta data of aggregate function into bytes and put them into chunk.
-	SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper)
-
-	// DeserializePartialResult deserializes from bytes to PartialResult.
-	DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64)
-}
-
-// AggFuncUpdateContext is used to update the aggregate result.
-type AggFuncUpdateContext = exprctx.EvalContext
-
 // AggFunc is the interface to evaluate the aggregate functions.
 type AggFunc interface {
-	serializer
-
 	// AllocPartialResult allocates a specific data structure to store the
 	// partial result, initializes it, and converts it to PartialResult to
 	// return back. The second returned value is the memDelta used to trace
@@ -245,21 +162,21 @@ type AggFunc interface {
 	// partial result according to the functionality and the state of the
 	// aggregate function. The returned value is the memDelta used to trace memory
 	// usage.
-	UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
+	UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error)
 
 	// MergePartialResult will be called in the final phase when parallelly
 	// executing. It converts the PartialResult `src`, `dst` to the same specific
 	// data structure which stores the partial results, and then evaluate the
 	// final result using the partial results as input values. The returned value
 	// is the memDelta used to trace memory usage.
-	MergePartialResult(sctx AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error)
+	MergePartialResult(sctx sessionctx.Context, src, dst PartialResult) (memDelta int64, err error)
 
 	// AppendFinalResult2Chunk finalizes the partial result and append the
 	// final result to the input chunk. Like other operations, it converts the
 	// input PartialResult to the specific data structure which stores the
 	// partial result and then calculates the final result and append that
 	// final result to the chunk provided.
-	AppendFinalResult2Chunk(sctx AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error
+	AppendFinalResult2Chunk(sctx sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error
 }
 
 type baseAggFunc struct {
@@ -275,16 +192,8 @@ type baseAggFunc struct {
 	retTp *types.FieldType
 }
 
-func (*baseAggFunc) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (int64, error) {
-	panic("Not implemented")
-}
-
-func (*baseAggFunc) SerializePartialResult(PartialResult, *chunk.Chunk, *SerializeHelper) {
-	panic("Not implemented")
-}
-
-func (*baseAggFunc) DeserializePartialResult(*chunk.Chunk) ([]PartialResult, int64) {
-	panic("Not implemented")
+func (*baseAggFunc) MergePartialResult(sessionctx.Context, PartialResult, PartialResult) (memDelta int64, err error) {
+	return 0, nil
 }
 
 // SlidingWindowAggFunc is the interface to evaluate the aggregate functions using sliding window.
@@ -295,35 +204,11 @@ type SlidingWindowAggFunc interface {
 	// PartialResult stores the intermediate result which will be used in the next
 	// sliding window, ensure call ResetPartialResult after a frame are evaluated
 	// completely.
-	Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
+	Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error
 }
 
 // MaxMinSlidingWindowAggFunc is the interface to evaluate the max/min agg function using sliding window
 type MaxMinSlidingWindowAggFunc interface {
 	// SetWindowStart sets the start position of window
 	SetWindowStart(start uint64)
-}
-
-type deserializeFunc func(*deserializeHelper) (PartialResult, int64)
-
-func deserializePartialResultCommon(src *chunk.Chunk, ordinal int, deserializeFuncImpl deserializeFunc) ([]PartialResult, int64) {
-	dataCol := src.Column(ordinal)
-	totalMemDelta := int64(0)
-	spillHelper := newDeserializeHelper(dataCol, src.NumRows())
-	partialResults := make([]PartialResult, 0, src.NumRows())
-
-	for {
-		pr, memDelta := deserializeFuncImpl(&spillHelper)
-		if pr == nil {
-			break
-		}
-		partialResults = append(partialResults, pr)
-		totalMemDelta += memDelta
-	}
-
-	if len(partialResults) != src.NumRows() {
-		panic("Fail to deserialize partial result")
-	}
-
-	return partialResults, totalMemDelta
 }

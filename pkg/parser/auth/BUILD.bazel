@@ -8,7 +8,7 @@ go_library(
         "mysql_native_password.go",
         "tidb_sm3.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/parser/auth",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/format",

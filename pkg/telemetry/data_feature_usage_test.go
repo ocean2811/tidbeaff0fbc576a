@@ -15,7 +15,6 @@
 package telemetry_test
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"strconv"
@@ -24,14 +23,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	_ "github.com/pingcap/tidb/pkg/autoid_service"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/telemetry"
-	"github.com/pingcap/tidb/pkg/testkit"
+	_ "github.com/ocean2811/tidbeaff0fbc576a/pkg/autoid_service"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/telemetry"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,53 +37,51 @@ func TestTxnUsageInfo(t *testing.T) {
 
 	t.Run("Used", func(t *testing.T) {
 		tk := testkit.NewTestKit(t, store)
-		tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBEnableAsyncCommit))
-		tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBEnable1PC))
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBEnableAsyncCommit))
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBEnable1PC))
 
 		txnUsage := telemetry.GetTxnUsageInfo(tk.Session())
 		require.False(t, txnUsage.AsyncCommitUsed)
 		require.False(t, txnUsage.OnePCUsed)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBEnableAsyncCommit))
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBEnable1PC))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBEnableAsyncCommit))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBEnable1PC))
 
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.AsyncCommitUsed)
 		require.True(t, txnUsage.OnePCUsed)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBEnableMutationChecker))
-		tk.MustExec(fmt.Sprintf("set global %s = off", vardef.TiDBTxnAssertionLevel))
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBEnableMutationChecker))
+		tk.MustExec(fmt.Sprintf("set global %s = off", variable.TiDBTxnAssertionLevel))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.False(t, txnUsage.MutationCheckerUsed)
 		require.Equal(t, "OFF", txnUsage.AssertionLevel)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBEnableMutationChecker))
-		tk.MustExec(fmt.Sprintf("set global %s = strict", vardef.TiDBTxnAssertionLevel))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBEnableMutationChecker))
+		tk.MustExec(fmt.Sprintf("set global %s = strict", variable.TiDBTxnAssertionLevel))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.MutationCheckerUsed)
 		require.Equal(t, "STRICT", txnUsage.AssertionLevel)
 
-		tk.MustExec(fmt.Sprintf("set global %s = fast", vardef.TiDBTxnAssertionLevel))
+		tk.MustExec(fmt.Sprintf("set global %s = fast", variable.TiDBTxnAssertionLevel))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.Equal(t, "FAST", txnUsage.AssertionLevel)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBRCReadCheckTS))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCReadCheckTS))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RcCheckTS)
 
-		tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBRCWriteCheckTs))
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBRCWriteCheckTs))
 		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
 		require.True(t, txnUsage.RCWriteCheckTS)
 
-		if kerneltype.IsClassic() {
-			tk.MustExec(fmt.Sprintf("set global %s = 0", vardef.TiDBPessimisticTransactionFairLocking))
-			txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
-			require.False(t, txnUsage.FairLocking)
+		tk.MustExec(fmt.Sprintf("set global %s = 0", variable.TiDBPessimisticTransactionFairLocking))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.False(t, txnUsage.FairLocking)
 
-			tk.MustExec(fmt.Sprintf("set global %s = 1", vardef.TiDBPessimisticTransactionFairLocking))
-			txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
-			require.True(t, txnUsage.FairLocking)
-		}
+		tk.MustExec(fmt.Sprintf("set global %s = 1", variable.TiDBPessimisticTransactionFairLocking))
+		txnUsage = telemetry.GetTxnUsageInfo(tk.Session())
+		require.True(t, txnUsage.FairLocking)
 	})
 
 	t.Run("Count", func(t *testing.T) {
@@ -94,12 +89,12 @@ func TestTxnUsageInfo(t *testing.T) {
 		tk.MustExec("use test")
 		tk.MustExec("drop table if exists txn_usage_info")
 		tk.MustExec("create table txn_usage_info (a int)")
-		tk.MustExec(fmt.Sprintf("set %s = 1", vardef.TiDBEnableAsyncCommit))
-		tk.MustExec(fmt.Sprintf("set %s = 1", vardef.TiDBEnable1PC))
+		tk.MustExec(fmt.Sprintf("set %s = 1", variable.TiDBEnableAsyncCommit))
+		tk.MustExec(fmt.Sprintf("set %s = 1", variable.TiDBEnable1PC))
 		tk.MustExec("insert into txn_usage_info values (1)")
-		tk.MustExec(fmt.Sprintf("set %s = 0", vardef.TiDBEnable1PC))
+		tk.MustExec(fmt.Sprintf("set %s = 0", variable.TiDBEnable1PC))
 		tk.MustExec("insert into txn_usage_info values (2)")
-		tk.MustExec(fmt.Sprintf("set %s = 0", vardef.TiDBEnableAsyncCommit))
+		tk.MustExec(fmt.Sprintf("set %s = 0", variable.TiDBEnableAsyncCommit))
 		tk.MustExec("insert into txn_usage_info values (3)")
 
 		txnUsage := telemetry.GetTxnUsageInfo(tk.Session())
@@ -416,6 +411,21 @@ func TestAutoCapture(t *testing.T) {
 	require.True(t, usage.AutoCapture)
 }
 
+func TestClusterIndexUsageInfo(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t1(a int key clustered);")
+	tk.MustExec("create table t2(a int);")
+
+	usage, err := telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.NotNil(t, usage.ClusterIndex)
+	require.Equal(t, uint64(1), usage.NewClusterIndex.NumClusteredTables)
+	require.Equal(t, uint64(2), usage.NewClusterIndex.NumTotalTables)
+}
+
 func TestNonTransactionalUsage(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -466,7 +476,7 @@ func TestPagingUsageInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.True(t, usage.EnablePaging == vardef.DefTiDBEnablePaging)
+	require.True(t, usage.EnablePaging == variable.DefTiDBEnablePaging)
 
 	tk.Session().GetSessionVars().EnablePaging = false
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
@@ -480,7 +490,7 @@ func TestCostModelVer2UsageInfo(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, usage.EnableCostModelVer2, vardef.DefTiDBCostModelVer == 2)
+	require.Equal(t, usage.EnableCostModelVer2, variable.DefTiDBCostModelVer == 2)
 
 	tk.Session().GetSessionVars().CostModelVersion = 2
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
@@ -550,35 +560,31 @@ func TestAddIndexAccelerationAndMDL(t *testing.T) {
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.Equal(t, int64(0), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.NoError(t, err)
+
+	allow := variable.EnableFastReorg.Load()
+	require.Equal(t, true, allow)
+	tk.MustExec("set global tidb_enable_metadata_lock = 0")
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists tele_t")
 	tk.MustExec("create table tele_t(id int, b int)")
 	tk.MustExec("insert into tele_t values(1,1),(2,2);")
+	tk.MustExec("alter table tele_t add index idx_org(b)")
+	usage, err = telemetry.GetFeatureUsage(tk.Session())
+	require.NoError(t, err)
+	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, false, usage.DDLUsageCounter.MetadataLockUsed)
 
-	var expectedCnt int64
-	if kerneltype.IsClassic() {
-		allow := vardef.EnableFastReorg.Load()
-		require.Equal(t, true, allow)
-		tk.MustExec("set global tidb_enable_metadata_lock = 0")
-		tk.MustExec("alter table tele_t add index idx_org(b)")
-		usage, err = telemetry.GetFeatureUsage(tk.Session())
-		require.NoError(t, err)
-		expectedCnt++
-		require.Equal(t, expectedCnt, usage.DDLUsageCounter.AddIndexIngestUsed)
-		require.Equal(t, false, usage.DDLUsageCounter.MetadataLockUsed)
-		tk.MustExec("set global tidb_enable_metadata_lock = 1")
-	}
-
-	allow := vardef.EnableFastReorg.Load()
+	tk.MustExec("set @@global.tidb_ddl_enable_fast_reorg = on")
+	tk.MustExec("set global tidb_enable_metadata_lock = 1")
+	allow = variable.EnableFastReorg.Load()
 	require.Equal(t, true, allow)
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, expectedCnt, usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, int64(1), usage.DDLUsageCounter.AddIndexIngestUsed)
 	tk.MustExec("alter table tele_t add index idx_new(b)")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	expectedCnt++
-	require.Equal(t, expectedCnt, usage.DDLUsageCounter.AddIndexIngestUsed)
+	require.Equal(t, int64(2), usage.DDLUsageCounter.AddIndexIngestUsed)
 	require.Equal(t, true, usage.DDLUsageCounter.MetadataLockUsed)
 }
 
@@ -588,7 +594,7 @@ func TestGlobalMemoryControl(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.True(t, usage.EnableGlobalMemoryControl == (vardef.DefTiDBServerMemoryLimit != "0"))
+	require.True(t, usage.EnableGlobalMemoryControl == (variable.DefTiDBServerMemoryLimit != "0"))
 
 	tk.MustExec("set global tidb_server_memory_limit = 5 << 30")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
@@ -612,22 +618,22 @@ func TestIndexMergeUsage(t *testing.T) {
 
 	usage, err := telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, usage.IndexMergeUsageCounter.IndexMergeUsed, int64(1))
+	require.Equal(t, usage.IndexMergeUsageCounter.IndexMergeUsed, int64(0))
 
 	tk.MustExec("select /*+ use_index_merge(t1, idx1, idx2) */ * from t1 where c1 = 1 and c2 = 1")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
+	require.Equal(t, int64(1), usage.IndexMergeUsageCounter.IndexMergeUsed)
 
 	tk.MustExec("select /*+ use_index_merge(t1, idx1, idx2) */ * from t1 where c1 = 1 or c2 = 1")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(3), usage.IndexMergeUsageCounter.IndexMergeUsed)
+	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
 
 	tk.MustExec("select /*+ no_index_merge() */ * from t1 where c1 = 1 or c2 = 1")
 	usage, err = telemetry.GetFeatureUsage(tk.Session())
 	require.NoError(t, err)
-	require.Equal(t, int64(3), usage.IndexMergeUsageCounter.IndexMergeUsed)
+	require.Equal(t, int64(2), usage.IndexMergeUsageCounter.IndexMergeUsed)
 }
 
 func TestTTLTelemetry(t *testing.T) {
@@ -647,7 +653,7 @@ func TestTTLTelemetry(t *testing.T) {
 	tk.MustExec("set @@global.tidb_ttl_job_enable=0")
 
 	getTTLTable := func(name string) *model.TableInfo {
-		tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+		tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr(name))
 		require.NoError(t, err)
 		require.NotNil(t, tbl.Meta().TTLInfo)
 		return tbl.Meta()
@@ -671,7 +677,7 @@ func TestTTLTelemetry(t *testing.T) {
 			require.NotEqual(t, tblID, partitionID)
 		}
 
-		summary := make(map[string]any)
+		summary := make(map[string]interface{})
 		summary["total_rows"] = totalRows
 		summary["success_rows"] = totalRows - errorRows
 		summary["error_rows"] = errorRows
@@ -811,9 +817,9 @@ func TestStoreBatchCopr(t *testing.T) {
 	require.Equal(t, diff.BatchedFallbackCount, int64(0))
 
 	tk.MustExec("insert into tele_batch_t values(1, 1, 1), (2, 2, 2), (3, 3, 3), (5, 5, 5), (7, 7, 7)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/setRangesPerTask", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/setRangesPerTask", "return(1)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/setRangesPerTask"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/setRangesPerTask"))
 	}()
 	tk.MustQuery("select * from tele_batch_t force index(i) where k between 1 and 3 and k % 2 != 0").Sort().
 		Check(testkit.Rows("1 1 1", "3 3 3"))
@@ -826,9 +832,9 @@ func TestStoreBatchCopr(t *testing.T) {
 	require.Equal(t, diff.BatchedCount, int64(1))
 	require.Equal(t, diff.BatchedFallbackCount, int64(0))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/batchCopRegionError", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/batchCopRegionError", "return"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/batchCopRegionError"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/batchCopRegionError"))
 	}()
 	tk.MustQuery("select * from tele_batch_t force index(i) where k between 1 and 3 and k % 2 != 0").Sort().
 		Check(testkit.Rows("1 1 1", "3 3 3"))
@@ -856,9 +862,6 @@ func TestStoreBatchCopr(t *testing.T) {
 }
 
 func TestFairLockingUsage(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("fair locking is not supported for next-gen yet")
-	}
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk2 := testkit.NewTestKit(t, store)
@@ -904,7 +907,7 @@ func TestFairLockingUsage(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk3.MustExec("begin pessimistic")
 	tk3.MustExec("update t set v = v + 1 where id = 1")
-	ch := make(chan any)
+	ch := make(chan interface{})
 	go func() {
 		tk.MustExec("update t set v = v + 1 where id = 1")
 		ch <- nil

@@ -17,29 +17,29 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
 type visitor struct{}
 
-func (visitor) Enter(ast.Node) bool {
-	return false
+func (v visitor) Enter(in ast.Node) (ast.Node, bool) {
+	return in, false
 }
 
-func (visitor) Leave(ast.Node) bool {
-	return true
+func (v visitor) Leave(in ast.Node) (ast.Node, bool) {
+	return in, true
 }
 
 type visitor1 struct {
 	visitor
 }
 
-func (visitor1) Enter(ast.Node) bool {
-	return true
+func (visitor1) Enter(in ast.Node) (ast.Node, bool) {
+	return in, true
 }
 
 func TestMiscVisitorCover(t *testing.T) {
@@ -80,25 +80,13 @@ func TestMiscVisitorCover(t *testing.T) {
 				{},
 			},
 		},
-		&ast.PurgeMaterializedViewLogStmt{Table: &ast.TableName{}},
-		&ast.CancelMaterializedViewJobStmt{Tp: ast.CancelMaterializedViewJobTypeLogPurge},
 		&ast.ShutdownStmt{},
 	}
 
 	for _, v := range stmts {
-		ast.Walk(v, visitor{})
-		ast.Walk(v, visitor1{})
+		v.Accept(visitor{})
+		v.Accept(visitor1{})
 	}
-}
-
-func TestPurgeMaterializedViewLogStmtIsStmtNode(t *testing.T) {
-	_, ok := any(&ast.PurgeMaterializedViewLogStmt{}).(ast.StmtNode)
-	require.True(t, ok)
-}
-
-func TestCancelMaterializedViewJobStmtIsStmtNode(t *testing.T) {
-	_, ok := any(&ast.CancelMaterializedViewJobStmt{}).(ast.StmtNode)
-	require.True(t, ok)
 }
 
 func TestDDLVisitorCoverMisc(t *testing.T) {
@@ -121,8 +109,8 @@ constraint foreign key (jobabbr) references ffxi_jobtype (jobabbr) on delete cas
 	stmts, _, err := parse.Parse(sql, "", "")
 	require.NoError(t, err)
 	for _, stmt := range stmts {
-		ast.Walk(stmt, visitor{})
-		ast.Walk(stmt, visitor1{})
+		stmt.Accept(visitor{})
+		stmt.Accept(visitor1{})
 	}
 }
 
@@ -141,8 +129,23 @@ import into t from '/file.csv'`
 	stmts, _, err := p.Parse(sql, "", "")
 	require.NoError(t, err)
 	for _, stmt := range stmts {
-		ast.Walk(stmt, visitor{})
-		ast.Walk(stmt, visitor1{})
+		stmt.Accept(visitor{})
+		stmt.Accept(visitor1{})
+	}
+}
+
+// test Change Pump or drainer status sql parser
+func TestChangeStmt(t *testing.T) {
+	sql := `change pump to node_state='paused' for node_id '127.0.0.1:8249';
+change drainer to node_state='paused' for node_id '127.0.0.1:8249';
+shutdown;`
+
+	p := parser.New()
+	stmts, _, err := p.Parse(sql, "", "")
+	require.NoError(t, err)
+	for _, stmt := range stmts {
+		stmt.Accept(visitor{})
+		stmt.Accept(visitor1{})
 	}
 }
 
@@ -177,6 +180,37 @@ func TestSensitiveStatement(t *testing.T) {
 	}
 }
 
+func TestUserSpec(t *testing.T) {
+	hashString := "*3D56A309CD04FA2EEF181462E59011F075C89548"
+	u := ast.UserSpec{
+		User: &auth.UserIdentity{
+			Username: "test",
+		},
+		AuthOpt: &ast.AuthOption{
+			ByAuthString: false,
+			AuthString:   "xxx",
+			HashString:   hashString,
+		},
+	}
+	pwd, ok := u.EncodedPassword()
+	require.True(t, ok)
+	require.Equal(t, u.AuthOpt.HashString, pwd)
+
+	u.AuthOpt.HashString = "not-good-password-format"
+	_, ok = u.EncodedPassword()
+	require.False(t, ok)
+
+	u.AuthOpt.ByAuthString = true
+	pwd, ok = u.EncodedPassword()
+	require.True(t, ok)
+	require.Equal(t, hashString, pwd)
+
+	u.AuthOpt.AuthString = ""
+	pwd, ok = u.EncodedPassword()
+	require.True(t, ok)
+	require.Equal(t, "", pwd)
+}
+
 func TestTableOptimizerHintRestore(t *testing.T) {
 	testCases := []NodeRestoreTestCase{
 		{"USE_INDEX(t1 c1)", "USE_INDEX(`t1` `c1`)"},
@@ -207,12 +241,6 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"NO_ORDER_INDEX(t1@sel_1 c1)", "NO_ORDER_INDEX(`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` `c1`)"},
 		{"NO_ORDER_INDEX(test.t1@sel_1 partition(p0) c1)", "NO_ORDER_INDEX(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
-		{"INDEX_LOOKUP_PUSHDOWN(t1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1` `c1`)"},
-		{"INDEX_LOOKUP_PUSHDOWN(test.t1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1` `c1`)"},
-		{"INDEX_LOOKUP_PUSHDOWN(@sel_1 t1 c1)", "INDEX_LOOKUP_PUSHDOWN(@`sel_1` `t1` `c1`)"},
-		{"INDEX_LOOKUP_PUSHDOWN(t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`t1`@`sel_1` `c1`)"},
-		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` `c1`)"},
-		{"INDEX_LOOKUP_PUSHDOWN(test.t1@sel_1 partition(p0) c1)", "INDEX_LOOKUP_PUSHDOWN(`test`.`t1`@`sel_1` PARTITION(`p0`) `c1`)"},
 		{"TIDB_SMJ(`t1`)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1)", "TIDB_SMJ(`t1`)"},
 		{"TIDB_SMJ(t1,t2)", "TIDB_SMJ(`t1`, `t2`)"},
@@ -234,23 +262,13 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 		{"HASH_JOIN_PROBE(t1)", "HASH_JOIN_PROBE(`t1`)"},
 		{"LEADING(t1)", "LEADING(`t1`)"},
 		{"LEADING(t1, c1)", "LEADING(`t1`, `c1`)"},
-		{"LEADING((t1, c1), t2)", "LEADING((`t1`, `c1`), `t2`)"},
-		{"LEADING(t1, (c1, t2))", "LEADING(`t1`, (`c1`, `t2`))"},
-		{"LEADING(((t1, c1), t2), t3)", "LEADING(((`t1`, `c1`), `t2`), `t3`)"},
-		{"LEADING(t1, (c1, (t2, t3)))", "LEADING(`t1`, (`c1`, (`t2`, `t3`)))"},
 		{"LEADING(t1, c1, t2)", "LEADING(`t1`, `c1`, `t2`)"},
 		{"LEADING(@sel1 t1, c1)", "LEADING(@`sel1` `t1`, `c1`)"},
 		{"LEADING(@sel1 t1)", "LEADING(@`sel1` `t1`)"},
 		{"LEADING(@sel1 t1, c1, t2)", "LEADING(@`sel1` `t1`, `c1`, `t2`)"},
-		{"LEADING(@sel1 t1, (c1, t2))", "LEADING(@`sel1` `t1`, (`c1`, `t2`))"},
-		{"LEADING(@sel1 t1, (c1, t2), d3)", "LEADING(@`sel1` `t1`, (`c1`, `t2`), `d3`)"},
 		{"LEADING(t1@sel1)", "LEADING(`t1`@`sel1`)"},
 		{"LEADING(t1@sel1, c1)", "LEADING(`t1`@`sel1`, `c1`)"},
 		{"LEADING(t1@sel1, c1, t2)", "LEADING(`t1`@`sel1`, `c1`, `t2`)"},
-		{"LEADING((t1@sel1, c1), t2)", "LEADING((`t1`@`sel1`, `c1`), `t2`)"},
-		{"LEADING(t1@sel1, (c1, t2))", "LEADING(`t1`@`sel1`, (`c1`, `t2`))"},
-		{"LEADING(t1@sel1, c1, t2, d3)", "LEADING(`t1`@`sel1`, `c1`, `t2`, `d3`)"},
-		{"LEADING(t1@sel1, (c1, t2), d3)", "LEADING(`t1`@`sel1`, (`c1`, `t2`), `d3`)"},
 		{"MAX_EXECUTION_TIME(3000)", "MAX_EXECUTION_TIME(3000)"},
 		{"MAX_EXECUTION_TIME(@sel1 3000)", "MAX_EXECUTION_TIME(@`sel1` 3000)"},
 		{"USE_INDEX_MERGE(t1 c1)", "USE_INDEX_MERGE(`t1` `c1`)"},
@@ -295,6 +313,17 @@ func TestTableOptimizerHintRestore(t *testing.T) {
 	runNodeRestoreTest(t, testCases, "select /*+ %s */ * from t1 join t2", extractNodeFunc)
 }
 
+func TestChangeStmtRestore(t *testing.T) {
+	testCases := []NodeRestoreTestCase{
+		{"CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE PUMP TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
+		{"CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'", "CHANGE DRAINER TO NODE_STATE ='paused' FOR NODE_ID '127.0.0.1:9090'"},
+	}
+	extractNodeFunc := func(node ast.Node) ast.Node {
+		return node.(*ast.ChangeStmt)
+	}
+	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
+}
+
 func TestBRIESecureText(t *testing.T) {
 	testCases := []struct {
 		input   string
@@ -318,10 +347,6 @@ func TestBRIESecureText(t *testing.T) {
 		{
 			input:   "backup database * to 'gcs://bucket/prefix?access-key=irrelevant&credentials-file=/home/user/secrets.txt'",
 			secured: `^\QBACKUP DATABASE * TO 'gcs://bucket/prefix?\E((access-key=irrelevant|credentials-file=/home/user/secrets\.txt)(&|'$)){2}`,
-		},
-		{
-			input:   "backup database * to 'azure://container/prefix?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&sas-token=token'",
-			secured: `^\QBACKUP DATABASE * TO 'azure://container/prefix?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx'\E$`,
 		},
 	}
 
@@ -360,10 +385,6 @@ func TestPlanReplayerStmtRestore(t *testing.T) {
 			"PLAN REPLAYER DUMP EXPLAIN ANALYZE 'test'"},
 		{"plan replayer dump with stats as of timestamp '12345' explain analyze 'test2'",
 			"PLAN REPLAYER DUMP WITH STATS AS OF TIMESTAMP _UTF8MB4'12345' EXPLAIN ANALYZE 'test2'"},
-		{"plan replayer dump explain ('SELECT * FROM t1', 'SELECT * FROM t2')",
-			"PLAN REPLAYER DUMP EXPLAIN ('SELECT * FROM t1', 'SELECT * FROM t2')"},
-		{"plan replayer dump explain analyze ('SELECT * FROM t1')",
-			"PLAN REPLAYER DUMP EXPLAIN ANALYZE ('SELECT * FROM t1')"},
 	}
 	extractNodeFunc := func(node ast.Node) ast.Node {
 		return node.(*ast.PlanReplayerStmt)
@@ -390,25 +411,9 @@ func TestRedactURL(t *testing.T) {
 		{args{"s3://bucket/file?other-key=123"}, "s3://bucket/file?other-key=123"},
 		{args{"s3://bucket/file?access-key=123"}, "s3://bucket/file?access-key=xxxxxx"},
 		{args{"s3://bucket/file?secret-access-key=123"}, "s3://bucket/file?secret-access-key=xxxxxx"},
-		{args{"ks3://bucket/file?access-key=123"}, "ks3://bucket/file?access-key=xxxxxx"},
-		{args{"ks3://bucket/file?secret-access-key=123"}, "ks3://bucket/file?secret-access-key=xxxxxx"},
-		{args{"oss://bucket/file?access-key=123"}, "oss://bucket/file?access-key=xxxxxx"},
-		{args{"oss://bucket/file?secret-access-key=123"}, "oss://bucket/file?secret-access-key=xxxxxx"},
 		// underline
 		{args{"s3://bucket/file?access_key=123"}, "s3://bucket/file?access_key=xxxxxx"},
 		{args{"s3://bucket/file?secret_access_key=123"}, "s3://bucket/file?secret_access_key=xxxxxx"},
-		{args{"azure://bucket/file?sas-token=123"}, "azure://bucket/file?sas-token=xxxxxx"},
-		{args{"azblob://container/file?sas-token=123"}, "azblob://container/file?sas-token=xxxxxx"},
-		{args{"azure://container/file?account-name=test&sas_token=123"}, "azure://container/file?account-name=test&sas_token=xxxxxx"},
-		{args{"azure://container/file?account-name=test&account-key=123"}, "azure://container/file?account-key=xxxxxx&account-name=test"},
-		{args{"azblob://container/file?encryption-key=123"}, "azblob://container/file?encryption-key=xxxxxx"},
-		{args{"azure://container/file?account_key=123&encryption_key=456"}, "azure://container/file?account_key=xxxxxx&encryption_key=xxxxxx"},
-		{args{"azure://container/file?account-name=acct&endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsv%3D2023-11-03%26sig%3Dsecret&sas-token=token"}, "azure://container/file?account-name=acct&endpoint=xxxxxx&sas-token=xxxxxx"},
-		{args{"azblob://container/file?EndPoint=https%3A%2F%2Facct.blob.core.windows.net%2F%3Fsig%3Dsecret&access-tier=Hot"}, "azblob://container/file?EndPoint=xxxxxx&access-tier=Hot"},
-		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net"}, "azure://container/file?endpoint=xxxxxx"},
-		{args{"azure://container/file?endpoint=https%3A%2F%2Facct.blob.core.windows.net%2F%25zz%3Fsig%3Dsecret"}, "azure://container/file?endpoint=xxxxxx"},
-		{args{"azblob://container/file?endpoint=first-secret&endpoint=second-secret"}, "azblob://container/file?endpoint=xxxxxx"},
-		{args{"s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"}, "s3://bucket/file?endpoint=https%3A%2F%2Fs3.example.com"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.args.str, func(t *testing.T) {
@@ -416,133 +421,6 @@ func TestRedactURL(t *testing.T) {
 			if got != tt.want {
 				t.Errorf("RedactURL() got = %v, want %v", got, tt.want)
 			}
-		})
-	}
-}
-
-func TestAddQueryWatchStmtRestore(t *testing.T) {
-	testCases := []NodeRestoreTestCase{
-		{
-			"QUERY WATCH ADD ACTION KILL SQL TEXT EXACT TO 'select * from test.t2'",
-			"QUERY WATCH ADD ACTION = KILL SQL TEXT EXACT TO _UTF8MB4'select * from test.t2'",
-		},
-		{
-			"QUERY WATCH ADD RESOURCE GROUP rg1 SQL TEXT SIMILAR TO 'select * from test.t2'",
-			"QUERY WATCH ADD RESOURCE GROUP `rg1` SQL TEXT SIMILAR TO _UTF8MB4'select * from test.t2'",
-		},
-		{
-			"QUERY WATCH ADD RESOURCE GROUP rg1 ACTION COOLDOWN PLAN DIGEST 'd08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57'",
-			"QUERY WATCH ADD RESOURCE GROUP `rg1` ACTION = COOLDOWN PLAN DIGEST _UTF8MB4'd08bc323a934c39dc41948b0a073725be3398479b6fa4f6dd1db2a9b115f7f57'",
-		},
-		{
-			"QUERY WATCH ADD ACTION SWITCH_GROUP(rg1) SQL TEXT EXACT TO 'select * from test.t1'",
-			"QUERY WATCH ADD ACTION = SWITCH_GROUP(`rg1`) SQL TEXT EXACT TO _UTF8MB4'select * from test.t1'",
-		},
-	}
-	extractNodeFunc := func(node ast.Node) ast.Node {
-		return node.(*ast.AddQueryWatchStmt)
-	}
-	runNodeRestoreTest(t, testCases, "%s", extractNodeFunc)
-}
-
-func TestRedactTrafficStmt(t *testing.T) {
-	testCases := []struct {
-		input   string
-		secured string
-	}{
-		{
-			input:   "traffic capture to 's3://bucket/prefix?access-key=abcdefghi&secret-access-key=123&force-path-style=true' duration='1m'",
-			secured: "TRAFFIC CAPTURE TO 's3://bucket/prefix?access-key=xxxxxx&force-path-style=true&secret-access-key=xxxxxx' DURATION = '1m'",
-		},
-		{
-			input:   "traffic replay from 's3://bucket/prefix?access-key=abcdefghi&secret-access-key=123&force-path-style=true' user='root' password='123456'",
-			secured: "TRAFFIC REPLAY FROM 's3://bucket/prefix?access-key=xxxxxx&force-path-style=true&secret-access-key=xxxxxx' USER = 'root' PASSWORD = 'xxxxxx'",
-		},
-	}
-
-	p := parser.New()
-	for _, tc := range testCases {
-		node, err := p.ParseOneStmt(tc.input, "", "")
-		require.NoError(t, err, tc.input)
-		n, ok := node.(ast.SensitiveStmtNode)
-		require.True(t, ok, tc.input)
-		require.Equal(t, tc.secured, n.SecureText(), tc.input)
-	}
-}
-
-func TestSetStmtSecureTextRedactsEmbeddingAPIKeys(t *testing.T) {
-	p := parser.New()
-	for _, name := range []string{
-		"tidb_exp_embed_jina_ai_api_key",
-		"tidb_exp_embed_openai_api_key",
-		"tidb_exp_embed_cohere_api_key",
-		"tidb_exp_embed_huggingface_api_key",
-		"tidb_exp_embed_nvidia_nim_api_key",
-		"tidb_exp_embed_gemini_api_key",
-	} {
-		input := fmt.Sprintf("SET @@GLOBAL.%s = 'secret-api-key'", name)
-		node, err := p.ParseOneStmt(input, "", "")
-		require.NoError(t, err, input)
-		stmt, ok := node.(*ast.SetStmt)
-		require.True(t, ok, input)
-		require.Equal(t, fmt.Sprintf("SET @@GLOBAL.`%s`='******'", name), stmt.SecureText(), input)
-	}
-
-	// A similarly named user variable is not a system API-key configuration.
-	node, err := p.ParseOneStmt("SET @tidb_exp_embed_openai_api_key = 'ordinary-user-value'", "", "")
-	require.NoError(t, err)
-	stmt := node.(*ast.SetStmt)
-	require.Contains(t, stmt.SecureText(), "ordinary-user-value")
-	require.NotContains(t, stmt.SecureText(), "******")
-
-	// A system variable that merely shares the old prefix/suffix pattern must
-	// not be redacted unless it is one of the explicitly supported API-key variables.
-	node, err = p.ParseOneStmt("SET @@GLOBAL.tidb_exp_embed_future_api_key = 'ordinary-system-value'", "", "")
-	require.NoError(t, err)
-	stmt = node.(*ast.SetStmt)
-	require.Contains(t, stmt.SecureText(), "ordinary-system-value")
-	require.NotContains(t, stmt.SecureText(), "******")
-}
-
-func TestSetPwdStmtSecureText(t *testing.T) {
-	// Direct construction: SetPwdStmt.User can be nil (current-user form),
-	// matching what Restore handles. SecureText must not leak "<nil>".
-	cases := []struct {
-		name string
-		stmt *ast.SetPwdStmt
-		want string
-	}{
-		{
-			name: "nil user",
-			stmt: &ast.SetPwdStmt{Password: "x"},
-			want: "set password",
-		},
-		{
-			name: "nil user with retain",
-			stmt: &ast.SetPwdStmt{Password: "x", RetainCurrentPassword: true},
-			want: "set password RETAIN CURRENT PASSWORD",
-		},
-		{
-			name: "named user",
-			stmt: &ast.SetPwdStmt{
-				User:     &auth.UserIdentity{Username: "u", Hostname: "%"},
-				Password: "x",
-			},
-			want: "set password for user u@%",
-		},
-		{
-			name: "named user with retain",
-			stmt: &ast.SetPwdStmt{
-				User:                  &auth.UserIdentity{Username: "u", Hostname: "%"},
-				Password:              "x",
-				RetainCurrentPassword: true,
-			},
-			want: "set password for user u@% RETAIN CURRENT PASSWORD",
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			require.Equal(t, c.want, c.stmt.SecureText())
 		})
 	}
 }

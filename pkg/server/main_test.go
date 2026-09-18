@@ -19,15 +19,15 @@ import (
 	"os"
 	"reflect"
 	"testing"
-	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
-	"github.com/pingcap/tidb/pkg/testkit/testmain"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testdata"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testmain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testsetup"
+	topsqlstate "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
@@ -43,49 +43,40 @@ func TestMain(m *testing.M) {
 	topsqlstate.EnableTopSQL()
 	unistore.CheckResourceTagForTopSQLInGoTest = true
 
+	// AsyncCommit will make DDL wait 2.5s before changing to the next state.
+	// Set schema lease to avoid it from making CI slow.
+	session.SetSchemaLease(0)
+
 	tikv.EnableFailpoints()
 
 	metrics.RegisterMetrics()
 
 	// sanity check: the global config should not be changed by other pkg init function.
-	// see also https://github.com/pingcap/tidb/issues/22162
+	// see also https://github.com/ocean2811/tidbeaff0fbc576a/issues/22162
 	defaultConfig := config.NewConfig()
 	globalConfig := config.GetGlobalConfig()
 	if !reflect.DeepEqual(defaultConfig, globalConfig) {
 		_, _ = fmt.Fprintf(os.Stderr, "server: the global config has been changed.\n")
 		_, _ = fmt.Fprintf(os.Stderr, "default: %#v\nglobal: %#v", defaultConfig, globalConfig)
 	}
+	testDataMap.LoadTestSuiteData("testdata", "optimizer_suite")
 
 	opts := []goleak.Option{
-		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*defaultPolicy).processItems"),
-		goleak.IgnoreTopFunction("github.com/dgraph-io/ristretto.(*Cache).processItems"),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
-		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.newBackoffFn.func1"),
 		goleak.IgnoreTopFunction("time.Sleep"),
-		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/v3.waitRetryBackoff"),
 		goleak.IgnoreTopFunction("database/sql.(*Tx).awaitDone"),
 		goleak.IgnoreTopFunction("internal/poll.runtime_pollWait"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).readLoop"),
 		goleak.IgnoreTopFunction("net/http.(*persistConn).writeLoop"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/server.NewServer.func1"),
+		goleak.IgnoreTopFunction("github.com/ocean2811/tidbeaff0fbc576a/pkg/server.NewServer.func1"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("github.com/go-sql-driver/mysql.(*mysqlConn).startWatcher.func1"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc.(*addrConn).resetTransport"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc.(*ccBalancerWrapper).watcher"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*controlBuffer).get"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/transport.(*http2Client).keepalive"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc/internal/grpcsync.(*CallbackSerializer).run"),
-		goleak.IgnoreTopFunction("google.golang.org/grpc/test/bufconn.(*Listener).Accept"),
-		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 	}
 
 	callback := func(i int) int {
-		// Wait for asynchronous cleanup in mockstore-related clients before goleak checks.
-		time.Sleep(time.Second)
 		testDataMap.GenerateOutputIfNeeded()
 		return i
 	}

@@ -15,9 +15,7 @@
 package collate
 
 import (
-	"unicode/utf8"
-
-	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/stringutil"
 )
 
 type generalCICollator struct {
@@ -25,7 +23,20 @@ type generalCICollator struct {
 
 // Compare implements Collator interface.
 func (*generalCICollator) Compare(a, b string) int {
-	return compareCommon(a, b, convertRuneGeneralCI)
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
+	r1, r2 := rune(0), rune(0)
+	ai, bi := 0, 0
+	for ai < len(a) && bi < len(b) {
+		r1, ai = decodeRune(a, ai)
+		r2, bi = decodeRune(b, bi)
+
+		cmp := int(convertRuneGeneralCI(r1)) - int(convertRuneGeneralCI(r2))
+		if cmp != 0 {
+			return sign(cmp)
+		}
+	}
+	return sign((len(a) - ai) - (len(b) - bi))
 }
 
 // Key implements Collator interface.
@@ -33,46 +44,22 @@ func (gc *generalCICollator) Key(str string) []byte {
 	return gc.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
-// ImmutableKey implement Collator interface.
-func (gc *generalCICollator) ImmutableKey(str string) []byte {
-	return gc.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
-}
-
 // KeyWithoutTrimRightSpace implements Collator interface.
 func (*generalCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str))
-	i, rLen := 0, 0
+	i := 0
 	r := rune(0)
 	for i < len(str) {
-		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
-		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
-		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
-		r, rLen = utf8.DecodeRuneInString(str[i:])
-		invalid := r == utf8.RuneError && rLen == 1
-		if invalid {
-			return buf
-		}
-
-		i = i + rLen
+		r, i = decodeRune(str, i)
 		u16 := convertRuneGeneralCI(r)
 		buf = append(buf, byte(u16>>8), byte(u16))
 	}
 	return buf
 }
 
-// MaxKeyLen implements Collator interface.
-func (*generalCICollator) MaxKeyLen(s string) int {
-	return utf8.RuneCountInString(s) * 2
-}
-
 // Pattern implements Collator interface.
 func (*generalCICollator) Pattern() WildcardPattern {
 	return &ciPattern{}
-}
-
-// Clone implements Collator interface.
-func (*generalCICollator) Clone() Collator {
-	return new(generalCICollator)
 }
 
 type ciPattern struct {
@@ -87,20 +74,20 @@ func (p *ciPattern) Compile(patternStr string, escape byte) {
 
 // Compile implements WildcardPattern interface.
 func (p *ciPattern) DoMatch(str string) bool {
-	return stringutil.DoMatchCustomized(str, p.patChars, p.patTypes, func(a, b rune) bool {
+	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
 		return convertRuneGeneralCI(a) == convertRuneGeneralCI(b)
 	})
 }
 
-func convertRuneGeneralCI(r rune) uint32 {
+func convertRuneGeneralCI(r rune) uint16 {
 	if r > 0xFFFF {
 		return 0xFFFD
 	}
 	plane := planeTable[r>>8]
 	if plane == nil {
-		return uint32(r)
+		return uint16(r)
 	}
-	return uint32(plane[r&0xFF])
+	return plane[r&0xFF]
 }
 
 var (

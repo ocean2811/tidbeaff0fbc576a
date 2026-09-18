@@ -7,11 +7,10 @@ go_library(
         "codec.go",
         "id.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/plancodec",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/plancodec",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/kv",
-        "//pkg/types",
         "//pkg/util/hack",
         "//pkg/util/logutil",
         "//pkg/util/memory",

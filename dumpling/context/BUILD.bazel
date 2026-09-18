@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "context",
     srcs = ["context.go"],
-    importpath = "github.com/pingcap/tidb/dumpling/context",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context",
     visibility = ["//visibility:public"],
     deps = ["//dumpling/log"],
 )

@@ -16,13 +16,12 @@ package durationcheck
 
 import (
 	"github.com/charithe/durationcheck"
-	"github.com/pingcap/tidb/build/linter/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/build/linter/util"
 )
 
 // Analyzer is the analyzer struct of durationcheck.
 var Analyzer = durationcheck.Analyzer
 
 func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

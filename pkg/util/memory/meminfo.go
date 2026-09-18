@@ -20,9 +20,9 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/sysutil"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/cgroup"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/shirou/gopsutil/v3/mem"
 	"go.uber.org/zap"
 )
@@ -174,18 +174,18 @@ func init() {
 // It is to solve the problem that tidb cannot read cgroup in the systemd.
 // so if we are not in the container, we compare the cgroup memory limit and the physical memory,
 // the cgroup memory limit is smaller, we use the cgroup memory hook.
-func InitMemoryHook() error {
+func InitMemoryHook() {
 	if cgroup.InContainer() {
 		logutil.BgLogger().Info("use cgroup memory hook because TiDB is in the container")
-		return nil
+		return
 	}
 	cgroupValue, err := cgroup.GetMemoryLimit()
 	if err != nil {
-		return err
+		return
 	}
 	physicalValue, err := memTotalNormal()
 	if err != nil {
-		return err
+		return
 	}
 	if physicalValue > cgroupValue && cgroupValue != 0 {
 		MemTotal = MemTotalCGroup
@@ -196,11 +196,9 @@ func InitMemoryHook() error {
 		logutil.BgLogger().Info("use physical memory hook", zap.Int64("cgroupMemorySize", int64(cgroupValue)), zap.Int64("physicalMemorySize", int64(physicalValue)))
 	}
 	_, err = MemTotal()
-	if err != nil {
-		return err
-	}
+	terror.MustNil(err)
 	_, err = MemUsed()
-	return err
+	terror.MustNil(err)
 }
 
 // InstanceMemUsed returns the memory usage of this TiDB server

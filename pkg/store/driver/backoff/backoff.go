@@ -17,8 +17,8 @@ package backoff
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	derr "github.com/pingcap/tidb/pkg/store/driver/error"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	derr "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver/error"
 	"github.com/tikv/client-go/v2/tikv"
 )
 

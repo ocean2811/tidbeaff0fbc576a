@@ -17,15 +17,12 @@ package sqlexec
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx/sysproctrack"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/zap"
+	"github.com/pingcap/kvproto/pkg/kvrpcpb"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 // RestrictedSQLExecutor is an interface provides executing restricted sql statement.
@@ -49,31 +46,25 @@ type RestrictedSQLExecutor interface {
 	// Attention: it does not prevent you from doing parse("select '%?", ";SQL injection!;") => "select '';SQL injection!;'".
 	// One argument should be a standalone entity. It should not "concat" with other placeholders and characters.
 	// This function only saves you from processing potentially unsafe parameters.
-	ParseWithParams(ctx context.Context, sql string, args ...any) (ast.StmtNode, error)
+	ParseWithParams(ctx context.Context, sql string, args ...interface{}) (ast.StmtNode, error)
 	// ExecRestrictedStmt run sql statement in ctx with some restrictions.
-	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*resolve.ResultField, error)
+	ExecRestrictedStmt(ctx context.Context, stmt ast.StmtNode, opts ...OptionFuncAlias) ([]chunk.Row, []*ast.ResultField, error)
 	// ExecRestrictedSQL run sql string in ctx with internal session.
-	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...any) ([]chunk.Row, []*resolve.ResultField, error)
+	ExecRestrictedSQL(ctx context.Context, opts []OptionFuncAlias, sql string, args ...interface{}) ([]chunk.Row, []*ast.ResultField, error)
 }
 
 // ExecOption is a struct defined for ExecRestrictedStmt/SQL option.
 type ExecOption struct {
 	AnalyzeSnapshot    *bool
-	TrackSysProc       func(id uint64, ctx sysproctrack.TrackProc) error
+	TrackSysProc       func(id uint64, ctx sessionctx.Context) error
 	UnTrackSysProc     func(id uint64)
-	SessionVarsSetup   SessionVarsSetup
 	PartitionPruneMode string
 	SnapshotTS         uint64
 	AnalyzeVer         int
 	TrackSysProcID     uint64
 	IgnoreWarning      bool
 	UseCurSession      bool
-	EnableDDLAnalyze   bool
 }
-
-// SessionVarsSetup configures the session variables used by a restricted SQL
-// execution and returns a function that restores the original values.
-type SessionVarsSetup func(vars *variable.SessionVars) func()
 
 // OptionFuncAlias is defined for the optional parameter of ExecRestrictedStmt/SQL.
 type OptionFuncAlias = func(option *ExecOption)
@@ -83,9 +74,9 @@ var ExecOptionIgnoreWarning = func(option *ExecOption) {
 	option.IgnoreWarning = true
 }
 
-// ExecOptionEnableDDLAnalyze tells ExecRestrictedStmt/SQL analyze to include reorg state index.
-var ExecOptionEnableDDLAnalyze = func(option *ExecOption) {
-	option.EnableDDLAnalyze = true
+// ExecOptionAnalyzeVer1 tells ExecRestrictedStmt/SQL to collect statistics with version1.
+var ExecOptionAnalyzeVer1 = func(option *ExecOption) {
+	option.AnalyzeVer = 1
 }
 
 // ExecOptionAnalyzeVer2 tells ExecRestrictedStmt/SQL to collect statistics with version2.
@@ -119,13 +110,6 @@ var ExecOptionUseSessionPool = func(option *ExecOption) {
 	option.UseCurSession = false
 }
 
-// ExecOptionWithSessionVarsSetup configures the internal session used by ExecRestrictedSQL.
-var ExecOptionWithSessionVarsSetup = func(setup SessionVarsSetup) OptionFuncAlias {
-	return func(option *ExecOption) {
-		option.SessionVarsSetup = setup
-	}
-}
-
 // ExecOptionWithSnapshot tells ExecRestrictedStmt/SQL to use a snapshot.
 func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 	return func(option *ExecOption) {
@@ -134,7 +118,7 @@ func ExecOptionWithSnapshot(snapshot uint64) OptionFuncAlias {
 }
 
 // ExecOptionWithSysProcTrack tells ExecRestrictedStmt/SQL to track sys process.
-func ExecOptionWithSysProcTrack(procID uint64, track func(id uint64, ctx sysproctrack.TrackProc) error, untrack func(id uint64)) OptionFuncAlias {
+func ExecOptionWithSysProcTrack(procID uint64, track func(id uint64, ctx sessionctx.Context) error, untrack func(id uint64)) OptionFuncAlias {
 	return func(option *ExecOption) {
 		option.TrackSysProcID = procID
 		option.TrackSysProc = track
@@ -159,8 +143,14 @@ type SQLExecutor interface {
 	// Execute is only used by plugins. It can be removed soon.
 	Execute(ctx context.Context, sql string) ([]RecordSet, error)
 	// ExecuteInternal means execute sql as the internal sql.
-	ExecuteInternal(ctx context.Context, sql string, args ...any) (RecordSet, error)
+	ExecuteInternal(ctx context.Context, sql string, args ...interface{}) (RecordSet, error)
 	ExecuteStmt(ctx context.Context, stmtNode ast.StmtNode) (RecordSet, error)
+	// allowed when tikv disk full happened.
+	SetDiskFullOpt(level kvrpcpb.DiskFullOpt)
+	// clear allowed flag
+	ClearDiskFullOpt()
+	// GetSessionVars is used to read some result after ExecuteXXX
+	GetSessionVars() *variable.SessionVars
 }
 
 // SQLParser is an interface provides parsing sql statement.
@@ -179,9 +169,6 @@ type SQLParser interface {
 type Statement interface {
 	// OriginText gets the origin SQL text.
 	OriginText() string
-
-	// Text gets the utf8 encoded SQL text.
-	Text() string
 
 	// GetTextToLog gets the desensitization SQL text for logging.
 	GetTextToLog(keepHint bool) string
@@ -205,7 +192,7 @@ type Statement interface {
 // RecordSet is an abstract result set interface to help get data from Plan.
 type RecordSet interface {
 	// Fields gets result fields.
-	Fields() []*resolve.ResultField
+	Fields() []*ast.ResultField
 
 	// Next reads records into chunk.
 	Next(ctx context.Context, req *chunk.Chunk) error
@@ -216,22 +203,6 @@ type RecordSet interface {
 	// Close closes the underlying iterator, call Next after Close will
 	// restart the iteration.
 	Close() error
-}
-
-// DetachableRecordSet extends the `RecordSet` to support detaching from current session context
-type DetachableRecordSet interface {
-	RecordSet
-
-	// TryDetach detaches the record set from the current session context.
-	//
-	// The last two return value indicates whether the record set is suitable for detaching, and whether
-	// it detaches successfully. If it faces any error during detaching (and there is no way to rollback),
-	// it will return the error. If an error is returned, the record set (and session) will be left at
-	// an unknown state.
-	//
-	// If the caller receives `_, false, _`, it means the original record set can still be used. If the caller
-	// receives an error, it means the original record set (and the session) is dirty.
-	TryDetach() (RecordSet, bool, error)
 }
 
 // MultiQueryNoDelayResult is an interface for one no-delay result for one statement in multi-queries.
@@ -263,30 +234,4 @@ func DrainRecordSet(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chun
 		}
 		req = chunk.Renew(req, maxChunkSize)
 	}
-}
-
-// DrainRecordSetAndClose fetches the rows in the RecordSet and closes it.
-func DrainRecordSetAndClose(ctx context.Context, rs RecordSet, maxChunkSize int) ([]chunk.Row, error) {
-	defer func() {
-		if closeErr := rs.Close(); closeErr != nil {
-			// Log the close error but don't override the main error
-			logutil.BgLogger().Error("failed to close recordSet in DrainRecordSetAndClose", zap.Error(closeErr))
-		}
-	}()
-
-	return DrainRecordSet(ctx, rs, maxChunkSize)
-}
-
-// ExecSQL executes the sql and returns the result.
-// TODO: consider retry.
-func ExecSQL(ctx context.Context, exec SQLExecutor, sql string, args ...any) ([]chunk.Row, error) {
-	rs, err := exec.ExecuteInternal(ctx, sql, args...)
-	if err != nil {
-		return nil, err
-	}
-	if rs != nil {
-		defer terror.Call(rs.Close)
-		return DrainRecordSet(ctx, rs, 1024)
-	}
-	return nil, nil
 }

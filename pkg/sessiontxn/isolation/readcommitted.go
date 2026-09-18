@@ -20,18 +20,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	isolation_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -108,7 +105,7 @@ func (p *PessimisticRCTxnContextProvider) OnStmtStart(ctx context.Context, node 
 // NeedSetRCCheckTSFlag checks whether it's needed to set `RCCheckTS` flag in current stmtctx.
 func NeedSetRCCheckTSFlag(ctx sessionctx.Context, node ast.Node) bool {
 	sessionVars := ctx.GetSessionVars()
-	if sessionVars.ConnectionID > 0 && vardef.EnableRCReadCheckTS.Load() &&
+	if sessionVars.ConnectionID > 0 && variable.EnableRCReadCheckTS.Load() &&
 		sessionVars.InTxn() && !sessionVars.RetryInfo.Retrying &&
 		plannercore.IsReadOnly(node, sessionVars) {
 		return true
@@ -233,11 +230,6 @@ func (p *PessimisticRCTxnContextProvider) handleAfterPessimisticLockError(ctx co
 			return sessiontxn.ErrorAction(err)
 		}
 	} else if terror.ErrorEqual(kv.ErrWriteConflict, lockErr) {
-		sessVars := p.sctx.GetSessionVars()
-		waitTime := time.Since(sessVars.StmtCtx.GetLockWaitStartTime())
-		if waitTime.Milliseconds() >= sessVars.LockWaitTimeout {
-			return sessiontxn.ErrorAction(tikverr.ErrLockWaitTimeout)
-		}
 		logutil.Logger(p.ctx).Debug("pessimistic write conflict, retry statement",
 			zap.Uint64("txn", txnCtx.StartTS),
 			zap.Uint64("forUpdateTS", txnCtx.GetForUpdateTS()),
@@ -271,26 +263,26 @@ func (p *PessimisticRCTxnContextProvider) AdviseWarmup() error {
 }
 
 // planSkipGetTsoFromPD identifies the plans which don't need get newest ts from PD.
-func planSkipGetTsoFromPD(sctx sessionctx.Context, plan base.Plan, inLockOrWriteStmt bool) bool {
+func planSkipGetTsoFromPD(sctx sessionctx.Context, plan plannercore.Plan, inLockOrWriteStmt bool) bool {
 	switch v := plan.(type) {
-	case *physicalop.PointGetPlan:
+	case *plannercore.PointGetPlan:
 		return sctx.GetSessionVars().RcWriteCheckTS && (v.Lock || inLockOrWriteStmt)
-	case base.PhysicalPlan:
+	case plannercore.PhysicalPlan:
 		if len(v.Children()) == 0 {
 			return false
 		}
-		_, isPhysicalLock := v.(*physicalop.PhysicalLock)
+		_, isPhysicalLock := v.(*plannercore.PhysicalLock)
 		for _, p := range v.Children() {
 			if !planSkipGetTsoFromPD(sctx, p, isPhysicalLock || inLockOrWriteStmt) {
 				return false
 			}
 		}
 		return true
-	case *physicalop.Update:
+	case *plannercore.Update:
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
-	case *physicalop.Delete:
+	case *plannercore.Delete:
 		return planSkipGetTsoFromPD(sctx, v.SelectPlan, true)
-	case *physicalop.Insert:
+	case *plannercore.Insert:
 		return v.SelectPlan == nil && len(v.OnDuplicate) == 0 && !v.IsReplace
 	}
 	return false
@@ -302,7 +294,7 @@ func planSkipGetTsoFromPD(sctx sessionctx.Context, plan base.Plan, inLockOrWrite
 // 2. An INSERT statement without "SELECT" subquery.
 // 3. A UPDATE statement whose sub execution plan is "PointGet".
 // 4. A DELETE statement whose sub execution plan is "PointGet".
-func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val any) (err error) {
+func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val interface{}) (err error) {
 	if p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}
@@ -310,7 +302,7 @@ func (p *PessimisticRCTxnContextProvider) AdviseOptimizeWithPlan(val any) (err e
 		return nil
 	}
 
-	plan, ok := val.(base.Plan)
+	plan, ok := val.(plannercore.Plan)
 	if !ok {
 		return nil
 	}

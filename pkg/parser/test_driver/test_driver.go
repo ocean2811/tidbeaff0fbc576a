@@ -12,6 +12,7 @@
 // limitations under the License.
 
 //go:build !codes
+// +build !codes
 
 package test_driver
 
@@ -20,25 +21,25 @@ import (
 	"io"
 	"strconv"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
 )
 
 func init() {
 	ast.NewValueExpr = newValueExpr
 	ast.NewParamMarkerExpr = newParamMarkerExpr
-	ast.NewDecimal = func(str string) (any, error) {
+	ast.NewDecimal = func(str string) (interface{}, error) {
 		dec := new(MyDecimal)
 		err := dec.FromString([]byte(str))
 		return dec, err
 	}
-	ast.NewHexLiteral = func(str string) (any, error) {
+	ast.NewHexLiteral = func(str string) (interface{}, error) {
 		h, err := NewHexLiteral(str)
 		return h, err
 	}
-	ast.NewBitLiteral = func(str string) (any, error) {
+	ast.NewBitLiteral = func(str string) (interface{}, error) {
 		b, err := NewBitLiteral(str)
 		return b, err
 	}
@@ -157,7 +158,7 @@ func (n *ValueExpr) Format(w io.Writer) {
 }
 
 // newValueExpr creates a ValueExpr with value, and sets default field type.
-func newValueExpr(value any, charset string, collate string) ast.ValueExpr {
+func newValueExpr(value interface{}, charset string, collate string) ast.ValueExpr {
 	if ve, ok := value.(*ValueExpr); ok {
 		return ve
 	}
@@ -185,14 +186,6 @@ func (n *ValueExpr) Accept(v ast.Visitor) (ast.Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ValueExpr)
-	return v.Leave(n)
-}
-
-// AcceptInPlace implements direct in-place traversal for ast.Walk.
-func (n *ValueExpr) AcceptInPlace(v ast.InPlaceVisitor) bool {
-	if skipChildren := v.Enter(n); skipChildren {
-		return v.Leave(n)
-	}
 	return v.Leave(n)
 }
 
@@ -229,14 +222,6 @@ func (n *ParamMarkerExpr) Accept(v ast.Visitor) (ast.Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*ParamMarkerExpr)
-	return v.Leave(n)
-}
-
-// AcceptInPlace implements direct in-place traversal for ast.Walk.
-func (n *ParamMarkerExpr) AcceptInPlace(v ast.InPlaceVisitor) bool {
-	if skipChildren := v.Enter(n); skipChildren {
-		return v.Leave(n)
-	}
 	return v.Leave(n)
 }
 

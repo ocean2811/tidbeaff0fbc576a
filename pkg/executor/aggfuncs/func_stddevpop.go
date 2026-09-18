@@ -17,14 +17,15 @@ package aggfuncs
 import (
 	"math"
 
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 type stdDevPop4Float64 struct {
 	varPop4Float64
 }
 
-func (e *stdDevPop4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *stdDevPop4Float64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopFloat64)(pr)
 	if p.count == 0 {
 		chk.AppendNull(e.ordinal)
@@ -35,32 +36,17 @@ func (e *stdDevPop4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr P
 	return nil
 }
 
-type stdDevPopOriginal4DistinctFloat64 struct {
-	varPopOriginal4DistinctFloat64
+type stdDevPop4DistinctFloat64 struct {
+	varPop4DistinctFloat64
 }
 
-type stdDevPopPartial4DistinctFloat64 struct {
-	varPopPartial4DistinctFloat64
-}
-
-func (e *stdDevPopOriginal4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *stdDevPop4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4VarPopDistinctFloat64)(pr)
-	count, variance := calculateDistinctFloat64Variance(p)
-	if count == 0 {
+	if p.count == 0 {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	chk.AppendFloat64(e.ordinal, math.Sqrt(variance/float64(count)))
-	return nil
-}
-
-func (e *stdDevPopPartial4DistinctFloat64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
-	p := (*partialResult4VarPopDistinctFloat64)(pr)
-	count, variance := calculateDistinctFloat64Variance(p)
-	if count == 0 {
-		chk.AppendNull(e.ordinal)
-		return nil
-	}
-	chk.AppendFloat64(e.ordinal, math.Sqrt(variance/float64(count)))
+	variance := p.variance / float64(p.count)
+	chk.AppendFloat64(e.ordinal, math.Sqrt(variance))
 	return nil
 }

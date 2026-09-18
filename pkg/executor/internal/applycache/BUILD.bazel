@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "applycache",
     srcs = ["apply_cache.go"],
-    importpath = "github.com/pingcap/tidb/pkg/executor/internal/applycache",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/applycache",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
         "//pkg/sessionctx",
@@ -24,7 +24,6 @@ go_test(
     ],
     embed = [":applycache"],
     flaky = True,
-    shard_count = 2,
     deps = [
         "//pkg/config",
         "//pkg/meta/autoid",

@@ -39,7 +39,7 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
 )
 
 const (
@@ -125,7 +125,7 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 
 	// 17, 18, 19
 	bufDS := bufA
-	for range 16 + int(sumA[0]) {
+	for i = 0; i < 16+int(sumA[0]); i++ {
 		bufDS.Write(salt)
 	}
 	sumDS := hash(bufDS.Bytes())
@@ -144,7 +144,7 @@ func hashCrypt(plaintext string, salt []byte, iterations int, hash func([]byte) 
 	// 21
 	bufC := bufA
 	var sumC []byte
-	for i = range iterations {
+	for i = 0; i < iterations; i++ {
 		bufC.Reset()
 		if i&1 != 0 {
 			bufC.Write(p)

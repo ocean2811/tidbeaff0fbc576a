@@ -15,13 +15,10 @@
 package schematracker
 
 import (
-	"context"
-
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/tables"
 )
 
 // InfoStore is a simple structure that stores DBInfo and TableInfo. It's modifiable and not thread-safe.
@@ -41,25 +38,7 @@ func NewInfoStore(lowerCaseTableNames int) *InfoStore {
 	}
 }
 
-// InitFromIS initializes InfoStore from an InfoSchema.
-func (i *InfoStore) InitFromIS(is infoschema.InfoSchema) error {
-	ctx := context.Background()
-	for _, db := range is.AllSchemas() {
-		i.PutSchema(db)
-		tbls, err := is.SchemaTableInfos(ctx, db.Name)
-		if err != nil {
-			return err
-		}
-		for _, tbl := range tbls {
-			if err = i.PutTable(db.Name, tbl); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
-func (i *InfoStore) ciStr2Key(name ast.CIStr) string {
+func (i *InfoStore) ciStr2Key(name model.CIStr) string {
 	if i.lowerCaseTableNames == 0 {
 		return name.O
 	}
@@ -67,7 +46,7 @@ func (i *InfoStore) ciStr2Key(name ast.CIStr) string {
 }
 
 // SchemaByName returns the DBInfo of given name. nil if not found.
-func (i *InfoStore) SchemaByName(name ast.CIStr) *model.DBInfo {
+func (i *InfoStore) SchemaByName(name model.CIStr) *model.DBInfo {
 	key := i.ciStr2Key(name)
 	return i.dbs[key]
 }
@@ -82,7 +61,7 @@ func (i *InfoStore) PutSchema(dbInfo *model.DBInfo) {
 }
 
 // DeleteSchema deletes the schema from InfoSchema. Returns true when the schema exists, false otherwise.
-func (i *InfoStore) DeleteSchema(name ast.CIStr) bool {
+func (i *InfoStore) DeleteSchema(name model.CIStr) bool {
 	key := i.ciStr2Key(name)
 	_, ok := i.dbs[key]
 	if !ok {
@@ -94,7 +73,7 @@ func (i *InfoStore) DeleteSchema(name ast.CIStr) bool {
 }
 
 // TableByName returns the TableInfo. It will also return the error like an infoschema.
-func (i *InfoStore) TableByName(_ context.Context, schema, table ast.CIStr) (*model.TableInfo, error) {
+func (i *InfoStore) TableByName(schema, table model.CIStr) (*model.TableInfo, error) {
 	schemaKey := i.ciStr2Key(schema)
 	tables, ok := i.tables[schemaKey]
 	if !ok {
@@ -110,8 +89,8 @@ func (i *InfoStore) TableByName(_ context.Context, schema, table ast.CIStr) (*mo
 }
 
 // TableClonedByName is like TableByName, plus it will clone the TableInfo.
-func (i *InfoStore) TableClonedByName(schema, table ast.CIStr) (*model.TableInfo, error) {
-	tbl, err := i.TableByName(context.Background(), schema, table)
+func (i *InfoStore) TableClonedByName(schema, table model.CIStr) (*model.TableInfo, error) {
+	tbl, err := i.TableByName(schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -119,7 +98,7 @@ func (i *InfoStore) TableClonedByName(schema, table ast.CIStr) (*model.TableInfo
 }
 
 // PutTable puts a TableInfo, it will overwrite the old one. If the schema doesn't exist, it will return ErrDatabaseNotExists.
-func (i *InfoStore) PutTable(schemaName ast.CIStr, tblInfo *model.TableInfo) error {
+func (i *InfoStore) PutTable(schemaName model.CIStr, tblInfo *model.TableInfo) error {
 	schemaKey := i.ciStr2Key(schemaName)
 	tables, ok := i.tables[schemaKey]
 	if !ok {
@@ -132,7 +111,7 @@ func (i *InfoStore) PutTable(schemaName ast.CIStr, tblInfo *model.TableInfo) err
 
 // DeleteTable deletes the TableInfo, it will return ErrDatabaseNotExists or ErrTableNotExists when schema or table does
 // not exist.
-func (i *InfoStore) DeleteTable(schema, table ast.CIStr) error {
+func (i *InfoStore) DeleteTable(schema, table model.CIStr) error {
 	schemaKey := i.ciStr2Key(schema)
 	tables, ok := i.tables[schemaKey]
 	if !ok {
@@ -158,7 +137,7 @@ func (i *InfoStore) AllSchemaNames() []string {
 }
 
 // AllTableNamesOfSchema return all table names of a schema.
-func (i *InfoStore) AllTableNamesOfSchema(schema ast.CIStr) ([]string, error) {
+func (i *InfoStore) AllTableNamesOfSchema(schema model.CIStr) ([]string, error) {
 	schemaKey := i.ciStr2Key(schema)
 	tables, ok := i.tables[schemaKey]
 	if !ok {
@@ -173,33 +152,42 @@ func (i *InfoStore) AllTableNamesOfSchema(schema ast.CIStr) ([]string, error) {
 
 // InfoStoreAdaptor convert InfoStore to InfoSchema, it only implements a part of InfoSchema interface to be
 // used by DDL interface.
+// nolint:unused
 type InfoStoreAdaptor struct {
 	infoschema.InfoSchema
 	inner *InfoStore
 }
 
 // SchemaByName implements the InfoSchema interface.
-func (i InfoStoreAdaptor) SchemaByName(schema ast.CIStr) (*model.DBInfo, bool) {
+// nolint:unused
+func (i InfoStoreAdaptor) SchemaByName(schema model.CIStr) (*model.DBInfo, bool) {
 	dbInfo := i.inner.SchemaByName(schema)
 	return dbInfo, dbInfo != nil
 }
 
 // TableExists implements the InfoSchema interface.
-func (i InfoStoreAdaptor) TableExists(schema, table ast.CIStr) bool {
-	tableInfo, _ := i.inner.TableByName(context.Background(), schema, table)
+// nolint:unused
+func (i InfoStoreAdaptor) TableExists(schema, table model.CIStr) bool {
+	tableInfo, _ := i.inner.TableByName(schema, table)
 	return tableInfo != nil
 }
 
+// TableIsView implements the InfoSchema interface.
+// nolint:unused
+func (i InfoStoreAdaptor) TableIsView(schema, table model.CIStr) bool {
+	tableInfo, _ := i.inner.TableByName(schema, table)
+	if tableInfo == nil {
+		return false
+	}
+	return tableInfo.IsView()
+}
+
 // TableByName implements the InfoSchema interface.
-func (i InfoStoreAdaptor) TableByName(ctx context.Context, schema, table ast.CIStr) (t table.Table, err error) {
-	tableInfo, err := i.inner.TableByName(ctx, schema, table)
+// nolint:unused
+func (i InfoStoreAdaptor) TableByName(schema, table model.CIStr) (t table.Table, err error) {
+	tableInfo, err := i.inner.TableByName(schema, table)
 	if err != nil {
 		return nil, err
 	}
 	return tables.MockTableFromMeta(tableInfo), nil
-}
-
-// TableInfoByName implements the InfoSchema interface.
-func (i InfoStoreAdaptor) TableInfoByName(schema, table ast.CIStr) (*model.TableInfo, error) {
-	return i.inner.TableByName(context.Background(), schema, table)
 }

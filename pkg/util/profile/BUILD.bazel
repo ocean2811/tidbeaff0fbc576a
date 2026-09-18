@@ -6,7 +6,7 @@ go_library(
         "flamegraph.go",
         "profile.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/profile",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/profile",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/types",
@@ -37,13 +37,9 @@ go_test(
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/collate",
-        "//pkg/util/cpuprofile",
-        "@com_github_pingcap_log//:log",
         "@com_github_stretchr_testify//assert",
         "@com_github_stretchr_testify//require",
         "@io_opencensus_go//stats/view",
         "@org_uber_go_goleak//:goleak",
-        "@org_uber_go_zap//:zap",
-        "@org_uber_go_zap//zaptest/observer",
     ],
 )

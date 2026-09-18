@@ -19,13 +19,8 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/extworkload"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/opt"
-	"github.com/tikv/pd/client/pkg/circuitbreaker"
 )
 
 // initDomainSysVars() is called when a domain is initialized.
@@ -44,12 +39,6 @@ func (do *Domain) initDomainSysVars() {
 
 	setGlobalResourceControlFunc := do.setGlobalResourceControl
 	variable.SetGlobalResourceControl.Store(&setGlobalResourceControlFunc)
-	variable.SetLowResolutionTSOUpdateInterval = do.setLowResolutionTSOUpdateInterval
-
-	variable.ChangeSchemaCacheSize = do.isSyncer.ChangeSchemaCacheSize
-
-	variable.ChangePDMetadataCircuitBreakerErrorRateThresholdRatio = changePDMetadataCircuitBreakerErrorRateThresholdRatio
-	variable.UpdateExternalWorkloadTTLJobEnable = do.updateExternalWorkloadTTLJobEnable
 }
 
 // setStatsCacheCapacity sets statsCache cap
@@ -61,64 +50,29 @@ func (do *Domain) setStatsCacheCapacity(c int64) {
 	do.StatsHandle().SetStatsCacheCapacity(c)
 }
 
-func (do *Domain) setPDClientDynamicOption(name, sVal string) error {
+func (do *Domain) setPDClientDynamicOption(name, sVal string) {
 	switch name {
-	case vardef.TiDBTSOClientBatchMaxWaitTime:
+	case variable.TiDBTSOClientBatchMaxWaitTime:
 		val, err := strconv.ParseFloat(sVal, 64)
 		if err != nil {
-			return err
+			break
 		}
-		err = do.updatePDClient(opt.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
+		err = do.updatePDClient(pd.MaxTSOBatchWaitInterval, time.Duration(float64(time.Millisecond)*val))
 		if err != nil {
-			return err
+			break
 		}
-		vardef.MaxTSOBatchWaitInterval.Store(val)
-	case vardef.TiDBEnableTSOFollowerProxy:
+		variable.MaxTSOBatchWaitInterval.Store(val)
+	case variable.TiDBEnableTSOFollowerProxy:
 		val := variable.TiDBOptOn(sVal)
-		err := do.updatePDClient(opt.EnableTSOFollowerProxy, val)
+		err := do.updatePDClient(pd.EnableTSOFollowerProxy, val)
 		if err != nil {
-			return err
+			break
 		}
-		vardef.EnableTSOFollowerProxy.Store(val)
-	case vardef.PDEnableFollowerHandleRegion:
-		val := variable.TiDBOptOn(sVal)
-		// Note: EnableFollowerHandle is only used for region API now.
-		// If pd support more APIs in follower, the pd option may be changed.
-		err := do.updatePDClient(opt.EnableFollowerHandle, val)
-		if err != nil {
-			return err
-		}
-		vardef.EnablePDFollowerHandleRegion.Store(val)
-	case vardef.TiDBTSOClientRPCMode:
-		var concurrency int
-
-		switch sVal {
-		case vardef.TSOClientRPCModeDefault:
-			concurrency = 1
-		case vardef.TSOClientRPCModeParallel:
-			concurrency = 2
-		case vardef.TSOClientRPCModeParallelFast:
-			concurrency = 4
-		default:
-			return variable.ErrWrongValueForVar.GenWithStackByArgs(name, sVal)
-		}
-
-		err := do.updatePDClient(opt.TSOClientRPCConcurrency, concurrency)
-		if err != nil {
-			return err
-		}
-	case vardef.TiDBEnableBatchQueryRegion:
-		val := variable.TiDBOptOn(sVal)
-		err := do.updatePDClient(opt.EnableRouterClient, val)
-		if err != nil {
-			return err
-		}
-		vardef.EnableBatchQueryRegion.Store(val)
+		variable.EnableTSOFollowerProxy.Store(val)
 	}
-	return nil
 }
 
-func (*Domain) setGlobalResourceControl(enable bool) {
+func (do *Domain) setGlobalResourceControl(enable bool) {
 	if enable {
 		variable.EnableGlobalResourceControlFunc()
 	} else {
@@ -126,19 +80,8 @@ func (*Domain) setGlobalResourceControl(enable bool) {
 	}
 }
 
-func (do *Domain) updateExternalWorkloadTTLJobEnable(ctx context.Context, enable bool) error {
-	if !extworkload.IsMaster(do.extWorkloadMgr) {
-		return nil
-	}
-	return do.extWorkloadMgr.UpdateTTLJobEnable(ctx, enable)
-}
-
-func (do *Domain) setLowResolutionTSOUpdateInterval(interval time.Duration) error {
-	return do.store.GetOracle().SetLowResolutionTimestampUpdateInterval(interval)
-}
-
 // updatePDClient is used to set the dynamic option into the PD client.
-func (do *Domain) updatePDClient(option opt.DynamicOption, val any) error {
+func (do *Domain) updatePDClient(option pd.DynamicOption, val interface{}) error {
 	store, ok := do.store.(interface{ GetPDClient() pd.Client })
 	if !ok {
 		return nil
@@ -156,10 +99,4 @@ func (do *Domain) setExternalTimestamp(ctx context.Context, ts uint64) error {
 
 func (do *Domain) getExternalTimestamp(ctx context.Context) (uint64, error) {
 	return do.store.GetOracle().GetExternalTimestamp(ctx)
-}
-
-func changePDMetadataCircuitBreakerErrorRateThresholdRatio(errorRateRatio uint32) {
-	tikv.ChangePDRegionMetaCircuitBreakerSettings(func(config *circuitbreaker.Settings) {
-		config.ErrorRateThresholdPct = errorRateRatio
-	})
 }

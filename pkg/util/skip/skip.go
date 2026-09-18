@@ -14,24 +14,12 @@
 
 package skip
 
-import (
-	"testing"
-
-	"github.com/pingcap/tidb/pkg/testkit/testflag"
-)
+import "testing"
 
 // UnderShort skips the test if the -short flag is set.
-func UnderShort(t *testing.T, args ...any) {
+func UnderShort(t *testing.T, args ...interface{}) {
 	t.Helper()
 	if testing.Short() {
-		t.Skip(append([]any{"disabled under -short"}, args...)...)
-	}
-}
-
-// NotUnderLong skips the test if the -long flag is not set
-func NotUnderLong(t *testing.T, args ...any) {
-	t.Helper()
-	if !testflag.Long() {
-		t.Skip(append([]any{"disabled not under -short"}, args...)...)
+		t.Skip(append([]interface{}{"disabled under -short"}, args...))
 	}
 }

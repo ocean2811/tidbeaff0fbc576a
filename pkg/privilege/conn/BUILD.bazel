@@ -3,6 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "conn",
     srcs = ["conn.go"],
-    importpath = "github.com/pingcap/tidb/pkg/privilege/conn",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/privilege/conn",
     visibility = ["//visibility:public"],
 )

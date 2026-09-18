@@ -17,12 +17,13 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/kv"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 )
 
 // ReloadOptRuleBlacklistExec indicates ReloadOptRuleBlacklist executor.
@@ -38,7 +39,7 @@ func (e *ReloadOptRuleBlacklistExec) Next(context.Context, *chunk.Chunk) error {
 
 // LoadOptRuleBlacklist loads the latest data from table mysql.opt_rule_blacklist.
 func LoadOptRuleBlacklist(ctx context.Context, sctx sessionctx.Context) (err error) {
-	exec := sctx.GetRestrictedSQLExecutor()
+	exec := sctx.(sqlexec.RestrictedSQLExecutor)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, nil, "select HIGH_PRIORITY name from mysql.opt_rule_blacklist")
 	if err != nil {
 		return err

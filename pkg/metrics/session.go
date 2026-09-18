@@ -14,10 +14,7 @@
 
 package metrics
 
-import (
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
-	"github.com/prometheus/client_golang/prometheus"
-)
+import "github.com/prometheus/client_golang/prometheus"
 
 // Session metrics.
 var (
@@ -34,7 +31,6 @@ var (
 	StatementDeadlockDetectDuration    prometheus.Histogram
 	StatementPessimisticRetryCount     prometheus.Histogram
 	StatementLockKeysCount             prometheus.Histogram
-	StatementSharedLockKeysCount       prometheus.Histogram
 	ValidateReadTSFromPDCount          prometheus.Counter
 	NonTransactionalDMLCount           *prometheus.CounterVec
 	TxnStatusEnteringCounter           *prometheus.CounterVec
@@ -43,12 +39,11 @@ var (
 	PessimisticDMLDurationByAttempt    *prometheus.HistogramVec
 	ResourceGroupQueryTotalCounter     *prometheus.CounterVec
 	FairLockingUsageCount              *prometheus.CounterVec
-	PessimisticLockKeysDuration        prometheus.Histogram
 )
 
 // InitSessionMetrics initializes session metrics.
 func InitSessionMetrics() {
-	AutoIDReqDuration = metricscommon.NewHistogram(
+	AutoIDReqDuration = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "meta",
@@ -57,7 +52,7 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.00004, 2, 28), // 40us ~ 1.5h
 		})
 
-	SessionExecuteParseDuration = metricscommon.NewHistogramVec(
+	SessionExecuteParseDuration = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -66,7 +61,7 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.00004, 2, 28), // 40us ~ 1.5h
 		}, []string{LblSQLType})
 
-	SessionExecuteCompileDuration = metricscommon.NewHistogramVec(
+	SessionExecuteCompileDuration = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -76,7 +71,7 @@ func InitSessionMetrics() {
 			Buckets: prometheus.ExponentialBuckets(0.00004, 2, 28), // 40us ~ 1.5h
 		}, []string{LblSQLType})
 
-	SessionExecuteRunDuration = metricscommon.NewHistogramVec(
+	SessionExecuteRunDuration = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -85,7 +80,7 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.0001, 2, 30), // 100us ~ 15h
 		}, []string{LblSQLType})
 
-	SchemaLeaseErrorCounter = metricscommon.NewCounterVec(
+	SchemaLeaseErrorCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -93,7 +88,7 @@ func InitSessionMetrics() {
 			Help:      "Counter of schema lease error",
 		}, []string{LblType})
 
-	SessionRetry = metricscommon.NewHistogramVec(
+	SessionRetry = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -102,7 +97,7 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.LinearBuckets(0, 1, 21), // 0 ~ 20
 		}, []string{LblScope})
 
-	SessionRetryErrorCounter = metricscommon.NewCounterVec(
+	SessionRetryErrorCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -110,7 +105,7 @@ func InitSessionMetrics() {
 			Help:      "Counter of session retry error.",
 		}, []string{LblSQLType, LblType})
 
-	SessionRestrictedSQLCounter = metricscommon.NewCounter(
+	SessionRestrictedSQLCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -118,7 +113,7 @@ func InitSessionMetrics() {
 			Help:      "Counter of internal restricted sql.",
 		})
 
-	StatementPerTransaction = metricscommon.NewHistogramVec(
+	StatementPerTransaction = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -127,7 +122,7 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32768
 		}, []string{LblTxnMode, LblType, LblScope})
 
-	TransactionDuration = metricscommon.NewHistogramVec(
+	TransactionDuration = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -136,7 +131,7 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblTxnMode, LblType, LblScope})
 
-	StatementDeadlockDetectDuration = metricscommon.NewHistogram(
+	StatementDeadlockDetectDuration = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -146,7 +141,7 @@ func InitSessionMetrics() {
 		},
 	)
 
-	StatementPessimisticRetryCount = metricscommon.NewHistogram(
+	StatementPessimisticRetryCount = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -155,7 +150,7 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 16), // 1 ~ 32768
 		})
 
-	StatementLockKeysCount = metricscommon.NewHistogram(
+	StatementLockKeysCount = NewHistogram(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -164,16 +159,7 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 1048576
 		})
 
-	StatementSharedLockKeysCount = metricscommon.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "session",
-			Name:      "statement_shared_lock_keys_count",
-			Help:      "Keys locking for a single statement",
-			Buckets:   prometheus.ExponentialBuckets(1, 2, 21), // 1 ~ 1048576
-		})
-
-	ValidateReadTSFromPDCount = metricscommon.NewCounter(
+	ValidateReadTSFromPDCount = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -181,7 +167,7 @@ func InitSessionMetrics() {
 			Help:      "Counter of validating read ts by getting a timestamp from PD",
 		})
 
-	NonTransactionalDMLCount = metricscommon.NewCounterVec(
+	NonTransactionalDMLCount = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -190,7 +176,7 @@ func InitSessionMetrics() {
 		}, []string{LblType},
 	)
 
-	TxnStatusEnteringCounter = metricscommon.NewCounterVec(
+	TxnStatusEnteringCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -199,7 +185,7 @@ func InitSessionMetrics() {
 		}, []string{LblType},
 	)
 
-	TxnDurationHistogram = metricscommon.NewHistogramVec(
+	TxnDurationHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -208,7 +194,7 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.0005, 2, 29), // 0.5ms ~ 1.5days
 		}, []string{LblType, LblHasLock})
 
-	LazyPessimisticUniqueCheckSetCount = metricscommon.NewCounter(
+	LazyPessimisticUniqueCheckSetCount = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -217,7 +203,7 @@ func InitSessionMetrics() {
 		},
 	)
 
-	PessimisticDMLDurationByAttempt = metricscommon.NewHistogramVec(
+	PessimisticDMLDurationByAttempt = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -226,7 +212,7 @@ func InitSessionMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblPhase})
 
-	ResourceGroupQueryTotalCounter = metricscommon.NewCounterVec(
+	ResourceGroupQueryTotalCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
@@ -234,23 +220,13 @@ func InitSessionMetrics() {
 			Help:      "Counter of the total number of queries for the resource group",
 		}, []string{LblName, LblResourceGroup})
 
-	FairLockingUsageCount = metricscommon.NewCounterVec(
+	FairLockingUsageCount = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "session",
 			Name:      "transaction_fair_locking_usage",
 			Help:      "The counter of statements and transactions in which fair locking is used or takes effect",
 		}, []string{LblType})
-
-	// Moved from client-go module to tidb, to keep consistency with history versions, keep the subsystem name "tikvclient"
-	PessimisticLockKeysDuration = metricscommon.NewHistogram(
-		prometheus.HistogramOpts{
-			Namespace: "tidb",
-			Subsystem: "tikvclient",
-			Name:      "pessimistic_lock_keys_duration",
-			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 19), // 1ms ~ 262s, The default value of innodb_lock_wait_timeout is 50s
-			Help:      "tidb txn pessimistic lock keys duration",
-		})
 }
 
 // Label constants.
@@ -266,14 +242,6 @@ const (
 	LblDb             = "db"
 	LblResult         = "result"
 	LblSQLType        = "sql_type"
-	LblSQLTypeDDL     = "ddl"
-	LblSQLTypeRead    = "read"
-	LblSQLTypeWrite   = "write"
-	LblSQLTypeAnalyze = "analyze"
-	LblSQLTypeOther   = "other"
-	LblEngine         = "engine"
-	LblEngineTiKV     = "tikv"
-	LblEngineTiFlash  = "tiflash"
 	LblCoprType       = "copr_type"
 	LblGeneral        = "general"
 	LblInternal       = "internal"
@@ -309,7 +277,4 @@ const (
 	LblFairLockingStmtUsed      = "stmt-used"
 	LblFairLockingStmtEffective = "stmt-effective"
 	LblScope                    = "scope"
-
-	// For TLS
-	LblCipher = "cipher"
 )

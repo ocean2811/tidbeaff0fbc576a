@@ -7,7 +7,7 @@ go_library(
         "mvcc.go",
         "tikv.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/mvcc",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/store/mockstore/unistore/lockstore",

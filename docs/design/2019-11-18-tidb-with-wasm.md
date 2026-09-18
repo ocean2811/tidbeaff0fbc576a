@@ -2,7 +2,7 @@
 
 - Author(s):     Joshua
 - Last updated:  November 19
-- Discussion at: https://github.com/pingcap/tidb/issues/13364
+- Discussion at: https://github.com/ocean2811/tidbeaff0fbc576a/issues/13364
 
 ## Abstract
 

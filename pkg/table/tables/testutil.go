@@ -14,7 +14,7 @@
 
 package tables
 
-import "github.com/pingcap/tidb/pkg/table"
+import "github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
 
 // SwapReorgPartFields swaps the reorganizePartitions field of two partitioned tables. used in tests.
 func SwapReorgPartFields(src, dst table.Table) bool {

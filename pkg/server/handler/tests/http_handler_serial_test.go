@@ -33,26 +33,20 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/server/handler"
-	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/statistics/handle/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	ddlutil "github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler/tikvhandler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/deadlockhistory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/versioninfo"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/client/clients/gc"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
 )
 
 func dummyRecord() *deadlockhistory.DeadlockRecord {
@@ -78,13 +72,13 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, zap.ErrorLevel, log.GetLevel())
 	require.Equal(t, "error", config.GetGlobalConfig().Log.Level)
-	require.True(t, vardef.ProcessGeneralLog.Load())
-	val, err := se.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncCommit)
+	require.True(t, variable.ProcessGeneralLog.Load())
+	val, err := se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
-	require.Equal(t, vardef.On, val)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnable1PC)
+	require.Equal(t, variable.On, val)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC)
 	require.NoError(t, err)
-	require.Equal(t, vardef.On, val)
+	require.Equal(t, variable.On, val)
 
 	form = make(url.Values)
 	form.Set("log_level", "fatal")
@@ -95,15 +89,15 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.False(t, vardef.ProcessGeneralLog.Load())
+	require.False(t, variable.ProcessGeneralLog.Load())
 	require.Equal(t, zap.FatalLevel, log.GetLevel())
 	require.Equal(t, "fatal", config.GetGlobalConfig().Log.Level)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnableAsyncCommit)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnableAsyncCommit)
 	require.NoError(t, err)
-	require.Equal(t, vardef.Off, val)
-	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), vardef.TiDBEnable1PC)
+	require.Equal(t, variable.Off, val)
+	val, err = se.GetSessionVars().GetGlobalSystemVar(context.Background(), variable.TiDBEnable1PC)
 	require.NoError(t, err)
-	require.Equal(t, vardef.Off, val)
+	require.Equal(t, variable.Off, val)
 	form.Set("log_level", os.Getenv("log_level"))
 
 	// test ddl_slow_threshold
@@ -113,7 +107,7 @@ func TestPostSettings(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, uint32(200), atomic.LoadUint32(&vardef.DDLSlowOprThreshold))
+	require.Equal(t, uint32(200), atomic.LoadUint32(&variable.DDLSlowOprThreshold))
 
 	// test check_mb4_value_in_utf8
 	db, err := sql.Open("mysql", ts.GetDSN())
@@ -153,7 +147,7 @@ func TestPostSettings(t *testing.T) {
 
 	// test deadlock_history_capacity
 	deadlockhistory.GlobalDeadlockHistory.Resize(10)
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		deadlockhistory.GlobalDeadlockHistory.Push(dummyRecord())
 	}
 	form = make(url.Values)
@@ -255,9 +249,9 @@ func TestRegionsFromMeta(t *testing.T) {
 	}
 
 	// test no panic
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/errGetRegionByIDEmpty", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/server/errGetRegionByIDEmpty", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/errGetRegionByIDEmpty"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/server/errGetRegionByIDEmpty"))
 	}()
 	resp1, err := ts.FetchStatus("/regions/meta")
 	require.NoError(t, err)
@@ -266,18 +260,17 @@ func TestRegionsFromMeta(t *testing.T) {
 
 func TestTiFlashReplica(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t, mockstore.WithMockTiFlash(2))
+	ts.startServer(t)
+	ts.prepareData(t)
 	defer ts.stopServer(t)
 
-	tk := testkit.NewTestKit(t, ts.store)
-	tk.MustExec("create database tidb")
-	tk.MustExec("use tidb")
-	tk.MustExec("create table test (a int auto_increment primary key, b varchar(20))")
-	tk.MustExec(`create table pt (a int primary key, b varchar(20), key idx(a, b))
-partition by range (a)
-(partition p0 values less than (256),
- partition p1 values less than (512),
- partition p2 values less than (1024))`)
+	db, err := sql.Open("mysql", ts.GetDSN())
+	require.NoError(t, err)
+	defer func() {
+		err := db.Close()
+		require.NoError(t, err)
+	}()
+	dbt := testkit.NewDBTestKit(t, db)
 
 	defer func(originGC bool) {
 		if originGC {
@@ -296,7 +289,7 @@ partition by range (a)
 			       ON DUPLICATE KEY
 			       UPDATE variable_value = '%[1]s'`
 	// Set GC safe point and enable GC.
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
+	dbt.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	resp, err := ts.FetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
@@ -307,7 +300,13 @@ partition by range (a)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, 0, len(data))
 
-	tk.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockTiFlashStoreCount"))
+	}()
+
+	dbt.MustExec("use tidb")
+	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 
 	resp, err = ts.FetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
@@ -328,7 +327,7 @@ partition by range (a)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "[schema:1146]Table which ID = 184 does not exist.", string(body))
 
-	tbl, err := ts.domain.InfoSchema().TableByName(context.Background(), ast.NewCIStr("tidb"), ast.NewCIStr("test"))
+	tbl, err := ts.domain.InfoSchema().TableByName(model.NewCIStr("tidb"), model.NewCIStr("test"))
 	require.NoError(t, err)
 	req := fmt.Sprintf(`{"id":%d,"region_count":3,"flash_region_count":3}`, tbl.Meta().ID)
 	resp, err = ts.PostStatus("/tiflash/replica-deprecated", "application/json", bytes.NewBuffer([]byte(req)))
@@ -351,7 +350,7 @@ partition by range (a)
 	require.Equal(t, true, data[0].Available)
 
 	// Should not take effect.
-	tk.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
+	dbt.MustExec("alter table test set tiflash replica 2 location labels 'a','b';")
 	checkFunc := func() {
 		resp, err := ts.FetchStatus("/tiflash/replica-deprecated")
 		require.NoError(t, err)
@@ -366,20 +365,20 @@ partition by range (a)
 	}
 
 	// Test for get dropped table tiflash replica info.
-	tk.MustExec("drop table test")
+	dbt.MustExec("drop table test")
 	checkFunc()
 
 	// Test unique table id replica info.
-	tk.MustExec("flashback table test")
+	dbt.MustExec("flashback table test")
 	checkFunc()
-	tk.MustExec("drop table test")
+	dbt.MustExec("drop table test")
 	checkFunc()
-	tk.MustExec("flashback table test")
+	dbt.MustExec("flashback table test")
 	checkFunc()
 
 	// Test for partition table.
-	tk.MustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
-	tk.MustExec("alter table test set tiflash replica 0;")
+	dbt.MustExec("alter table pt set tiflash replica 2 location labels 'a','b';")
+	dbt.MustExec("alter table test set tiflash replica 0;")
 	resp, err = ts.FetchStatus("/tiflash/replica-deprecated")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
@@ -436,99 +435,9 @@ partition by range (a)
 	}
 
 	// Test for get truncated table tiflash replica info.
-	tk.MustExec("truncate table pt")
-	tk.MustExec("alter table pt set tiflash replica 0;")
+	dbt.MustExec("truncate table pt")
+	dbt.MustExec("alter table pt set tiflash replica 0;")
 	checkFunc()
-}
-
-func TestDebugRoutes(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	core, recorded := observer.New(zap.InfoLevel)
-	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
-		Core:  core,
-		Level: zap.NewAtomicLevelAt(zap.InfoLevel),
-	})
-	defer restore()
-
-	debugRoutes := []string{
-		"/debug/pprof/",
-		"/debug/pprof/heap?debug=1",
-		"/debug/pprof/goroutine?debug=1",
-		"/debug/pprof/goroutine?debug=2",
-		"/debug/pprof/allocs?debug=1",
-		"/debug/pprof/block?debug=1",
-		"/debug/pprof/threadcreate?debug=1",
-		"/debug/pprof/cmdline",
-		"/debug/pprof/profile?seconds=5",
-		"/debug/pprof/mutex?debug=1",
-		"/debug/pprof/symbol",
-		"/debug/pprof/trace",
-		"/debug/gogc",
-		// "/debug/zip", // this creates unexpected goroutines which will make goleak complain, so we skip it for now
-		"/debug/ballast-object-sz",
-	}
-	expectedProfilingLogs := 0
-	for _, route := range debugRoutes {
-		if strings.HasPrefix(route, "/debug/pprof/") {
-			expectedProfilingLogs++
-		}
-		resp, err := ts.FetchStatus(route)
-		require.NoError(t, err, fmt.Sprintf("GET route %s failed", route))
-		require.Equal(t, http.StatusOK, resp.StatusCode, fmt.Sprintf("GET route %s failed", route))
-		require.NoError(t, resp.Body.Close())
-	}
-
-	profilingLogs := recorded.FilterMessage("profiling request received")
-	require.Len(t, profilingLogs.All(), expectedProfilingLogs)
-	require.Len(t, profilingLogs.FilterField(zap.String("path", "/debug/pprof/goroutine")).
-		FilterField(zap.String("debug", "2")).All(), 1)
-	require.Len(t, profilingLogs.FilterField(zap.String("path", "/debug/pprof/profile")).
-		FilterField(zap.String("seconds", "5")).All(), 1)
-	for _, entry := range profilingLogs.All() {
-		fields := entry.ContextMap()
-		require.Equal(t, http.MethodGet, fields["method"])
-		require.NotEmpty(t, fields["path"])
-		require.NotEmpty(t, fields["remote-addr"])
-	}
-}
-
-func TestAutoIDOwnerRouteRegistration(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		originalMode := deploymode.Get()
-		require.NoError(t, deploymode.Set(deploymode.Premium))
-		defer func() {
-			require.NoError(t, deploymode.Set(originalMode))
-		}()
-	}
-
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	resp, err := ts.FetchStatus("/owner_manager/auto_id_service")
-	require.NoError(t, err)
-	require.Equal(t, http.StatusNotFound, resp.StatusCode)
-	require.NoError(t, resp.Body.Close())
-	ts.stopServer(t)
-
-	// Starter deploy mode only exists for NextGen. In classic builds, deploymode.IsStarter()
-	// is always false, so only the non-Starter route-registration case applies.
-	if !kerneltype.IsNextGen() {
-		return
-	}
-
-	require.NoError(t, deploymode.Set(deploymode.Starter))
-	ts = createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-
-	resp, err = ts.FetchStatus("/owner_manager/auto_id_service")
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.JSONEq(t, `{"is_owner": false}`, string(body))
 }
 
 func TestFailpointHandler(t *testing.T) {
@@ -544,15 +453,15 @@ func TestFailpointHandler(t *testing.T) {
 	ts.stopServer(t)
 
 	// enable failpoint integration and start server
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/enableTestAPI", "return"))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/enableTestAPI")) }()
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/server/enableTestAPI", "return"))
+	defer func() { require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/server/enableTestAPI")) }()
 	ts.startServer(t)
 	resp, err = ts.FetchStatus("/fail/")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	b, err := io.ReadAll(resp.Body)
 	require.NoError(t, err)
-	require.True(t, strings.Contains(string(b), "github.com/pingcap/tidb/pkg/server/enableTestAPI=return"))
+	require.True(t, strings.Contains(string(b), "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/enableTestAPI=return"))
 	require.NoError(t, resp.Body.Close())
 }
 
@@ -569,8 +478,8 @@ func TestTestHandler(t *testing.T) {
 	ts.stopServer(t)
 
 	// enable failpoint integration and start server
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/enableTestAPI", "return"))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/enableTestAPI")) }()
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/server/enableTestAPI", "return"))
+	defer func() { require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/server/enableTestAPI")) }()
 	ts.startServer(t)
 
 	resp, err = ts.FetchStatus("/test/gc/gc")
@@ -611,54 +520,31 @@ func TestTestHandler(t *testing.T) {
 }
 
 func TestServerInfo(t *testing.T) {
-	originalCfg := *config.GetGlobalConfig()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Performance.ForceInitStats = false
-	})
-	defer config.StoreGlobalConfig(&originalCfg)
-
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
+	resp, err := ts.FetchStatus("/info")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	decoder := json.NewDecoder(resp.Body)
+
+	info := tikvhandler.ServerInfo{}
+	err = decoder.Decode(&info)
+	require.NoError(t, err)
 
 	cfg := config.GetGlobalConfig()
-	store := ts.server.NewTikvHandlerTool().Store.(kv.Storage)
-	do, err := session.GetDomain(store)
-	require.NoError(t, err)
-	d := do.DDL()
-
-	fetchInfo := func() (tikvhandler.ServerInfo, error) {
-		resp, err := ts.FetchStatus("/info")
-		if err != nil {
-			return tikvhandler.ServerInfo{}, err
-		}
-		defer func() {
-			_ = resp.Body.Close()
-		}()
-		if resp.StatusCode != http.StatusOK {
-			return tikvhandler.ServerInfo{}, fmt.Errorf("unexpected status code: %d", resp.StatusCode)
-		}
-
-		info := tikvhandler.ServerInfo{}
-		err = json.NewDecoder(resp.Body).Decode(&info)
-		return info, err
-	}
-
-	var info tikvhandler.ServerInfo
-	require.Eventually(t, func() bool {
-		current, err := fetchInfo()
-		if err != nil {
-			return false
-		}
-		info = current
-		return info.IsOwner
-	}, 3*time.Second, 50*time.Millisecond)
-
+	require.True(t, info.IsOwner)
 	require.Equal(t, cfg.AdvertiseAddress, info.IP)
 	require.Equal(t, cfg.Status.StatusPort, info.StatusPort)
 	require.Equal(t, cfg.Lease, info.Lease)
 	require.Equal(t, mysql.ServerVersion, info.Version)
 	require.Equal(t, versioninfo.TiDBGitHash, info.GitHash)
+
+	store := ts.server.NewTikvHandlerTool().Store.(kv.Storage)
+	do, err := session.GetDomain(store)
+	require.NoError(t, err)
+	d := do.DDL()
 	require.Equal(t, d.GetID(), info.ID)
 }
 
@@ -676,7 +562,6 @@ func TestGetSchemaStorage(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (c int, d int, e char(5), index idx(e))")
-	testutil.HandleNextDDLEventWithTxn(h)
 	tk.MustExec(`insert into t(c, d, e) values(1, 2, "c"), (2, 3, "d"), (3, 4, "e")`)
 	h.FlushStats()
 
@@ -696,7 +581,7 @@ func TestGetSchemaStorage(t *testing.T) {
 
 	sort.Strings(names)
 	require.Equal(t, expects, names)
-	require.Equal(t, []int64{3, 16, 48, 0, 0, 0}, []int64{
+	require.Equal(t, []int64{3, 18, 54, 0, 6, 0}, []int64{
 		tables[0].TableRows,
 		tables[0].AvgRowLength,
 		tables[0].DataLength,
@@ -723,9 +608,9 @@ func TestTTL(t *testing.T) {
 	dbt.MustExec("create table t1(t timestamp) TTL=`t` + interval 1 day")
 
 	getJobCnt := func(status string) int {
-		selectSQL := "select count(1) from mysql.tidb_ttl_job_history where table_schema = 'test_ttl' and table_name = 't1'"
+		selectSQL := "select count(1) from mysql.tidb_ttl_job_history"
 		if status != "" {
-			selectSQL += " and status = '" + status + "'"
+			selectSQL += " where status = '" + status + "'"
 		}
 
 		rs, err := db.Query(selectSQL)
@@ -752,12 +637,11 @@ func TestTTL(t *testing.T) {
 			if cnt == 0 {
 				return
 			}
-			time.Sleep(200 * time.Millisecond)
 		}
 		require.Fail(t, "timeout for waiting job finished")
 	}
 
-	doTrigger := func(db, tb string) (map[string]any, error) {
+	doTrigger := func(db, tb string) (map[string]interface{}, error) {
 		resp, err := ts.PostStatus(fmt.Sprintf("/test/ttl/trigger/%s/%s", db, tb), "application/json", nil)
 		if err != nil {
 			return nil, err
@@ -774,17 +658,17 @@ func TestTTL(t *testing.T) {
 			return nil, errors.Errorf("http status: %s, %s", resp.Status, body)
 		}
 
-		var obj map[string]any
+		var obj map[string]interface{}
 		require.NoError(t, json.Unmarshal(body, &obj))
 		return obj, nil
 	}
 
-	baseJobCnt := getJobCnt("")
-	expectedJobCnt := baseJobCnt + 1
+	expectedJobCnt := 1
 	obj, err := doTrigger("test_ttl", "t1")
+	require.NoError(t, err)
 	if err != nil {
 		// if error returns, may be a job is running, we should skip it and have a next try when it stopped
-		require.Equal(t, baseJobCnt, getJobCnt(""))
+		require.Equal(t, expectedJobCnt, getJobCnt(""))
 		waitAllJobsFinish()
 		obj, err = doTrigger("test_ttl", "t1")
 		require.NoError(t, err)
@@ -793,87 +677,10 @@ func TestTTL(t *testing.T) {
 
 	_, ok := obj["table_result"]
 	require.True(t, ok)
-	require.Eventually(t, func() bool {
-		return getJobCnt("") == expectedJobCnt
-	}, 10*time.Second, 200*time.Millisecond)
+	require.Equal(t, expectedJobCnt, getJobCnt(""))
 
 	// error case, table not exist
 	obj, err = doTrigger("test_ttl", "t2")
 	require.Nil(t, obj)
 	require.EqualError(t, err, "http status: 400 Bad Request, table test_ttl.t2 not exists")
-}
-
-func TestGC(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-
-	var data url.Values
-	resp, err := ts.FormStatus("/txn-gc-states", data)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
-
-	resp, err = ts.FetchStatus("/txn-gc-states")
-	require.NoError(t, err)
-	defer func() { require.NoError(t, resp.Body.Close()) }()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-
-	// Verify the resp body.
-	decoder := json.NewDecoder(resp.Body)
-	var state gc.GCState
-	err = decoder.Decode(&state)
-	require.NoError(t, err)
-
-	var empty gc.GCState
-	require.NotEqual(t, empty, state)
-}
-
-func TestIngestParam(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	defer ts.stopServer(t)
-
-	testCases := []struct {
-		url         string
-		defaultVal  any
-		modVal      any
-		expectedVal any
-	}{
-		{"/ingest/max-batch-split-ranges", float64(2048), 1000, float64(1000)},
-		{"/ingest/max-split-ranges-per-sec", float64(0), 2000, float64(2000)},
-		{"/ingest/max-ingest-inflight", float64(0), 1000, float64(1000)},
-		{"/ingest/max-ingest-per-sec", float64(0), 2000, float64(2000)},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.url, func(t *testing.T) {
-			resp, err := ts.FetchStatus(tc.url)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, resp.Body.Close()) }()
-			require.Equal(t, http.StatusOK, resp.StatusCode)
-			decoder := json.NewDecoder(resp.Body)
-			var payload struct {
-				Value  float64 `json:"value"`
-				IsNull bool    `json:"is_null"`
-			}
-			err = decoder.Decode(&payload)
-			require.NoError(t, err)
-			require.Equal(t, tc.defaultVal, payload.Value)
-
-			resp, err = ts.PostStatus(tc.url, "", bytes.NewBuffer([]byte(fmt.Sprintf(`{"value": %v}`, tc.modVal))))
-			require.NoError(t, err)
-			require.NotNil(t, resp)
-			defer func() { require.NoError(t, resp.Body.Close()) }()
-			require.Equal(t, http.StatusOK, resp.StatusCode)
-
-			resp, err = ts.FetchStatus(tc.url)
-			require.NoError(t, err)
-			defer func() { require.NoError(t, resp.Body.Close()) }()
-			require.Equal(t, http.StatusOK, resp.StatusCode)
-			decoder = json.NewDecoder(resp.Body)
-			err = decoder.Decode(&payload)
-			require.NoError(t, err)
-			require.Equal(t, tc.expectedVal, payload.Value)
-		})
-	}
 }

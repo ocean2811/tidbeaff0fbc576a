@@ -22,12 +22,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/store/gcworker"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/gcutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/keyspace"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/gcworker"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	tikvutil "github.com/tikv/client-go/v2/util"
 )
@@ -208,20 +208,6 @@ PARTITION BY RANGE (c) (
 	require.Equal(t, "schema/test/rename_ot1", rows3[0][0])
 	require.Equal(t, `"key=value"`, rows3[0][2])
 	require.Equal(t, rows2[0][3], rows3[0][3])
-
-	tk.MustExec(`create database rename_dst1;`)
-	tk.MustExec(`create database rename_dst2;`)
-	tk.MustExec(`create table test.rename_multi1 (c int);`)
-	tk.MustExec(`create table test.rename_multi2 (c int);`)
-	tk.MustExec(`alter table test.rename_multi1 attributes="key=multi1";`)
-	tk.MustExec(`alter table test.rename_multi2 attributes="key=multi2";`)
-	tk.MustExec(`rename table test.rename_multi1 to rename_dst1.rename_multi1, test.rename_multi2 to rename_dst2.rename_multi2;`)
-	tk.MustQuery(`select id, attributes from information_schema.attributes
-		where id in ('schema/rename_dst1/rename_multi1', 'schema/rename_dst2/rename_multi2')
-		order by id`).Check(testkit.Rows(
-		`schema/rename_dst1/rename_multi1 "key=multi1"`,
-		`schema/rename_dst2/rename_multi2 "key=multi2"`,
-	))
 }
 
 func TestRecoverTable(t *testing.T) {
@@ -266,7 +252,7 @@ PARTITION BY RANGE (c) (
 func TestFlashbackTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), dom.GetPDHTTPClient(), keyspace.CodecV1, true, dom.InfoCache())
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), keyspace.CodecV1, true)
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -324,7 +310,7 @@ PARTITION BY RANGE (c) (
 func TestDropTable(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), dom.GetPDHTTPClient(), keyspace.CodecV1, true, dom.InfoCache())
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), keyspace.CodecV1, true)
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -333,9 +319,9 @@ PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/ignoreDeleteRangeFailed", `return`)
+	failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/gcworker/ignoreDeleteRangeFailed", `return`)
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/ignoreDeleteRangeFailed")
+		failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/gcworker/ignoreDeleteRangeFailed")
 	}()
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
@@ -377,7 +363,7 @@ PARTITION BY RANGE (c) (
 func TestCreateWithSameName(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), dom.GetPDHTTPClient(), keyspace.CodecV1, true, dom.InfoCache())
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), keyspace.CodecV1, true)
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -386,9 +372,9 @@ PARTITION BY RANGE (c) (
 	PARTITION p0 VALUES LESS THAN (6),
 	PARTITION p1 VALUES LESS THAN (11)
 );`)
-	failpoint.Enable("github.com/pingcap/tidb/pkg/store/gcworker/ignoreDeleteRangeFailed", `return`)
+	failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/gcworker/ignoreDeleteRangeFailed", `return`)
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/pkg/store/gcworker/ignoreDeleteRangeFailed")
+		failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/gcworker/ignoreDeleteRangeFailed")
 	}()
 
 	timeBeforeDrop, _, safePointSQL, resetGC := MockGC(tk)
@@ -441,7 +427,7 @@ PARTITION BY RANGE (c) (
 func TestPartition(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 
-	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), dom.GetPDHTTPClient(), keyspace.CodecV1, true, dom.InfoCache())
+	_, err := infosync.GlobalInfoSyncerInit(context.Background(), dom.DDL().GetID(), dom.ServerID, dom.GetEtcdClient(), dom.GetEtcdClient(), dom.GetPDClient(), keyspace.CodecV1, true)
 	require.NoError(t, err)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -496,22 +482,4 @@ PARTITION BY RANGE (c) (
 	require.Equal(t, "schema/test/part1", rows3[1][0])
 	require.Equal(t, `"key2=value2"`, rows3[1][2])
 	require.Equal(t, rows2[1][3], rows3[1][3])
-
-	tk.MustExec(`create database exchange_partition_attrs;`)
-	tk.MustExec(`create database exchange_normal_attrs;`)
-	tk.MustExec(`create table exchange_partition_attrs.part_cross (c int)
-PARTITION BY RANGE (c) (
-	PARTITION p0 VALUES LESS THAN (10),
-	PARTITION p1 VALUES LESS THAN (20)
-);`)
-	tk.MustExec(`create table exchange_normal_attrs.part_cross_nt (c int);`)
-	tk.MustExec(`alter table exchange_partition_attrs.part_cross partition p0 attributes="role=partition";`)
-	tk.MustExec(`alter table exchange_normal_attrs.part_cross_nt attributes="role=table";`)
-	tk.MustExec(`alter table exchange_partition_attrs.part_cross exchange partition p0 with table exchange_normal_attrs.part_cross_nt;`)
-	tk.MustQuery(`select id, attributes from information_schema.attributes
-		where id in ('schema/exchange_normal_attrs/part_cross_nt', 'schema/exchange_partition_attrs/part_cross/p0')
-		order by id`).Check(testkit.Rows(
-		`schema/exchange_normal_attrs/part_cross_nt "role=partition"`,
-		`schema/exchange_partition_attrs/part_cross/p0 "role=table"`,
-	))
 }

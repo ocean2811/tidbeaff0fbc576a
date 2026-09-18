@@ -17,7 +17,7 @@ package mock
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 )
 
 // Client implement kv.Client interface, mocked from "CopClient" defined in
@@ -28,6 +28,6 @@ type Client struct {
 }
 
 // Send implement kv.Client interface.
-func (c *Client) Send(_ context.Context, _ *kv.Request, _ any, _ *kv.ClientSendOption) kv.Response {
+func (c *Client) Send(_ context.Context, _ *kv.Request, _ interface{}, _ *kv.ClientSendOption) kv.Response {
 	return c.MockResponse
 }

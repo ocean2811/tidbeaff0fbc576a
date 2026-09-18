@@ -22,12 +22,12 @@ import (
 	"io"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/opcode"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	ast "github.com/pingcap/tidb/pkg/parser/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/opcode"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	ast "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
 )
 
 // IsTypeBlob returns a boolean indicating whether the tp is a blob type.
@@ -36,9 +36,6 @@ var IsTypeBlob = ast.IsTypeBlob
 // IsTypeChar returns a boolean indicating
 // whether the tp is the char type like a string type or a varchar type.
 var IsTypeChar = ast.IsTypeChar
-
-// IsTypeVector returns whether tp is a vector type.
-var IsTypeVector = ast.IsTypeVector
 
 // IsTypeVarchar returns a boolean indicating
 // whether the tp is the varchar type like a varstring type or a varchar type.
@@ -83,22 +80,6 @@ func IsTypeInteger(tp byte) bool {
 	return false
 }
 
-// IsTypeStoredAsInteger returns a boolean indicating whether the tp is stored as integer type.
-func IsTypeStoredAsInteger(tp byte) bool {
-	switch tp {
-	case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong:
-		return true
-	case mysql.TypeYear:
-		return true
-	// Enum and Set are stored as integer type but they can not be pushed down to TiFlash
-	// case mysql.TypeEnum, mysql.TypeSet:
-	// 	return true
-	case mysql.TypeDatetime, mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeDuration:
-		return true
-	}
-	return false
-}
-
 // IsTypeNumeric returns a boolean indicating whether the tp is numeric type.
 func IsTypeNumeric(tp byte) bool {
 	switch tp {
@@ -138,14 +119,8 @@ func IsNonBinaryStr(ft *FieldType) bool {
 // NeedRestoredData returns if a type needs restored data.
 // If the type is char and the collation is _bin, NeedRestoredData() returns false.
 func NeedRestoredData(ft *FieldType) bool {
-	return NeedRestoredDataWithCollate(ft, collate.NewCollationEnabled())
-}
-
-// NeedRestoredDataWithCollate reports restored-data needs under a caller-owned
-// collation mode, so encode/decode paths can use the same setting captured by
-// their table or index.
-func NeedRestoredDataWithCollate(ft *FieldType, useNewCollate bool) bool {
-	if useNewCollate && IsNonBinaryStr(ft) &&
+	if collate.NewCollationEnabled() &&
+		IsNonBinaryStr(ft) &&
 		(!collate.IsBinCollation(ft.GetCollate()) || IsTypeVarchar(ft.GetType())) &&
 		ft.GetCollate() != "utf8mb4_0900_bin" {
 		return true
@@ -184,7 +159,6 @@ var kind2Str = map[byte]string{
 	KindMaxValue:      "max_value",
 	KindRaw:           "raw",
 	KindMysqlJSON:     "json",
-	KindVectorFloat32: "vector",
 }
 
 // TypeStr converts tp to a string.
@@ -214,12 +188,12 @@ func EOFAsNil(err error) error {
 }
 
 // InvOp2 returns an invalid operation error.
-func InvOp2(x, y any, o opcode.Op) (any, error) {
+func InvOp2(x, y interface{}, o opcode.Op) (interface{}, error) {
 	return nil, errors.Errorf("Invalid operation: %v %v %v (mismatched types %T and %T)", x, o, y, x, y)
 }
 
 // overflow returns an overflowed error.
-func overflow(v any, tp byte) error {
+func overflow(v interface{}, tp byte) error {
 	return ErrOverflow.GenWithStack("constant %v overflows %s", v, TypeStr(tp))
 }
 

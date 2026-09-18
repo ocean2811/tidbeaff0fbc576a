@@ -19,20 +19,17 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session/syssession"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	statshandle "github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/ttl/cache"
-	"github.com/pingcap/tidb/pkg/ttl/metrics"
-	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"go.uber.org/multierr"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/cache"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -45,142 +42,100 @@ import (
 // Also, we cannot use the functions in `session/session.go` (to avoid cyclic dependency), so
 // registering function here is really needed.
 
-func withSession(pool syssession.Pool, fn func(session.Session) error) error {
-	return pool.WithSession(func(s *syssession.Session) error {
-		return s.WithSessionContext(func(sctx sessionctx.Context) error {
-			if intest.InTest {
-				// Only for test, in this case, the return session is mockSession
-				if se, ok := sctx.(session.Session); ok {
-					return fn(se)
-				}
-			}
-
-			exec := statshandle.AttachStatsCollector(sctx.GetSQLExecutor())
-			defer statshandle.DetachStatsCollector(exec)
-
-			se := session.NewSession(sctx, s.AvoidReuse)
-			restore, err := prepareSession(se)
-			if err != nil {
-				return err
-			}
-			defer terror.Call(restore)
-			return fn(se)
-		})
-	})
+// AttachStatsCollector attaches the stats collector for the session.
+// this function is registered in BootstrapSession in /session/session.go
+var AttachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
 }
 
-func prepareSession(se session.Session) (func() error, error) {
-	originalRetryLimit := se.GetSessionVars().RetryLimit
-	originalEnable1PC := se.GetSessionVars().Enable1PC
-	originalEnableAsyncCommit := se.GetSessionVars().EnableAsyncCommit
-	originalTimeZone, restoreTimeZone := "", false
-	originalIsolationReadEngines, restoreIsolationReadEngines := "", false
-	restoreRetryLimit, restoreEnable1PC, restoreEnableAsyncCommit := false, false, false
+// DetachStatsCollector removes the stats collector for the session
+// this function is registered in BootstrapSession in /session/session.go
+var DetachStatsCollector = func(s sqlexec.SQLExecutor) sqlexec.SQLExecutor {
+	return s
+}
 
-	restore := func() error {
-		var restoreErr error
-		restoreVar := func(name, sql string, args ...any) {
-			_, err := se.ExecuteSQL(context.Background(), sql, args...)
-			if err == nil {
-				return
-			}
-			logutil.BgLogger().Warn("fail to restore TTL session variable", zap.String("variable", name), zap.Error(err))
-			restoreErr = multierr.Append(restoreErr, errors.Wrapf(err, "restore %s", name))
-		}
-		if restoreRetryLimit {
-			restoreVar("tidb_retry_limit", fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
-		}
-		if restoreEnable1PC && !originalEnable1PC {
-			restoreVar("tidb_enable_1pc", "set tidb_enable_1pc=OFF")
-		}
-		if restoreEnableAsyncCommit && !originalEnableAsyncCommit {
-			restoreVar("tidb_enable_async_commit", "set tidb_enable_async_commit=OFF")
-		}
-		if restoreTimeZone {
-			restoreVar("time_zone", "set @@time_zone=%?", originalTimeZone)
-		}
-		if restoreIsolationReadEngines {
-			restoreVar("tidb_isolation_read_engines", "set tidb_isolation_read_engines=%?", originalIsolationReadEngines)
-		}
-		if restoreErr != nil {
-			se.AvoidReuse()
-		}
-		return restoreErr
+type sessionPool interface {
+	Get() (pools.Resource, error)
+	Put(pools.Resource)
+}
+
+func getSession(pool sessionPool) (session.Session, error) {
+	resource, err := pool.Get()
+	if err != nil {
+		return nil, err
 	}
-	cleanupOnError := func(setupErr error) (func() error, error) {
-		restoreErr := restore()
-		// A SET statement may have taken effect even when its execution returned
-		// an error. Never put a partially prepared session back into the pool.
-		se.AvoidReuse()
-		return nil, multierr.Append(setupErr, restoreErr)
+
+	if se, ok := resource.(session.Session); ok {
+		// Only for test, in this case, the return session is mockSession
+		return se, nil
 	}
+
+	sctx, ok := resource.(sessionctx.Context)
+	if !ok {
+		pool.Put(resource)
+		return nil, errors.Errorf("%T cannot be casted to sessionctx.Context", sctx)
+	}
+
+	exec, ok := resource.(sqlexec.SQLExecutor)
+	if !ok {
+		pool.Put(resource)
+		return nil, errors.Errorf("%T cannot be casted to sqlexec.SQLExecutor", sctx)
+	}
+
+	originalRetryLimit := sctx.GetSessionVars().RetryLimit
+	originalEnable1PC := sctx.GetSessionVars().Enable1PC
+	originalEnableAsyncCommit := sctx.GetSessionVars().EnableAsyncCommit
+	se := session.NewSession(sctx, exec, func(se session.Session) {
+		_, err = se.ExecuteSQL(context.Background(), fmt.Sprintf("set tidb_retry_limit=%d", originalRetryLimit))
+		if err != nil {
+			logutil.BgLogger().Error("fail to reset tidb_retry_limit", zap.Int64("originalRetryLimit", originalRetryLimit), zap.Error(err))
+		}
+
+		if !originalEnable1PC {
+			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_1pc=OFF")
+			terror.Log(err)
+		}
+
+		if !originalEnableAsyncCommit {
+			_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_async_commit=OFF")
+			terror.Log(err)
+		}
+
+		DetachStatsCollector(exec)
+
+		pool.Put(resource)
+	})
+
+	exec = AttachStatsCollector(exec)
 
 	// store and set the retry limit to 0
-	restoreRetryLimit = true
-	_, err := se.ExecuteSQL(context.Background(), "set tidb_retry_limit=0")
+	_, err = se.ExecuteSQL(context.Background(), "set tidb_retry_limit=0")
 	if err != nil {
-		return cleanupOnError(err)
+		se.Close()
+		return nil, err
 	}
 
 	// set enable 1pc to ON
-	restoreEnable1PC = true
 	_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_1pc=ON")
 	if err != nil {
-		return cleanupOnError(err)
+		se.Close()
+		return nil, err
 	}
 
 	// set enable async commit to ON
-	restoreEnableAsyncCommit = true
 	_, err = se.ExecuteSQL(context.Background(), "set tidb_enable_async_commit=ON")
 	if err != nil {
-		return cleanupOnError(err)
+		se.Close()
+		return nil, err
 	}
 
 	// Force rollback the session to guarantee the session is not in any explicit transaction
 	if _, err = se.ExecuteSQL(context.Background(), "ROLLBACK"); err != nil {
-		return cleanupOnError(err)
+		se.Close()
+		return nil, err
 	}
 
-	// set the time zone to UTC
-	rows, err := se.ExecuteSQL(context.Background(), "select @@time_zone")
-	if err != nil {
-		return cleanupOnError(err)
-	}
-
-	if len(rows) == 0 || rows[0].Len() == 0 {
-		return cleanupOnError(errors.New("failed to get time_zone variable"))
-	}
-	originalTimeZone = rows[0].GetString(0)
-
-	restoreTimeZone = true
-	_, err = se.ExecuteSQL(context.Background(), "set @@time_zone='UTC'")
-	if err != nil {
-		return cleanupOnError(err)
-	}
-
-	// allow the session in TTL to use all read engines.
-	_, hasTiDBEngine := se.GetSessionVars().IsolationReadEngines[kv.TiDB]
-	_, hasTiKVEngine := se.GetSessionVars().IsolationReadEngines[kv.TiKV]
-	_, hasTiFlashEngine := se.GetSessionVars().IsolationReadEngines[kv.TiFlash]
-	if !hasTiDBEngine || !hasTiKVEngine || !hasTiFlashEngine {
-		rows, err := se.ExecuteSQL(context.Background(), "select @@tidb_isolation_read_engines")
-		if err != nil {
-			return cleanupOnError(err)
-		}
-
-		if len(rows) == 0 || rows[0].Len() == 0 {
-			return cleanupOnError(errors.New("failed to get tidb_isolation_read_engines variable"))
-		}
-		originalIsolationReadEngines = rows[0].GetString(0)
-
-		restoreIsolationReadEngines = true
-		_, err = se.ExecuteSQL(context.Background(), "set tidb_isolation_read_engines='tikv,tiflash,tidb'")
-		if err != nil {
-			return cleanupOnError(err)
-		}
-	}
-
-	return restore, nil
+	return se, nil
 }
 
 func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.Time) *ttlTableSession {
@@ -189,51 +144,6 @@ func newTableSession(se session.Session, tbl *cache.PhysicalTable, expire time.T
 		tbl:     tbl,
 		expire:  expire,
 	}
-}
-
-// NewScanSession creates a session for scan
-func NewScanSession(ctx context.Context, se session.Session, tbl *cache.PhysicalTable, expire time.Time) (*ttlTableSession, func() error, error) {
-	origConcurrency := se.GetSessionVars().DistSQLScanConcurrency()
-	origPaging := se.GetSessionVars().EnablePaging
-	origInternalSQLScanUserTable := se.GetSessionVars().InternalSQLScanUserTable
-	se.GetSessionVars().InternalSQLScanUserTable = true
-	restore := func() error {
-		se.GetSessionVars().InternalSQLScanUserTable = origInternalSQLScanUserTable
-		_, err := se.ExecuteSQL(context.Background(), "set @@tidb_distsql_scan_concurrency=%?", origConcurrency)
-		terror.Log(err)
-		if err != nil {
-			se.AvoidReuse()
-		}
-
-		_, tmpErr := se.ExecuteSQL(context.Background(), "set @@tidb_enable_paging=%?", origPaging)
-		if tmpErr != nil {
-			err = multierr.Append(err, tmpErr)
-			se.AvoidReuse()
-		}
-
-		return err
-	}
-
-	// Set the distsql scan concurrency to 1 to reduce the number of cop tasks in TTL scan.
-	if _, err := se.ExecuteSQL(ctx, "set @@tidb_distsql_scan_concurrency=1"); err != nil {
-		terror.Log(restore())
-		// The SET may have taken effect before returning an error. Even if the
-		// best-effort restore succeeds, do not return this session to the pool.
-		se.AvoidReuse()
-		return nil, nil, err
-	}
-
-	// Disable tidb_enable_paging because we have already had a `LIMIT` in the SQL to limit the result set.
-	// If `tidb_enable_paging` is enabled, it may have multiple cop tasks even in one region that makes some extra
-	// processed keys in TiKV side, see issue: https://github.com/pingcap/tidb/issues/58342.
-	// Disable it to make the scan more efficient.
-	if _, err := se.ExecuteSQL(ctx, "set @@tidb_enable_paging=OFF"); err != nil {
-		terror.Log(restore())
-		se.AvoidReuse()
-		return nil, nil, err
-	}
-
-	return newTableSession(se, tbl, expire), restore, nil
 }
 
 type ttlTableSession struct {
@@ -247,8 +157,12 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 	defer tracer.EnterPhase(tracer.Phase())
 
 	tracer.EnterPhase(metrics.PhaseOther)
-	if !vardef.EnableTTLJob.Load() {
+	if !variable.EnableTTLJob.Load() {
 		return nil, false, errors.New("global TTL job is disabled")
+	}
+
+	if err := s.ResetWithGlobalTimeZone(ctx); err != nil {
+		return nil, false, err
 	}
 
 	var result []chunk.Row
@@ -281,11 +195,12 @@ func (s *ttlTableSession) ExecuteSQLWithCheck(ctx context.Context, sql string) (
 }
 
 func validateTTLWork(ctx context.Context, s session.Session, tbl *cache.PhysicalTable, expire time.Time) error {
-	newTblInfo, err := s.SessionInfoSchema().TableInfoByName(tbl.Schema, tbl.Name)
+	curTbl, err := s.SessionInfoSchema().TableByName(tbl.Schema, tbl.Name)
 	if err != nil {
 		return err
 	}
 
+	newTblInfo := curTbl.Meta()
 	if tbl.TableInfo == newTblInfo {
 		return nil
 	}

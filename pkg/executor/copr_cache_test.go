@@ -15,18 +15,16 @@
 package executor_test
 
 import (
-	"context"
 	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -54,21 +52,16 @@ func TestIntegrationCopCache(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key)")
 
-	tblInfo, err := dom.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tblInfo, err := dom.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tid := tblInfo.Meta().ID
 	tk.MustExec(`insert into t values(1),(2),(3),(4),(5),(6),(7),(8),(9),(10),(11),(12)`)
 	tableStart := tablecodec.GenTableRecordPrefix(tid)
-	tableStartPrefixNext := tableStart.PrefixNext()
-	if kerneltype.IsNextGen() {
-		tableStart = store.GetCodec().EncodeKey(tableStart)
-		tableStartPrefixNext = store.GetCodec().EncodeKey(tableStartPrefixNext)
-	}
-	cluster.SplitKeys(tableStart, tableStartPrefixNext, 6)
+	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 6)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore", `return(123)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/cophandler/mockCopCacheInUnistore"))
 	}()
 
 	rows := tk.MustQuery("explain analyze select * from t where t.a < 10").Rows()

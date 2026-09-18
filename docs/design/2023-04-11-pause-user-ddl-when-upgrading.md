@@ -1,7 +1,7 @@
 # Proposal: Pause User DDL when Upgrading TiDB
 
 * Author: [zimulala](https://github.com/zimulala)
-* Tracking issue: https://github.com/pingcap/tidb/issues/39751
+* Tracking issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/39751
 
 ## Abstract
 

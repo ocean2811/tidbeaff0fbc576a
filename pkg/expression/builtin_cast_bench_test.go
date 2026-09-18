@@ -18,22 +18,22 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 )
 
-func genCastIntAsInt(ctx BuildContext) (*builtinCastIntAsIntSig, *chunk.Chunk, *chunk.Column) {
+func genCastIntAsInt() (*builtinCastIntAsIntSig, *chunk.Chunk, *chunk.Column) {
 	col := &Column{RetType: types.NewFieldType(mysql.TypeLonglong), Index: 0}
-	baseFunc, err := newBaseBuiltinFunc(ctx, "", []Expression{col}, types.NewFieldType(mysql.TypeLonglong))
+	baseFunc, err := newBaseBuiltinFunc(mock.NewContext(), "", []Expression{col}, types.NewFieldType(mysql.TypeLonglong))
 	if err != nil {
 		panic(err)
 	}
 	baseCast := newBaseBuiltinCastFunc(baseFunc, false)
 	cast := &builtinCastIntAsIntSig{baseCast}
 	input := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, 1024)
-	for range 1024 {
+	for i := 0; i < 1024; i++ {
 		input.AppendInt64(0, rand.Int63n(10000)-5000)
 	}
 	result := chunk.NewColumn(types.NewFieldType(mysql.TypeLonglong), 1024)
@@ -41,13 +41,12 @@ func genCastIntAsInt(ctx BuildContext) (*builtinCastIntAsIntSig, *chunk.Chunk, *
 }
 
 func BenchmarkCastIntAsIntRow(b *testing.B) {
-	ctx := mock.NewContext()
-	cast, input, _ := genCastIntAsInt(ctx)
+	cast, input, _ := genCastIntAsInt()
 	it := chunk.NewIterator4Chunk(input)
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		for row := it.Begin(); row != it.End(); row = it.Next() {
-			if _, _, err := cast.evalInt(ctx, row); err != nil {
+			if _, _, err := cast.evalInt(row); err != nil {
 				b.Fatal(err)
 			}
 		}
@@ -55,11 +54,10 @@ func BenchmarkCastIntAsIntRow(b *testing.B) {
 }
 
 func BenchmarkCastIntAsIntVec(b *testing.B) {
-	ctx := mock.NewContext()
-	cast, input, result := genCastIntAsInt(ctx)
+	cast, input, result := genCastIntAsInt()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if err := cast.vecEvalInt(ctx, input, result); err != nil {
+		if err := cast.vecEvalInt(input, result); err != nil {
 			b.Fatal(err)
 		}
 	}

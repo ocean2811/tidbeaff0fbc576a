@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "lll",
     srcs = ["analyzer.go"],
-    importpath = "github.com/pingcap/tidb/build/linter/lll",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/build/linter/lll",
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",

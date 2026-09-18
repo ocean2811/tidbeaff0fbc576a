@@ -20,12 +20,11 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
 )
 
 func BenchmarkAllocator_Alloc(b *testing.B) {
@@ -44,12 +43,12 @@ func BenchmarkAllocator_Alloc(b *testing.B) {
 	tblID := int64(2)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: ast.NewCIStr("a")})
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		if err != nil {
 			return err
 		}
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: ast.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
 		if err != nil {
 			return err
 		}
@@ -84,8 +83,8 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 	var sequenceBase int64
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		if err != nil {
 			return err
 		}
@@ -100,7 +99,7 @@ func BenchmarkAllocator_SequenceAlloc(b *testing.B) {
 		}
 		seqTable := &model.TableInfo{
 			ID:       1,
-			Name:     ast.NewCIStr("seq"),
+			Name:     model.NewCIStr("seq"),
 			Sequence: seq,
 		}
 		sequenceBase = seq.Start - 1

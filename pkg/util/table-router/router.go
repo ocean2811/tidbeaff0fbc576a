@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	selector "github.com/pingcap/tidb/pkg/util/table-rule-selector"
+	selector "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/table-rule-selector"
 )
 
 // TableRule is a rule to route schema/table to target schema/table
@@ -237,7 +237,7 @@ func (r *Table) Route(schema, table string) (targetSchema string, targetTable st
 }
 
 // ExtractVal match value via regexp
-func (*TableRule) extractVal(s string, ext any) string {
+func (*TableRule) extractVal(s string, ext interface{}) string {
 	var params []string
 	switch e := ext.(type) {
 	case *TableExtractor:
@@ -257,7 +257,9 @@ func (*TableRule) extractVal(s string, ext any) string {
 }
 
 // FetchExtendColumn get extract rule, return extracted cols and extracted vals.
-func (r *Table) FetchExtendColumn(schema, table, source string) (cols []string, vals []string) {
+func (r *Table) FetchExtendColumn(schema, table, source string) ([]string, []string) {
+	var cols []string
+	var vals []string
 	rules := r.Match(schema, table)
 	var (
 		schemaRules = make([]*TableRule, 0, len(rules))

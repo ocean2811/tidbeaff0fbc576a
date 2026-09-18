@@ -19,11 +19,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/types"
 )
 
 const (
@@ -44,7 +43,7 @@ func encodeColumnInfoToLattice(ci *model.ColumnInfo) Tuple {
 }
 
 // restoreColumnInfoFromUnwrapped restores the text representation of a column.
-func restoreColumnInfoFromUnwrapped(ctx *format.RestoreCtx, col []any, colName string) {
+func restoreColumnInfoFromUnwrapped(ctx *format.RestoreCtx, col []interface{}, colName string) {
 	typ := col[columnInfoTupleIndexFieldTypes].(*types.FieldType)
 
 	ctx.WriteName(colName)
@@ -115,11 +114,11 @@ func encodeImplicitPrimaryKeyToLattice(ci *model.ColumnInfo) Tuple {
 		EqualitySingleton(indexColumnSlice{indexColumn{colName: ci.Name.L, length: types.UnspecifiedLength}}),
 		Bool(false),
 		Bool(false),
-		Singleton(ast.IndexTypeBtree),
+		Singleton(model.IndexTypeBtree),
 	}
 }
 
-func restoreIndexInfoFromUnwrapped(ctx *format.RestoreCtx, index []any, keyName string) {
+func restoreIndexInfoFromUnwrapped(ctx *format.RestoreCtx, index []interface{}, keyName string) {
 	isPrimary := !index[indexInfoTupleIndexNotPrimary].(bool)
 
 	switch {
@@ -133,7 +132,7 @@ func restoreIndexInfoFromUnwrapped(ctx *format.RestoreCtx, index []any, keyName 
 		ctx.WriteName(keyName)
 	}
 
-	if tp := index[indexInfoTupleIndexType].(ast.IndexType); tp != ast.IndexTypeBtree {
+	if tp := index[indexInfoTupleIndexType].(model.IndexType); tp != model.IndexTypeBtree {
 		ctx.WriteKeyWord(" USING ")
 		ctx.WriteKeyWord(tp.String())
 	}
@@ -239,7 +238,8 @@ func (indexMap) JoinWithNil(_ Lattice) (Lattice, error) {
 }
 
 const (
-	tableInfoTupleIndexCollate = iota
+	tableInfoTupleIndexCharset = iota
+	tableInfoTupleIndexCollate
 	tableInfoTupleIndexColumns
 	tableInfoTupleIndexIndices
 	// nolint:unused, varcheck, deadcode
@@ -270,7 +270,8 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 	}
 
 	return Tuple{
-		Collation(ti.Collate),
+		Singleton(ti.Charset),
+		Singleton(ti.Collate),
 		Map(columns),
 		Map(indices),
 		// TODO ForeignKeys?
@@ -284,11 +285,11 @@ func encodeTableInfoToLattice(ti *model.TableInfo) Tuple {
 }
 
 type kvPair struct {
-	value any
+	value interface{}
 	key   string
 }
 
-func sortedMap(input map[string]any) []kvPair {
+func sortedMap(input map[string]interface{}) []kvPair {
 	res := make([]kvPair, 0, len(input))
 	for key, value := range input {
 		res = append(res, kvPair{key: key, value: value})
@@ -300,33 +301,36 @@ func sortedMap(input map[string]any) []kvPair {
 	return res
 }
 
-func restoreTableInfoFromUnwrapped(ctx *format.RestoreCtx, table []any, tableName string) {
+func restoreTableInfoFromUnwrapped(ctx *format.RestoreCtx, table []interface{}, tableName string) {
 	ctx.WriteKeyWord("CREATE TABLE ")
 	ctx.WriteName(tableName)
 	ctx.WritePlain("(")
 
-	for i, pair := range sortedMap(table[tableInfoTupleIndexColumns].(map[string]any)) {
+	for i, pair := range sortedMap(table[tableInfoTupleIndexColumns].(map[string]interface{})) {
 		if i != 0 {
 			ctx.WritePlain(", ")
 		}
 		colName := pair.key
-		column := pair.value.([]any)
+		column := pair.value.([]interface{})
 		restoreColumnInfoFromUnwrapped(ctx, column, colName)
 	}
 
-	for _, pair := range sortedMap(table[tableInfoTupleIndexIndices].(map[string]any)) {
+	for _, pair := range sortedMap(table[tableInfoTupleIndexIndices].(map[string]interface{})) {
 		ctx.WritePlain(", ")
 		indexName := pair.key
-		index := pair.value.([]any)
+		index := pair.value.([]interface{})
 		restoreIndexInfoFromUnwrapped(ctx, index, indexName)
 	}
 
 	ctx.WritePlain(")")
-
-	collate := table[tableInfoTupleIndexCollate].(string)
-	ctx.WriteKeyWord(" COLLATE ")
-	ctx.WritePlain(collate)
-
+	if charset := table[tableInfoTupleIndexCharset].(string); charset != "" {
+		ctx.WriteKeyWord(" CHARSET ")
+		ctx.WriteKeyWord(charset)
+	}
+	if collate := table[tableInfoTupleIndexCollate].(string); collate != "" {
+		ctx.WriteKeyWord(" COLLATE ")
+		ctx.WriteKeyWord(collate)
+	}
 	if bits := table[tableInfoTupleIndexShardRowIDBits].(uint64); bits > 0 {
 		ctx.WriteKeyWord(" SHARD_ROW_ID_BITS ")
 		ctx.WritePlainf("%d", bits)
@@ -352,18 +356,18 @@ func Encode(ti *model.TableInfo) Table {
 
 // DecodeColumnFieldTypes is used to decode column field types from Lattice.
 func DecodeColumnFieldTypes(t Table) map[string]*types.FieldType {
-	table := t.value.Unwrap().([]any)
-	columnMaps := table[tableInfoTupleIndexColumns].(map[string]any)
+	table := t.value.Unwrap().([]interface{})
+	columnMaps := table[tableInfoTupleIndexColumns].(map[string]interface{})
 	cols := make(map[string]*types.FieldType, len(columnMaps))
 	for key, value := range columnMaps {
-		cols[key] = value.([]any)[columnInfoTupleIndexFieldTypes].(*types.FieldType)
+		cols[key] = value.([]interface{})[columnInfoTupleIndexFieldTypes].(*types.FieldType)
 	}
 	return cols
 }
 
 // Restore is for debug use only.
 func (t Table) Restore(ctx *format.RestoreCtx, tableName string) {
-	restoreTableInfoFromUnwrapped(ctx, t.value.Unwrap().([]any), tableName)
+	restoreTableInfoFromUnwrapped(ctx, t.value.Unwrap().([]interface{}), tableName)
 }
 
 // Compare is the implementation of Lattice interface.
@@ -408,7 +412,7 @@ func (t Table) Join(other Table) (Table, error) {
 		if !ok && ty.inAutoIncrement() {
 			return Table{value: nil}, &IncompatibleError{
 				Msg:  ErrMsgAtMapKey,
-				Args: []any{name, &IncompatibleError{Msg: ErrMsgAutoTypeWithoutKey}},
+				Args: []interface{}{name, &IncompatibleError{Msg: ErrMsgAutoTypeWithoutKey}},
 			}
 		}
 		ty.setAntiKeyFlags(flag)

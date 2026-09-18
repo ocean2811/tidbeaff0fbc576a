@@ -21,36 +21,36 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/ttl/cache"
-	"github.com/pingcap/tidb/pkg/ttl/sqlbuilder"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/cache"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/sqlbuilder"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
 func TestEscape(t *testing.T) {
 	tb := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("testp;\"';123`456"),
+		Schema: model.NewCIStr("testp;\"';123`456"),
 		TableInfo: &model.TableInfo{
-			Name: ast.NewCIStr("tp\"';123`456"),
+			Name: model.NewCIStr("tp\"';123`456"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: ast.NewCIStr("col1\"';123`456"), FieldType: *types.NewFieldType(mysql.TypeString)},
+			{Name: model.NewCIStr("col1\"';123`456"), FieldType: *types.NewFieldType(mysql.TypeString)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time\"';123`456"),
+			Name:      model.NewCIStr("time\"';123`456"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 		PartitionDef: &model.PartitionDefinition{
-			Name: ast.NewCIStr("p1\"';123`456"),
+			Name: model.NewCIStr("p1\"';123`456"),
 		},
 	}
 
@@ -81,18 +81,18 @@ func TestEscape(t *testing.T) {
 	}{
 		{
 			tp:  "select",
-			ds:  [][]types.Datum{d("key1'\";123`456\t\n\r")},
-			sql: "SELECT LOW_PRIORITY SQL_NO_CACHE `col1\"';123``456` FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` > 'key1\\'\\\";123`456\t\\n\\r' AND `time\"';123``456` < CAST('1970-01-01 00:00:00' AS DATETIME)",
+			ds:  [][]types.Datum{d("key1'\";123`456")},
+			sql: "SELECT LOW_PRIORITY SQL_NO_CACHE `col1\"';123``456` FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` > 'key1\\'\\\";123`456' AND `time\"';123``456` < FROM_UNIXTIME(0)",
 		},
 		{
 			tp:  "delete",
-			ds:  [][]types.Datum{d("key2'\";123`456\t\n\r")},
-			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key2\\'\\\";123`456\t\\n\\r') AND `time\"';123``456` < CAST('1970-01-01 00:00:00' AS DATETIME)",
+			ds:  [][]types.Datum{d("key2'\";123`456")},
+			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key2\\'\\\";123`456') AND `time\"';123``456` < FROM_UNIXTIME(0)",
 		},
 		{
 			tp:  "delete",
-			ds:  [][]types.Datum{d("key3'\";123`456\t\n\r"), d("key4'`\"")},
-			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key3\\'\\\";123`456\t\\n\\r', 'key4\\'`\\\"') AND `time\"';123``456` < CAST('1970-01-01 00:00:00' AS DATETIME)",
+			ds:  [][]types.Datum{d("key3'\";123`456"), d("key4'`\"")},
+			sql: "DELETE LOW_PRIORITY FROM `testp;\"';123``456`.`tp\"';123``456` PARTITION(`p1\"';123``456`) WHERE `col1\"';123``456` IN ('key3\\'\\\";123`456', 'key4\\'`\\\"') AND `time\"';123``456` < FROM_UNIXTIME(0)",
 		},
 	}
 
@@ -115,7 +115,8 @@ func TestEscape(t *testing.T) {
 		var tbName *ast.TableName
 		var keyColumnName, timeColumnName string
 		var values []string
-		var timeValue string
+		var timeFunc string
+		var timeTS int64
 		switch c.tp {
 		case "select":
 			stmt, ok := stmts[0].(*ast.SelectStmt)
@@ -127,9 +128,8 @@ func TestEscape(t *testing.T) {
 			values = []string{cond1.R.(ast.ValueExpr).GetValue().(string)}
 			cond2 := and.R.(*ast.BinaryOperationExpr)
 			timeColumnName = cond2.L.(*ast.ColumnNameExpr).Name.Name.O
-			castExpr := cond2.R.(*ast.FuncCastExpr)
-			require.Equal(t, mysql.TypeDatetime, castExpr.Tp.GetType())
-			timeValue = castExpr.Expr.(ast.ValueExpr).GetValue().(string)
+			timeFunc = cond2.R.(*ast.FuncCallExpr).FnName.L
+			timeTS = cond2.R.(*ast.FuncCallExpr).Args[0].(ast.ValueExpr).GetValue().(int64)
 		case "delete":
 			stmt, ok := stmts[0].(*ast.DeleteStmt)
 			require.True(t, ok)
@@ -144,9 +144,8 @@ func TestEscape(t *testing.T) {
 			}
 			cond2 := and.R.(*ast.BinaryOperationExpr)
 			timeColumnName = cond2.L.(*ast.ColumnNameExpr).Name.Name.O
-			castExpr := cond2.R.(*ast.FuncCastExpr)
-			require.Equal(t, mysql.TypeDatetime, castExpr.Tp.GetType())
-			timeValue = castExpr.Expr.(ast.ValueExpr).GetValue().(string)
+			timeFunc = cond2.R.(*ast.FuncCallExpr).FnName.L
+			timeTS = cond2.R.(*ast.FuncCallExpr).Args[0].(ast.ValueExpr).GetValue().(int64)
 		default:
 			require.FailNow(t, "invalid tp: %s", c.tp)
 		}
@@ -160,7 +159,8 @@ func TestEscape(t *testing.T) {
 		for i, row := range c.ds {
 			require.Equal(t, row[0].GetString(), values[i])
 		}
-		require.Equal(t, "1970-01-01 00:00:00", timeValue)
+		require.Equal(t, "from_unixtime", timeFunc)
+		require.Equal(t, int64(0), timeTS)
 	}
 }
 
@@ -223,20 +223,20 @@ func TestFormatSQLDatum(t *testing.T) {
 
 	cases := []struct {
 		ft     string
-		values []any
+		values []interface{}
 		hex    bool
 	}{
 		{
 			ft:     "int",
-			values: []any{1, 2, 3, -12},
+			values: []interface{}{1, 2, 3, -12},
 		},
 		{
 			ft:     "decimal(5, 2)",
-			values: []any{"0.3", "128.71", "-245.32"},
+			values: []interface{}{"0.3", "128.71", "-245.32"},
 		},
 		{
 			ft: "varchar(32) CHARACTER SET latin1",
-			values: []any{
+			values: []interface{}{
 				"aa';delete from t where 1;",
 				string([]byte{0xf1, 0xf2}),
 				string([]byte{0xf1, 0xf2, 0xf3, 0xf4}),
@@ -244,7 +244,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft: "char(32) CHARACTER SET utf8mb4",
-			values: []any{
+			values: []interface{}{
 				"demo",
 				"\n123",
 				"aa';delete from t where 1;",
@@ -253,7 +253,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft: "varchar(32) CHARACTER SET utf8mb4",
-			values: []any{
+			values: []interface{}{
 				"demo",
 				"aa';delete from t where 1;",
 				"你好👋",
@@ -261,7 +261,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft: "varchar(32) CHARACTER SET binary",
-			values: []any{
+			values: []interface{}{
 				string([]byte{0xf1, 0xf2, 0xf3, 0xf4}),
 				"你好👋",
 				"abcdef",
@@ -270,7 +270,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft: "binary(8)",
-			values: []any{
+			values: []interface{}{
 				string([]byte{0xf1, 0xf2}),
 				string([]byte{0xf1, 0xf2, 0xf3, 0xf4}),
 			},
@@ -278,7 +278,7 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft: "blob",
-			values: []any{
+			values: []interface{}{
 				string([]byte{0xf1, 0xf2}),
 				string([]byte{0xf1, 0xf2, 0xf3, 0xf4}),
 			},
@@ -286,40 +286,40 @@ func TestFormatSQLDatum(t *testing.T) {
 		},
 		{
 			ft:     "bit(1)",
-			values: []any{0, 1},
+			values: []interface{}{0, 1},
 			hex:    true,
 		},
 		{
 			ft:     "date",
-			values: []any{"2022-01-02", "1900-12-31"},
+			values: []interface{}{"2022-01-02", "1900-12-31"},
 		},
 		{
 			ft:     "time",
-			values: []any{"00:00", "01:23", "13:51:22"},
+			values: []interface{}{"00:00", "01:23", "13:51:22"},
 		},
 		{
 			ft:     "datetime",
-			values: []any{"2022-01-02 12:11:11", "2022-01-02"},
+			values: []interface{}{"2022-01-02 12:11:11", "2022-01-02"},
 		},
 		{
 			ft:     "datetime(6)",
-			values: []any{"2022-01-02 12:11:11.123456"},
+			values: []interface{}{"2022-01-02 12:11:11.123456"},
 		},
 		{
 			ft:     "timestamp",
-			values: []any{"2022-01-02 12:11:11", "2022-01-02"},
+			values: []interface{}{"2022-01-02 12:11:11", "2022-01-02"},
 		},
 		{
 			ft:     "timestamp(6)",
-			values: []any{"2022-01-02 12:11:11.123456"},
+			values: []interface{}{"2022-01-02 12:11:11.123456"},
 		},
 		{
 			ft:     "enum('e1', 'e2', \"e3'\", 'e4\"', ';你好👋')",
-			values: []any{"e1", "e2", "e3'", "e4\"", ";你好👋"},
+			values: []interface{}{"e1", "e2", "e3'", "e4\"", ";你好👋"},
 		},
 		{
 			ft:     "set('e1', 'e2', \"e3'\", 'e4\"', ';你好👋')",
-			values: []any{"", "e1", "e2", "e3'", "e4\"", ";你好👋"},
+			values: []interface{}{"", "e1", "e2", "e3'", "e4\"", ";你好👋"},
 		},
 	}
 
@@ -356,16 +356,8 @@ func TestFormatSQLDatum(t *testing.T) {
 	sb.WriteString("\n);")
 	tk.MustExec(sb.String())
 
-	tbl, err := do.InfoSchema().TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := do.InfoSchema().TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
-	for i := range cases {
-		col := tbl.Meta().FindPublicColumnByName(fmt.Sprintf("col%d", i))
-		s, err := sqlbuilder.FormatSQLDatum(types.Datum{}, &col.FieldType)
-		require.NoError(t, err)
-		require.Equal(t, "NULL", s, "ft: %s", cases[i].ft)
-		_, _, err = parser.New().Parse("SELECT "+s, "", "")
-		require.NoError(t, err, "ft: %s, SQL: %s", cases[i].ft, s)
-	}
 
 	for i, c := range cases {
 		for j, v := range c.values {
@@ -378,7 +370,8 @@ func TestFormatSQLDatum(t *testing.T) {
 		for j := range c.values {
 			rowID := fmt.Sprintf("%d-%d", i, j)
 			colName := fmt.Sprintf("col%d", i)
-			exec := tk.Session().GetSQLExecutor()
+			exec, ok := tk.Session().(sqlexec.SQLExecutor)
+			require.True(t, ok)
 			selectSQL := fmt.Sprintf("select %s from t where id='%s'", colName, rowID)
 			rs, err := exec.ExecuteInternal(ctx, selectSQL)
 			require.NoError(t, err, selectSQL)
@@ -411,43 +404,43 @@ func TestSQLBuilder(t *testing.T) {
 	var b *sqlbuilder.SQLBuilder
 
 	t1 := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test"),
+		Schema: model.NewCIStr("test"),
 		TableInfo: &model.TableInfo{
-			Name: ast.NewCIStr("t1"),
+			Name: model.NewCIStr("t1"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
+			Name:      model.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
 
 	t2 := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test2"),
+		Schema: model.NewCIStr("test2"),
 		TableInfo: &model.TableInfo{
-			Name: ast.NewCIStr("t2"),
+			Name: model.NewCIStr("t2"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
-			{Name: ast.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
+			Name:      model.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
 
 	tp := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("testp"),
+		Schema: model.NewCIStr("testp"),
 		TableInfo: &model.TableInfo{
-			Name: ast.NewCIStr("tp"),
+			Name: model.NewCIStr("tp"),
 		},
 		KeyColumns: t1.KeyColumns,
 		TimeColumn: t1.TimeColumn,
 		PartitionDef: &model.PartitionDefinition{
-			Name: ast.NewCIStr("p1"),
+			Name: model.NewCIStr("p1"),
 		},
 	}
 
@@ -472,14 +465,14 @@ func TestSQLBuilder(t *testing.T) {
 	shLoc, err := time.LoadLocation("Asia/Shanghai")
 	require.NoError(t, err)
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(shLoc)))
-	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < CAST('1970-01-01 08:00:00' AS DATETIME)")
+	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0)")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
 	must(b.WriteSelect())
 	must(b.WriteCommonCondition(t1.KeyColumns, ">", d("a1")))
 	must(b.WriteCommonCondition(t1.KeyColumns, "<=", d("c3")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
-	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1' AND `id` <= 'c3' AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME)")
+	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1' AND `id` <= 'c3' AND `time` < FROM_UNIXTIME(0)")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
 	must(b.WriteSelect())
@@ -509,7 +502,7 @@ func TestSQLBuilder(t *testing.T) {
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteOrderBy(t1.KeyColumns, false))
 	must(b.WriteLimit(128))
-	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1\\';\\'' AND `id` <= 'a2\\\"' AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `id` ASC LIMIT 128")
+	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 'a1\\';\\'' AND `id` <= 'a2\\\"' AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 128")
 
 	b = sqlbuilder.NewSQLBuilder(t2)
 	must(b.WriteSelect())
@@ -522,7 +515,7 @@ func TestSQLBuilder(t *testing.T) {
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteOrderBy(t2.KeyColumns, false))
 	must(b.WriteLimit(100))
-	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE (`a`, `b`) <= ('x2', 21) AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b` ASC LIMIT 100")
+	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE (`a`, `b`) <= ('x2', 21) AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b` ASC LIMIT 100")
 
 	b = sqlbuilder.NewSQLBuilder(t2)
 	must(b.WriteSelect())
@@ -531,7 +524,7 @@ func TestSQLBuilder(t *testing.T) {
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteOrderBy(t2.KeyColumns, false))
 	must(b.WriteLimit(100))
-	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE `a` = 'x3' AND `b` > 31 AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b` ASC LIMIT 100")
+	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b` FROM `test2`.`t2` WHERE `a` = 'x3' AND `b` > 31 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b` ASC LIMIT 100")
 
 	// test build delete queries
 	b = sqlbuilder.NewSQLBuilder(t1)
@@ -543,111 +536,75 @@ func TestSQLBuilder(t *testing.T) {
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t1.KeyColumns, d("a")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
-	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN ('a') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME)")
+	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN ('a') AND `time` < FROM_UNIXTIME(0)")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t1.KeyColumns, d("a"), d("b")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
-	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN ('a', 'b') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME)")
+	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN ('a', 'b') AND `time` < FROM_UNIXTIME(0)")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t2.KeyColumns, d("a", 1)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteLimit(100))
-	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1)) AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) LIMIT 100")
+	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1)) AND `time` < FROM_UNIXTIME(0) LIMIT 100")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t2.KeyColumns, d("a", 1), d("b", 2)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
 	must(b.WriteLimit(100))
-	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1), ('b', 2)) AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) LIMIT 100")
+	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1), ('b', 2)) AND `time` < FROM_UNIXTIME(0) LIMIT 100")
 
 	b = sqlbuilder.NewSQLBuilder(t1)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(t2.KeyColumns, d("a", 1), d("b", 2)))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
-	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1), ('b', 2)) AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME)")
+	mustBuild(b, "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE (`a`, `b`) IN (('a', 1), ('b', 2)) AND `time` < FROM_UNIXTIME(0)")
 
 	// test select partition table
 	b = sqlbuilder.NewSQLBuilder(tp)
 	must(b.WriteSelect())
 	must(b.WriteCommonCondition(tp.KeyColumns, ">", d("a1")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
-	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `testp`.`tp` PARTITION(`p1`) WHERE `id` > 'a1' AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME)")
+	mustBuild(b, "SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `testp`.`tp` PARTITION(`p1`) WHERE `id` > 'a1' AND `time` < FROM_UNIXTIME(0)")
 
 	b = sqlbuilder.NewSQLBuilder(tp)
 	must(b.WriteDelete())
 	must(b.WriteInCondition(tp.KeyColumns, d("a"), d("b")))
 	must(b.WriteExpireCondition(time.UnixMilli(0).In(time.UTC)))
-	mustBuild(b, "DELETE LOW_PRIORITY FROM `testp`.`tp` PARTITION(`p1`) WHERE `id` IN ('a', 'b') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME)")
-}
-
-func TestExpireConditionPreservesTemporalSemanticsInUTCSession(t *testing.T) {
-	ny, err := time.LoadLocation("America/New_York")
-	require.NoError(t, err)
-	// This instant is the second 01:15 during the New York DST fold.
-	expire := time.Date(2024, 11, 3, 6, 15, 0, 0, time.UTC).In(ny)
-	for _, tc := range []struct {
-		name     string
-		typeCode byte
-		expect   string
-	}{
-		{"timestamp", mysql.TypeTimestamp, fmt.Sprintf("FROM_UNIXTIME(%d)", expire.Unix())},
-		{"datetime", mysql.TypeDatetime, "CAST('2024-11-03 01:15:00' AS DATETIME)"},
-		{"date", mysql.TypeDate, "CAST('2024-11-03 01:15:00' AS DATETIME)"},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			timeColumn := &model.ColumnInfo{Name: ast.NewCIStr("expired_at"), FieldType: *types.NewFieldType(tc.typeCode)}
-			tbl := &cache.PhysicalTable{
-				Schema: ast.NewCIStr("test"),
-				TableInfo: &model.TableInfo{
-					Name: ast.NewCIStr("t"),
-				},
-				KeyColumns: []*model.ColumnInfo{{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeLong)}},
-				TimeColumn: timeColumn,
-			}
-			b := sqlbuilder.NewSQLBuilder(tbl)
-			require.NoError(t, b.WriteSelect())
-			require.NoError(t, b.WriteExpireCondition(expire))
-			sql, err := b.Build()
-			require.NoError(t, err)
-			require.Contains(t, sql, "`expired_at` < "+tc.expect)
-			_, _, err = parser.New().Parse(sql, "", "")
-			require.NoError(t, err)
-		})
-	}
+	mustBuild(b, "DELETE LOW_PRIORITY FROM `testp`.`tp` PARTITION(`p1`) WHERE `id` IN ('a', 'b') AND `time` < FROM_UNIXTIME(0)")
 }
 
 func TestScanQueryGenerator(t *testing.T) {
 	t1 := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test"),
+		Schema: model.NewCIStr("test"),
 		TableInfo: &model.TableInfo{
-			Name: ast.NewCIStr("t1"),
+			Name: model.NewCIStr("t1"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
+			Name:      model.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
 
 	t2 := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test2"),
+		Schema: model.NewCIStr("test2"),
 		TableInfo: &model.TableInfo{
-			Name: ast.NewCIStr("t2"),
+			Name: model.NewCIStr("t2"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
-			{Name: ast.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
-			{Name: ast.NewCIStr("c"), FieldType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).Build()},
+			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: model.NewCIStr("c"), FieldType: types.NewFieldTypeBuilder().SetType(mysql.TypeString).SetFlag(mysql.BinaryFlag).Build()},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
+			Name:      model.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
@@ -663,15 +620,15 @@ func TestScanQueryGenerator(t *testing.T) {
 		expire     time.Time
 		rangeStart []types.Datum
 		rangeEnd   []types.Datum
-		path       [][]any
+		path       [][]interface{}
 	}{
 		{
 			tbl:    t1,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 3,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `id` ASC LIMIT 3",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
 				},
 				{
 					nil, 5, "",
@@ -681,10 +638,10 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t1,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 3,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `id` ASC LIMIT 3",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
 				},
 				{
 					[][]types.Datum{}, 5, "",
@@ -696,14 +653,14 @@ func TestScanQueryGenerator(t *testing.T) {
 			expire:     time.UnixMilli(0).In(time.UTC),
 			rangeStart: d(1),
 			rangeEnd:   d(100),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 3,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `id` >= 1 AND `id` < 100 AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `id` ASC LIMIT 3",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` >= 1 AND `id` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
 				},
 				{
 					result(d(10), 3), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `id` > 10 AND `id` < 100 AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `id` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 10 AND `id` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 5",
 				},
 				{
 					result(d(15), 4), 5,
@@ -714,18 +671,18 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t1,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 3,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `id` ASC LIMIT 3",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 3",
 				},
 				{
 					result(d(2), 3), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `id` > 2 AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `id` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 2 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 5",
 				},
 				{
 					result(d(4), 5), 6,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` USE INDEX () WHERE `id` > 4 AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `id` ASC LIMIT 6",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `id` FROM `test`.`t1` WHERE `id` > 4 AND `time` < FROM_UNIXTIME(0) ORDER BY `id` ASC LIMIT 6",
 				},
 				{
 					result(d(7), 5), 5, "",
@@ -735,10 +692,10 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t2,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					nil, 5, "",
@@ -748,10 +705,10 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t2,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					nil, 5, "",
@@ -761,10 +718,10 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t2,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					[][]types.Datum{}, 5, "",
@@ -774,10 +731,10 @@ func TestScanQueryGenerator(t *testing.T) {
 		{
 			tbl:    t2,
 			expire: time.UnixMilli(0).In(time.UTC),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0xf0}), 4), 5, "",
@@ -789,42 +746,42 @@ func TestScanQueryGenerator(t *testing.T) {
 			expire:     time.UnixMilli(0).In(time.UTC),
 			rangeStart: d(1, "x", []byte{0xe}),
 			rangeEnd:   d(100, "z", []byte{0xff}),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` = 'x' AND `c` >= x'0e' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` >= x'0e' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x1a}), 5), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x20}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "y", []byte{0x0a}), 5), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` = 'y' AND `c` > x'0a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'y' AND `c` > x'0a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "y", []byte{0x11}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` > 'y' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'y' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "z", []byte{0x02}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` > 1 AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(3, "a", []byte{0x01}), 5), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 3 AND `b` = 'a' AND `c` > x'01' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 3 AND `b` = 'a' AND `c` > x'01' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(3, "a", []byte{0x11}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 3 AND `b` > 'a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 3 AND `b` > 'a' AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(3, "c", []byte{0x12}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` > 3 AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 3 AND (`a`, `b`, `c`) < (100, 'z', x'ff') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(5, "e", []byte{0xa1}), 4), 5, "",
@@ -836,22 +793,22 @@ func TestScanQueryGenerator(t *testing.T) {
 			expire:     time.UnixMilli(0).In(time.UTC),
 			rangeStart: d(1),
 			rangeEnd:   d(100),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` >= 1 AND `a` < 100 AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` >= 1 AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x1a}), 5), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND `a` < 100 AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x20}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` > 'x' AND `a` < 100 AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "y", []byte{0x0a}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` > 1 AND `a` < 100 AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND `a` < 100 AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 			},
 		},
@@ -860,22 +817,22 @@ func TestScanQueryGenerator(t *testing.T) {
 			expire:     time.UnixMilli(0).In(time.UTC),
 			rangeStart: d(1, "x"),
 			rangeEnd:   d(100, "z"),
-			path: [][]any{
+			path: [][]interface{}{
 				{
 					nil, 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` >= 'x' AND (`a`, `b`) < (100, 'z') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` >= 'x' AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x1a}), 5), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`) < (100, 'z') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` = 'x' AND `c` > x'1a' AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "x", []byte{0x20}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`) < (100, 'z') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` = 1 AND `b` > 'x' AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 				{
 					result(d(1, "y", []byte{0x0a}), 4), 5,
-					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` USE INDEX () WHERE `a` > 1 AND (`a`, `b`) < (100, 'z') AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
+					"SELECT LOW_PRIORITY SQL_NO_CACHE `a`, `b`, `c` FROM `test2`.`t2` WHERE `a` > 1 AND (`a`, `b`) < (100, 'z') AND `time` < FROM_UNIXTIME(0) ORDER BY `a`, `b`, `c` ASC LIMIT 5",
 				},
 			},
 		},
@@ -907,30 +864,30 @@ func TestScanQueryGenerator(t *testing.T) {
 
 func TestBuildDeleteSQL(t *testing.T) {
 	t1 := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test"),
+		Schema: model.NewCIStr("test"),
 		TableInfo: &model.TableInfo{
-			Name: ast.NewCIStr("t1"),
+			Name: model.NewCIStr("t1"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
+			Name:      model.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
 
 	t2 := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test2"),
+		Schema: model.NewCIStr("test2"),
 		TableInfo: &model.TableInfo{
-			Name: ast.NewCIStr("t2"),
+			Name: model.NewCIStr("t2"),
 		},
 		KeyColumns: []*model.ColumnInfo{
-			{Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
-			{Name: ast.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+			{Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeInt24)},
+			{Name: model.NewCIStr("b"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 		},
 		TimeColumn: &model.ColumnInfo{
-			Name:      ast.NewCIStr("time"),
+			Name:      model.NewCIStr("time"),
 			FieldType: *types.NewFieldType(mysql.TypeDatetime),
 		},
 	}
@@ -945,25 +902,25 @@ func TestBuildDeleteSQL(t *testing.T) {
 			tbl:    t1,
 			expire: time.UnixMilli(0).In(time.UTC),
 			rows:   [][]types.Datum{d(1)},
-			sql:    "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN (1) AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) LIMIT 1",
+			sql:    "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN (1) AND `time` < FROM_UNIXTIME(0) LIMIT 1",
 		},
 		{
 			tbl:    t1,
 			expire: time.UnixMilli(0).In(time.UTC),
 			rows:   [][]types.Datum{d(2), d(3), d(4)},
-			sql:    "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN (2, 3, 4) AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) LIMIT 3",
+			sql:    "DELETE LOW_PRIORITY FROM `test`.`t1` WHERE `id` IN (2, 3, 4) AND `time` < FROM_UNIXTIME(0) LIMIT 3",
 		},
 		{
 			tbl:    t2,
 			expire: time.UnixMilli(0).In(time.UTC),
 			rows:   [][]types.Datum{d(1, "a")},
-			sql:    "DELETE LOW_PRIORITY FROM `test2`.`t2` WHERE (`a`, `b`) IN ((1, 'a')) AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) LIMIT 1",
+			sql:    "DELETE LOW_PRIORITY FROM `test2`.`t2` WHERE (`a`, `b`) IN ((1, 'a')) AND `time` < FROM_UNIXTIME(0) LIMIT 1",
 		},
 		{
 			tbl:    t2,
 			expire: time.UnixMilli(0).In(time.UTC),
 			rows:   [][]types.Datum{d(1, "a"), d(2, "b")},
-			sql:    "DELETE LOW_PRIORITY FROM `test2`.`t2` WHERE (`a`, `b`) IN ((1, 'a'), (2, 'b')) AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) LIMIT 2",
+			sql:    "DELETE LOW_PRIORITY FROM `test2`.`t2` WHERE (`a`, `b`) IN ((1, 'a'), (2, 'b')) AND `time` < FROM_UNIXTIME(0) LIMIT 2",
 		},
 	}
 
@@ -974,7 +931,7 @@ func TestBuildDeleteSQL(t *testing.T) {
 	}
 }
 
-func d(vs ...any) []types.Datum {
+func d(vs ...interface{}) []types.Datum {
 	datums := make([]types.Datum, len(vs))
 	for i, v := range vs {
 		switch val := v.(type) {
@@ -989,143 +946,4 @@ func d(vs ...any) []types.Datum {
 		}
 	}
 	return datums
-}
-
-func TestIndexScanQueryGenerator(t *testing.T) {
-	idCol := &model.ColumnInfo{ID: 1, Name: ast.NewCIStr("id"), FieldType: *types.NewFieldType(mysql.TypeInt24)}
-	timeCol := &model.ColumnInfo{ID: 2, Name: ast.NewCIStr("created_time"), FieldType: *types.NewFieldType(mysql.TypeDatetime)}
-	t1 := &cache.PhysicalTable{
-		Schema: ast.NewCIStr("test"),
-		TableInfo: &model.TableInfo{
-			Name:    ast.NewCIStr("t1"),
-			Columns: []*model.ColumnInfo{idCol, timeCol},
-		},
-		KeyColumns: []*model.ColumnInfo{idCol},
-		TimeColumn: timeCol,
-	}
-	index := &model.IndexInfo{
-		Name:  ast.NewCIStr("idx_created"),
-		State: model.StatePublic,
-		Columns: []*model.IndexColumn{
-			{Name: timeCol.Name, Offset: 1, Length: types.UnspecifiedLength},
-		},
-	}
-
-	expire := time.UnixMilli(0).In(time.UTC)
-	invalidRange := []types.Datum{types.NewIntDatum(1), types.NewIntDatum(2)}
-	_, err := sqlbuilder.NewIndexScanQueryGenerator(t1, expire, invalidRange, nil, index)
-	require.EqualError(t, err, "invalid index scan range start length: 2, expected at most 1")
-	_, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, invalidRange, index)
-	require.EqualError(t, err, "invalid index scan range end length: 2, expected at most 1")
-
-	g, err := sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, index)
-	require.NoError(t, err)
-
-	// First query without range
-	sql, err := g.NextSQL(nil, 3)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created`) WHERE `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time`, `id` ASC LIMIT 3", sql)
-
-	// Next query with pagination (need at least g.limit rows to continue)
-	continueResult := [][]types.Datum{
-		{types.NewTimeDatum(types.NewTime(types.FromGoTime(time.UnixMilli(0).In(time.UTC)), mysql.TypeDatetime, 0)), types.NewIntDatum(5)},
-		{types.NewTimeDatum(types.NewTime(types.FromGoTime(time.UnixMilli(0).In(time.UTC)), mysql.TypeDatetime, 0)), types.NewIntDatum(10)},
-		{types.NewTimeDatum(types.NewTime(types.FromGoTime(time.UnixMilli(0).In(time.UTC)), mysql.TypeDatetime, 0)), types.NewIntDatum(15)},
-	}
-	sql, err = g.NextSQL(continueResult, 5)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created`) WHERE `created_time` = '1970-01-01 00:00:00' AND `id` > 15 AND `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time`, `id` ASC LIMIT 5", sql)
-
-	// A short page exhausts the current prefix and pops to the preceding column.
-	sql, err = g.NextSQL(continueResult[0:1], 5)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created`) WHERE `created_time` > '1970-01-01 00:00:00' AND `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time`, `id` ASC LIMIT 5", sql)
-
-	// A short page at the first column exhausts the scan.
-	sql, err = g.NextSQL(continueResult[0:1], 5)
-	require.NoError(t, err)
-	require.Equal(t, "", sql)
-	require.True(t, g.IsExhausted())
-
-	startTime := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.UnixMilli(0).In(time.UTC)), mysql.TypeDatetime, 0))
-	endTime := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Unix(100, 0).In(time.UTC)), mysql.TypeDatetime, 0))
-	g, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, []types.Datum{startTime}, []types.Datum{endTime}, index)
-	require.NoError(t, err)
-
-	sql, err = g.NextSQL(nil, 5)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created`) WHERE `created_time` >= '1970-01-01 00:00:00' AND `created_time` < '1970-01-01 00:01:40' AND `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time`, `id` ASC LIMIT 5", sql)
-
-	uniqueIndex := *index
-	uniqueIndex.Name = ast.NewCIStr("uidx_created")
-	uniqueIndex.Unique = true
-	g, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, &uniqueIndex)
-	require.NoError(t, err)
-	sql, err = g.NextSQL(nil, 1)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`uidx_created`) WHERE `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time` ASC LIMIT 1", sql)
-	sql, err = g.NextSQL(continueResult[:1], 1)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `id` FROM `test`.`t1` FORCE INDEX(`uidx_created`) WHERE `created_time` > '1970-01-01 00:00:00' AND `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time` ASC LIMIT 1", sql)
-
-	statusCol := &model.ColumnInfo{ID: 3, Name: ast.NewCIStr("status"), FieldType: *types.NewFieldType(mysql.TypeVarchar)}
-	t1.Columns = append(t1.Columns, statusCol)
-	uniqueCompositeIndex := &model.IndexInfo{
-		Name:   ast.NewCIStr("uidx_created_status"),
-		State:  model.StatePublic,
-		Unique: true,
-		Columns: []*model.IndexColumn{
-			{Name: timeCol.Name, Offset: 1, Length: types.UnspecifiedLength},
-			{Name: statusCol.Name, Offset: 2, Length: types.UnspecifiedLength},
-		},
-	}
-	g, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, uniqueCompositeIndex)
-	require.Error(t, err)
-
-	statusCol.SetFlag(mysql.NotNullFlag)
-	g, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, uniqueCompositeIndex)
-	require.NoError(t, err)
-	sql, err = g.NextSQL(nil, 1)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `status`, `id` FROM `test`.`t1` FORCE INDEX(`uidx_created_status`) WHERE `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time`, `status` ASC LIMIT 1", sql)
-	uniqueBoundaryRows := [][]types.Datum{
-		{continueResult[0][0], types.NewStringDatum("ready"), types.NewIntDatum(1)},
-	}
-	sql, err = g.NextSQL(uniqueBoundaryRows, 3)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `status`, `id` FROM `test`.`t1` FORCE INDEX(`uidx_created_status`) WHERE `created_time` = '1970-01-01 00:00:00' AND `status` > 'ready' AND `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time`, `status` ASC LIMIT 3", sql)
-
-	statusCol.SetFlag(0)
-	nullDatum := types.Datum{}
-	boundaryRows := [][]types.Datum{
-		{continueResult[0][0], nullDatum, types.NewIntDatum(1)},
-		{continueResult[0][0], nullDatum, types.NewIntDatum(2)},
-		{continueResult[0][0], nullDatum, types.NewIntDatum(3)},
-	}
-
-	nonUniqueCompositeIndex := *uniqueCompositeIndex
-	nonUniqueCompositeIndex.Name = ast.NewCIStr("idx_created_status")
-	nonUniqueCompositeIndex.Unique = false
-	g, err = sqlbuilder.NewIndexScanQueryGenerator(t1, expire, nil, nil, &nonUniqueCompositeIndex)
-	require.NoError(t, err)
-	_, err = g.NextSQL(nil, 1)
-	require.NoError(t, err)
-	sql, err = g.NextSQL(boundaryRows[:1], 1)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `status`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created_status`) WHERE `created_time` = '1970-01-01 00:00:00' AND `status` IS NULL AND `id` > 1 AND `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time`, `status`, `id` ASC LIMIT 1", sql)
-
-	// Exhaust the NULL status prefix and advance to the first non-NULL status.
-	sql, err = g.NextSQL(nil, 1)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `status`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created_status`) WHERE `created_time` = '1970-01-01 00:00:00' AND `status` IS NOT NULL AND `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time`, `status`, `id` ASC LIMIT 1", sql)
-
-	// Exhaust the timestamp prefix and advance to the next timestamp.
-	sql, err = g.NextSQL(nil, 1)
-	require.NoError(t, err)
-	require.Equal(t, "SELECT LOW_PRIORITY SQL_NO_CACHE `created_time`, `status`, `id` FROM `test`.`t1` FORCE INDEX(`idx_created_status`) WHERE `created_time` > '1970-01-01 00:00:00' AND `created_time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `created_time`, `status`, `id` ASC LIMIT 1", sql)
-
-	sql, err = g.NextSQL(nil, 1)
-	require.NoError(t, err)
-	require.Empty(t, sql)
-	require.True(t, g.IsExhausted())
 }

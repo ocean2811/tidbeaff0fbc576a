@@ -16,22 +16,21 @@ package codec
 
 import (
 	"testing"
-	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/benchdaily"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/benchdaily"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 var valueCnt = 100
 
 func composeEncodedData(size int) []byte {
 	values := make([]types.Datum, 0, size)
-	for i := range size {
+	for i := 0; i < size; i++ {
 		values = append(values, types.NewDatum(i))
 	}
-	bs, _ := EncodeValue(time.UTC, nil, values...)
+	bs, _ := EncodeValue(nil, nil, values...)
 	return bs
 }
 
@@ -39,7 +38,7 @@ func BenchmarkDecodeWithSize(b *testing.B) {
 	b.StopTimer()
 	bs := composeEncodedData(valueCnt)
 	b.StartTimer()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		_, err := Decode(bs, valueCnt)
 		if err != nil {
 			b.Fatal(err)
@@ -51,7 +50,7 @@ func BenchmarkDecodeWithOutSize(b *testing.B) {
 	b.StopTimer()
 	bs := composeEncodedData(valueCnt)
 	b.StartTimer()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		_, err := Decode(bs, 1)
 		if err != nil {
 			b.Fatal(err)
@@ -60,14 +59,14 @@ func BenchmarkDecodeWithOutSize(b *testing.B) {
 }
 
 func BenchmarkEncodeIntWithSize(b *testing.B) {
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		data := make([]byte, 0, 8)
 		EncodeInt(data, 10)
 	}
 }
 
 func BenchmarkEncodeIntWithOutSize(b *testing.B) {
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		EncodeInt(nil, 10)
 	}
 }
@@ -81,7 +80,7 @@ func BenchmarkDecodeDecimal(b *testing.B) {
 	precision, frac := dec.PrecisionAndFrac()
 	raw, _ := EncodeDecimal([]byte{}, dec, precision, frac)
 	b.ResetTimer()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		_, _, _, _, err := DecodeDecimal(raw)
 		if err != nil {
 			b.Fatal(err)
@@ -98,7 +97,7 @@ func BenchmarkDecodeOneToChunk(b *testing.B) {
 	intType := types.NewFieldType(mysql.TypeLonglong)
 	b.ResetTimer()
 	decoder := NewDecoder(chunk.New([]*types.FieldType{intType}, 32, 32), nil)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		_, err := decoder.DecodeOne(raw, 0, intType)
 		if err != nil {
 			b.Fatal(err)

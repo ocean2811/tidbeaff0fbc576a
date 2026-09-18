@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
@@ -32,12 +32,14 @@ func TestOptions(t *testing.T) {
 		err := client.Close()
 		require.NoError(t, err)
 	}()
+	callback := &ddl.BaseCallback{}
 	lease := time.Second * 3
 	store := &mock.Store{}
-	infoHandle := infoschema.NewCache(nil, 16)
+	infoHandle := infoschema.NewCache(16)
 
 	options := []ddl.Option{
 		ddl.WithEtcdClient(client),
+		ddl.WithHook(callback),
 		ddl.WithLease(lease),
 		ddl.WithStore(store),
 		ddl.WithInfoCache(infoHandle),
@@ -49,6 +51,7 @@ func TestOptions(t *testing.T) {
 	}
 
 	require.Equal(t, client, opt.EtcdCli)
+	require.Equal(t, callback, opt.Hook)
 	require.Equal(t, lease, opt.Lease)
 	require.Equal(t, store, opt.Store)
 	require.Equal(t, infoHandle, opt.InfoCache)

@@ -19,9 +19,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 )
@@ -32,46 +31,34 @@ func TestIsTypeCompatible(t *testing.T) {
 		src := types.NewFieldType(mysql.TypeInt24)
 		src.AddFlag(mysql.UnsignedFlag)
 		target := types.NewFieldType(mysql.TypeInt24)
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 
 		src.DelFlag(mysql.UnsignedFlag)
 		target.AddFlag(mysql.UnsignedFlag)
-		typeEq, collateEq = IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		// different not null flag
 		src := types.NewFieldType(mysql.TypeInt24)
 		src.AddFlag(mysql.NotNullFlag)
 		target := types.NewFieldType(mysql.TypeInt24)
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 
 		src.DelFlag(mysql.NotNullFlag)
 		target.AddFlag(mysql.NotNullFlag)
-		typeEq, collateEq = IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		// different evaluation type
 		src := types.NewFieldType(mysql.TypeInt24)
 		target := types.NewFieldType(mysql.TypeFloat)
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		// src flen > target
 		src := types.NewFieldType(mysql.TypeInt24)
 		target := types.NewFieldType(mysql.TypeTiny)
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		// src flen > target
@@ -79,9 +66,7 @@ func TestIsTypeCompatible(t *testing.T) {
 		src.SetFlen(100)
 		target := types.NewFieldType(mysql.TypeVarchar)
 		target.SetFlag(99)
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		// src decimal > target
@@ -89,9 +74,7 @@ func TestIsTypeCompatible(t *testing.T) {
 		src.SetDecimal(5)
 		target := types.NewFieldType(mysql.TypeNewDecimal)
 		target.SetDecimal(4)
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		// src has more elements
@@ -99,9 +82,7 @@ func TestIsTypeCompatible(t *testing.T) {
 		src.SetElems([]string{"a", "b"})
 		target := types.NewFieldType(mysql.TypeEnum)
 		target.SetElems([]string{"a"})
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		// incompatible enum
@@ -109,9 +90,7 @@ func TestIsTypeCompatible(t *testing.T) {
 		src.SetElems([]string{"a", "b"})
 		target := types.NewFieldType(mysql.TypeEnum)
 		target.SetElems([]string{"a", "c", "d"})
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		// incompatible charset
@@ -119,9 +98,7 @@ func TestIsTypeCompatible(t *testing.T) {
 		src.SetCharset("gbk")
 		target := types.NewFieldType(mysql.TypeVarchar)
 		target.SetCharset("utf8")
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.False(t, typeEq)
-		require.True(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		// incompatible collation
@@ -131,9 +108,7 @@ func TestIsTypeCompatible(t *testing.T) {
 		target := types.NewFieldType(mysql.TypeVarchar)
 		target.SetCharset("utf8")
 		target.SetCollate("utf8_general_ci")
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.True(t, typeEq)
-		require.False(t, collateEq)
+		require.False(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		src := types.NewFieldType(mysql.TypeVarchar)
@@ -144,33 +119,25 @@ func TestIsTypeCompatible(t *testing.T) {
 		target.SetFlen(11)
 		target.SetCharset("utf8")
 		target.SetCollate("utf8_bin")
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.True(t, typeEq)
-		require.True(t, collateEq)
+		require.True(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		src := types.NewFieldType(mysql.TypeBlob)
 		target := types.NewFieldType(mysql.TypeLongBlob)
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.True(t, typeEq)
-		require.True(t, collateEq)
+		require.True(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		src := types.NewFieldType(mysql.TypeEnum)
 		src.SetElems([]string{"a", "b"})
 		target := types.NewFieldType(mysql.TypeEnum)
 		target.SetElems([]string{"a", "b", "c"})
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.True(t, typeEq)
-		require.True(t, collateEq)
+		require.True(t, IsTypeCompatible(*src, *target))
 	}
 	{
 		src := types.NewFieldType(mysql.TypeTimestamp)
 		target := types.NewFieldType(mysql.TypeTimestamp)
 		target.SetDecimal(3)
-		typeEq, collateEq := IsTypeCompatible(*src, *target)
-		require.True(t, typeEq)
-		require.True(t, collateEq)
+		require.True(t, IsTypeCompatible(*src, *target))
 	}
 }
 
@@ -180,6 +147,7 @@ func TestWithCleanUp(t *testing.T) {
 
 	case1 := func() (err error) {
 		defer WithCleanUp(&err, time.Second, func(ctx context.Context) error {
+			//nolint:all_revive
 			return err1
 		})
 		return nil
@@ -188,6 +156,7 @@ func TestWithCleanUp(t *testing.T) {
 
 	case2 := func() (err error) {
 		defer WithCleanUp(&err, time.Second, func(ctx context.Context) error {
+			//nolint:all_revive
 			return err1
 		})
 		return err2
@@ -196,29 +165,10 @@ func TestWithCleanUp(t *testing.T) {
 
 	case3 := func() (err error) {
 		defer WithCleanUp(&err, time.Second, func(ctx context.Context) error {
+			//nolint:all_revive
 			return nil
 		})
 		return nil
 	}
 	require.NoError(t, case3())
-}
-
-func generateFile(crc, kvs, bytes uint64) *backuppb.File {
-	return &backuppb.File{
-		Crc64Xor:   crc,
-		TotalKvs:   kvs,
-		TotalBytes: bytes,
-		Cf:         "write",
-	}
-}
-
-func TestSummaryFiles(t *testing.T) {
-	crc, kvs, bytes := SummaryFiles([]*backuppb.File{
-		generateFile(0xF, 10, 100),
-		generateFile(0xF0, 20, 200),
-		generateFile(0xF00, 30, 300),
-	})
-	require.Equal(t, uint64(0xFFF), crc)
-	require.Equal(t, uint64(60), kvs)
-	require.Equal(t, uint64(600), bytes)
 }

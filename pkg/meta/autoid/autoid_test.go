@@ -26,15 +26,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
 )
 
 type mockRequirement struct {
@@ -50,12 +48,12 @@ func (r mockRequirement) AutoIDClient() *autoid.ClientDiscover {
 }
 
 func TestSignedAutoid(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -64,18 +62,18 @@ func TestSignedAutoid(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: ast.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: ast.NewCIStr("t2")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: model.NewCIStr("t2")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: ast.NewCIStr("t3")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: model.NewCIStr("t3")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -165,42 +163,42 @@ func TestSignedAutoid(t *testing.T) {
 	globalAutoID, err = alloc.NextGlobalAutoID()
 	require.NoError(t, err)
 	require.Equal(t, int64(1), globalAutoID)
-	minv, maxv, err := alloc.Alloc(ctx, 1, 1, 1)
+	min, max, err := alloc.Alloc(ctx, 1, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(1), maxv-minv)
-	require.Equal(t, int64(1), minv+1)
+	require.Equal(t, int64(1), max-min)
+	require.Equal(t, int64(1), min+1)
 
-	minv, maxv, err = alloc.Alloc(ctx, 2, 1, 1)
+	min, max, err = alloc.Alloc(ctx, 2, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), maxv-minv)
-	require.Equal(t, int64(2), minv+1)
-	require.Equal(t, int64(3), maxv)
+	require.Equal(t, int64(2), max-min)
+	require.Equal(t, int64(2), min+1)
+	require.Equal(t, int64(3), max)
 
-	minv, maxv, err = alloc.Alloc(ctx, 100, 1, 1)
+	min, max, err = alloc.Alloc(ctx, 100, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(100), maxv-minv)
+	require.Equal(t, int64(100), max-min)
 	expected := int64(4)
-	for i := minv + 1; i <= maxv; i++ {
+	for i := min + 1; i <= max; i++ {
 		require.Equal(t, expected, i)
 		expected++
 	}
 
 	err = alloc.Rebase(context.Background(), int64(1000), false)
 	require.NoError(t, err)
-	minv, maxv, err = alloc.Alloc(ctx, 3, 1, 1)
+	min, max, err = alloc.Alloc(ctx, 3, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(3), maxv-minv)
-	require.Equal(t, int64(1001), minv+1)
-	require.Equal(t, int64(1002), minv+2)
-	require.Equal(t, int64(1003), maxv)
+	require.Equal(t, int64(3), max-min)
+	require.Equal(t, int64(1001), min+1)
+	require.Equal(t, int64(1002), min+2)
+	require.Equal(t, int64(1003), max)
 
 	lastRemainOne := alloc.End()
 	err = alloc.Rebase(context.Background(), alloc.End()-2, false)
 	require.NoError(t, err)
-	minv, maxv, err = alloc.Alloc(ctx, 5, 1, 1)
+	min, max, err = alloc.Alloc(ctx, 5, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(5), maxv-minv)
-	require.Greater(t, minv+1, lastRemainOne)
+	require.Equal(t, int64(5), max-min)
+	require.Greater(t, min+1, lastRemainOne)
 
 	// Test for increment & offset for signed.
 	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 5, false, autoid.RowIDAllocType)
@@ -210,57 +208,57 @@ func TestSignedAutoid(t *testing.T) {
 	offset := int64(100)
 	require.NoError(t, err)
 	require.Equal(t, int64(1), globalAutoID)
-	minv, maxv, err = alloc.Alloc(ctx, 1, increment, offset)
+	min, max, err = alloc.Alloc(ctx, 1, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, int64(99), minv)
-	require.Equal(t, int64(100), maxv)
+	require.Equal(t, int64(99), min)
+	require.Equal(t, int64(100), max)
 
-	minv, maxv, err = alloc.Alloc(ctx, 2, increment, offset)
+	min, max, err = alloc.Alloc(ctx, 2, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, int64(4), maxv-minv)
-	require.Equal(t, autoid.CalcNeededBatchSize(100, 2, increment, offset, false), maxv-minv)
-	require.Equal(t, int64(100), minv)
-	require.Equal(t, int64(104), maxv)
+	require.Equal(t, int64(4), max-min)
+	require.Equal(t, autoid.CalcNeededBatchSize(100, 2, increment, offset, false), max-min)
+	require.Equal(t, int64(100), min)
+	require.Equal(t, int64(104), max)
 
 	increment = int64(5)
-	minv, maxv, err = alloc.Alloc(ctx, 3, increment, offset)
+	min, max, err = alloc.Alloc(ctx, 3, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, int64(11), maxv-minv)
-	require.Equal(t, autoid.CalcNeededBatchSize(104, 3, increment, offset, false), maxv-minv)
-	require.Equal(t, int64(104), minv)
-	require.Equal(t, int64(115), maxv)
+	require.Equal(t, int64(11), max-min)
+	require.Equal(t, autoid.CalcNeededBatchSize(104, 3, increment, offset, false), max-min)
+	require.Equal(t, int64(104), min)
+	require.Equal(t, int64(115), max)
 	firstID := autoid.SeekToFirstAutoIDSigned(104, increment, offset)
 	require.Equal(t, int64(105), firstID)
 
 	increment = int64(15)
-	minv, maxv, err = alloc.Alloc(ctx, 2, increment, offset)
+	min, max, err = alloc.Alloc(ctx, 2, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, int64(30), maxv-minv)
-	require.Equal(t, autoid.CalcNeededBatchSize(115, 2, increment, offset, false), maxv-minv)
-	require.Equal(t, int64(115), minv)
-	require.Equal(t, int64(145), maxv)
+	require.Equal(t, int64(30), max-min)
+	require.Equal(t, autoid.CalcNeededBatchSize(115, 2, increment, offset, false), max-min)
+	require.Equal(t, int64(115), min)
+	require.Equal(t, int64(145), max)
 	firstID = autoid.SeekToFirstAutoIDSigned(115, increment, offset)
 	require.Equal(t, int64(130), firstID)
 
 	offset = int64(200)
-	minv, maxv, err = alloc.Alloc(ctx, 2, increment, offset)
+	min, max, err = alloc.Alloc(ctx, 2, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, int64(16), maxv-minv)
+	require.Equal(t, int64(16), max-min)
 	// offset-1 > base will cause alloc rebase to offset-1.
-	require.Equal(t, autoid.CalcNeededBatchSize(offset-1, 2, increment, offset, false), maxv-minv)
-	require.Equal(t, int64(199), minv)
-	require.Equal(t, int64(215), maxv)
+	require.Equal(t, autoid.CalcNeededBatchSize(offset-1, 2, increment, offset, false), max-min)
+	require.Equal(t, int64(199), min)
+	require.Equal(t, int64(215), max)
 	firstID = autoid.SeekToFirstAutoIDSigned(offset-1, increment, offset)
 	require.Equal(t, int64(200), firstID)
 }
 
 func TestUnsignedAutoid(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDChange", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDChange"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDChange"))
 	}()
 
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -269,18 +267,18 @@ func TestUnsignedAutoid(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: ast.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 3, Name: model.NewCIStr("t1")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: ast.NewCIStr("t2")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 4, Name: model.NewCIStr("t2")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: ast.NewCIStr("t3")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 5, Name: model.NewCIStr("t3")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -356,11 +354,6 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.Equal(t, int64(6544), id)
 
 	// Test the MaxUint64 is the upper bound of `alloc` func but not `rebase`.
-	// This looks weird, but it's the mysql behaviour.
-	// For example, in MySQL, CREATE TABLE t1 (pk BIGINT UNSIGNED AUTO_INCREMENT, PRIMARY KEY (pk));
-	// 	INSERT INTO t1 VALUES (18446744073709551615-1);   -- rebase to maxinum-1 success
-	// 	INSERT INTO t1 VALUES ();  -- the next alloc fail, cannot allocate 18446744073709551615
-	// 	INSERT INTO t1 VALUES (18446744073709551615);   -- but directly rebase to maxinum success
 	var n uint64 = math.MaxUint64 - 1
 	un := int64(n)
 	err = alloc.Rebase(context.Background(), un, true)
@@ -378,27 +371,27 @@ func TestUnsignedAutoid(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), globalAutoID)
 
-	minv, maxv, err := alloc.Alloc(ctx, 2, 1, 1)
+	min, max, err := alloc.Alloc(ctx, 2, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), maxv-minv)
-	require.Equal(t, int64(1), minv+1)
-	require.Equal(t, int64(2), maxv)
+	require.Equal(t, int64(2), max-min)
+	require.Equal(t, int64(1), min+1)
+	require.Equal(t, int64(2), max)
 
 	err = alloc.Rebase(context.Background(), int64(500), true)
 	require.NoError(t, err)
-	minv, maxv, err = alloc.Alloc(ctx, 2, 1, 1)
+	min, max, err = alloc.Alloc(ctx, 2, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(2), maxv-minv)
-	require.Equal(t, int64(501), minv+1)
-	require.Equal(t, int64(502), maxv)
+	require.Equal(t, int64(2), max-min)
+	require.Equal(t, int64(501), min+1)
+	require.Equal(t, int64(502), max)
 
 	lastRemainOne := alloc.End()
 	err = alloc.Rebase(context.Background(), alloc.End()-2, false)
 	require.NoError(t, err)
-	minv, maxv, err = alloc.Alloc(ctx, 5, 1, 1)
+	min, max, err = alloc.Alloc(ctx, 5, 1, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(5), maxv-minv)
-	require.Greater(t, minv+1, lastRemainOne)
+	require.Equal(t, int64(5), max-min)
+	require.Greater(t, min+1, lastRemainOne)
 
 	// Test increment & offset for unsigned. Using AutoRandomType to avoid valid range check for increment and offset.
 	alloc = autoid.NewAllocator(mockRequirement{store}, 1, 5, true, autoid.AutoRandomType)
@@ -410,20 +403,20 @@ func TestUnsignedAutoid(t *testing.T) {
 	n = math.MaxUint64 - 100
 	offset := int64(n)
 
-	minv, maxv, err = alloc.Alloc(ctx, 2, increment, offset)
+	min, max, err = alloc.Alloc(ctx, 2, increment, offset)
 	require.NoError(t, err)
-	require.Equal(t, uint64(math.MaxUint64-101), uint64(minv))
-	require.Equal(t, uint64(math.MaxUint64-98), uint64(maxv))
+	require.Equal(t, uint64(math.MaxUint64-101), uint64(min))
+	require.Equal(t, uint64(math.MaxUint64-98), uint64(max))
 
-	require.Equal(t, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true), maxv-minv)
-	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(minv), uint64(increment), uint64(offset))
+	require.Equal(t, autoid.CalcNeededBatchSize(int64(uint64(offset)-1), 2, increment, offset, true), max-min)
+	firstID := autoid.SeekToFirstAutoIDUnSigned(uint64(min), uint64(increment), uint64(offset))
 	require.Equal(t, uint64(math.MaxUint64-100), firstID)
 }
 
 // TestConcurrentAlloc is used for the test that
 // multiple allocators allocate ID with the same table ID concurrently.
 func TestConcurrentAlloc(t *testing.T) {
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -438,10 +431,10 @@ func TestConcurrentAlloc(t *testing.T) {
 	tblID := int64(100)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: ast.NewCIStr("a")})
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: ast.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -456,7 +449,7 @@ func TestConcurrentAlloc(t *testing.T) {
 	allocIDs := func() {
 		ctx := context.Background()
 		alloc := autoid.NewAllocator(mockRequirement{store}, dbID, tblID, false, autoid.RowIDAllocType)
-		for range int(autoid.GetStep()) + 5 {
+		for j := 0; j < int(autoid.GetStep())+5; j++ {
 			_, id, err1 := alloc.Alloc(ctx, 1, 1, 1)
 			if err1 != nil {
 				errCh <- err1
@@ -474,7 +467,7 @@ func TestConcurrentAlloc(t *testing.T) {
 
 			// test Alloc N
 			N := rand.Uint64() % 100
-			minv, maxv, err1 := alloc.Alloc(ctx, N, 1, 1)
+			min, max, err1 := alloc.Alloc(ctx, N, 1, 1)
 			if err1 != nil {
 				errCh <- err1
 				break
@@ -482,7 +475,7 @@ func TestConcurrentAlloc(t *testing.T) {
 
 			errFlag := false
 			mu.Lock()
-			for i := minv + 1; i <= maxv; i++ {
+			for i := min + 1; i <= max; i++ {
 				if _, ok := m[i]; ok {
 					errCh <- fmt.Errorf("duplicate id:%v", i)
 					errFlag = true
@@ -497,7 +490,7 @@ func TestConcurrentAlloc(t *testing.T) {
 			mu.Unlock()
 		}
 	}
-	for range count {
+	for i := 0; i < count; i++ {
 		num := 1
 		wg.Run(func() {
 			time.Sleep(time.Duration(num%10) * time.Microsecond)
@@ -514,7 +507,7 @@ func TestConcurrentAlloc(t *testing.T) {
 // TestRollbackAlloc tests that when the allocation transaction commit failed,
 // the local variable base and end doesn't change.
 func TestRollbackAlloc(t *testing.T) {
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -524,10 +517,10 @@ func TestRollbackAlloc(t *testing.T) {
 	tblID := int64(2)
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: ast.NewCIStr("a")})
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: dbID, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: ast.NewCIStr("t")})
+		err = m.CreateTableOrView(dbID, &model.TableInfo{ID: tblID, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -560,12 +553,12 @@ func TestNextStep(t *testing.T) {
 
 // Fix a computation logic bug in allocator computation.
 func TestAllocComputationIssue(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDCustomize", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDCustomize", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/meta/autoid/mockAutoIDCustomize"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid/mockAutoIDCustomize"))
 	}()
 
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -574,12 +567,12 @@ func TestAllocComputationIssue(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: ast.NewCIStr("t1")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 2, Name: model.NewCIStr("t1")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -605,18 +598,18 @@ func TestAllocComputationIssue(t *testing.T) {
 	autoid.TestModifyBaseAndEndInjection(signedAlloc1, 4, 6)
 
 	// Here will recompute the new allocator batch size base on new base = 10, which will get 6.
-	minv, maxv, err := unsignedAlloc1.Alloc(ctx, 2, 3, 1)
+	min, max, err := unsignedAlloc1.Alloc(ctx, 2, 3, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(10), minv)
-	require.Equal(t, int64(16), maxv)
-	minv, maxv, err = signedAlloc2.Alloc(ctx, 2, 3, 1)
+	require.Equal(t, int64(10), min)
+	require.Equal(t, int64(16), max)
+	min, max, err = signedAlloc2.Alloc(ctx, 2, 3, 1)
 	require.NoError(t, err)
-	require.Equal(t, int64(7), minv)
-	require.Equal(t, int64(13), maxv)
+	require.Equal(t, int64(7), min)
+	require.Equal(t, int64(13), max)
 }
 
 func TestIssue40584(t *testing.T) {
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
+	store, err := mockstore.NewMockStore()
 	require.NoError(t, err)
 	defer func() {
 		err := store.Close()
@@ -625,10 +618,10 @@ func TestIssue40584(t *testing.T) {
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnMeta)
 	err = kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
-		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: ast.NewCIStr("a")})
+		m := meta.NewMeta(txn)
+		err = m.CreateDatabase(&model.DBInfo{ID: 1, Name: model.NewCIStr("a")})
 		require.NoError(t, err)
-		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: ast.NewCIStr("t")})
+		err = m.CreateTableOrView(1, &model.TableInfo{ID: 1, Name: model.NewCIStr("t")})
 		require.NoError(t, err)
 		return nil
 	})
@@ -667,19 +660,4 @@ func TestIssue40584(t *testing.T) {
 	atomic.AddInt32(&done, 1)
 	<-finishAlloc
 	<-finishBase
-}
-
-func TestGetAutoIDServiceLeaderEtcdPath(t *testing.T) {
-	// keyspaceID = tikv.NullspaceID means tidb not set keyspace.
-	keyspaceID := tikv.NullspaceID
-	path := autoid.GetAutoIDServiceLeaderEtcdPath(uint32(keyspaceID))
-	require.Equal(t, autoid.AutoIDLeaderPath, path)
-
-	// In keyspace scenario, assume the keyspaceID=1, the actually etcd key like /keyspaces/tidb/1/tidb/autoid/leader,
-	// The keyspace prefix `/keyspaces/tidb/1` is already in the domain
-	// when initializing etcdclient by setting the etcd namespace. Is added to the top of the key.
-	// So we need to put a forward slash at the beginning of the path.
-	keyspaceID = 1
-	path = autoid.GetAutoIDServiceLeaderEtcdPath(uint32(keyspaceID))
-	require.Equal(t, "/"+autoid.AutoIDLeaderPath, path)
 }

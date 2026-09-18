@@ -23,14 +23,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
 var (
-	mockNowOffset = "github.com/pingcap/tidb/pkg/sessionctx/sessionstates/mockNowOffset"
+	mockNowOffset = "github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/sessionstates/mockNowOffset"
 )
 
 func TestSetCertAndKey(t *testing.T) {
@@ -160,37 +158,6 @@ func TestVerifyToken(t *testing.T) {
 	require.ErrorContains(t, err, "verification error")
 }
 
-func TestStarterSessionTokenLifetime(t *testing.T) {
-	if !kerneltype.IsNextGen() {
-		t.Skip("starter deploy mode is only available for nextgen TiDB")
-	}
-
-	original := deploymode.Get()
-	require.NoError(t, deploymode.Set(deploymode.Starter))
-	t.Cleanup(func() {
-		require.NoError(t, deploymode.Set(original))
-	})
-
-	require.Equal(t, starterTokenLifetime, currentTokenLifetime())
-	require.Equal(t, starterLoadCertInterval, GetLoadCertInterval())
-	require.Equal(t, starterOldCertValidTime, currentOldCertValidTime())
-
-	SetupSigningCertForTest(t)
-	_, tokenBytes := createNewToken(t, "test_user")
-
-	timeOffset := uint64(tokenLifetime + time.Minute)
-	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
-	err := ValidateSessionToken(tokenBytes, "test_user")
-	require.NoError(t, failpoint.Disable(mockNowOffset))
-	require.NoError(t, err)
-
-	timeOffset = uint64(starterTokenLifetime + time.Minute)
-	require.NoError(t, failpoint.Enable(mockNowOffset, fmt.Sprintf(`return(%d)`, timeOffset)))
-	err = ValidateSessionToken(tokenBytes, "test_user")
-	require.NoError(t, failpoint.Disable(mockNowOffset))
-	require.ErrorContains(t, err, "token expired")
-}
-
 func TestCertExpire(t *testing.T) {
 	tempDir := t.TempDir()
 	certPath := filepath.Join(tempDir, "test1_cert.pem")
@@ -256,7 +223,7 @@ func TestLoadAndReadConcurrently(t *testing.T) {
 		}
 	})
 	// the loader
-	for range 2 {
+	for i := 0; i < 2; i++ {
 		wg.Run(func() {
 			for time.Now().Before(deadline) {
 				ReloadSigningCert()
@@ -265,7 +232,7 @@ func TestLoadAndReadConcurrently(t *testing.T) {
 		})
 	}
 	// the reader
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		id := i
 		wg.Run(func() {
 			username := fmt.Sprintf("test_user_%d", id)

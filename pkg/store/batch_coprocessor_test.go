@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package store_test
+package store
 
 import (
 	"context"
@@ -22,11 +22,11 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/external"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -53,9 +53,9 @@ func createMockTiKVStoreOptions(tiflashNum int) []mockstore.MockTiKVStoreOption 
 func TestStoreErr(t *testing.T) {
 	store := testkit.CreateMockStore(t, createMockTiKVStoreOptions(1)...)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockTiFlashStoreCount"))
 	}()
 
 	tk := testkit.NewTestKit(t, store)
@@ -65,23 +65,23 @@ func TestStoreErr(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "t")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
-	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("insert into t values(1,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=OFF")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopCancelled", "1*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/BatchCopCancelled", "1*return(true)"))
 
 	err = tk.QueryToErr("select count(*) from t")
 	require.Equal(t, context.Canceled, errors.Cause(err))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "1*return(\"tiflash0\")"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "1*return(\"tiflash0\")"))
 
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
 	err = tk.QueryToErr("select count(*) from t")
 	require.Error(t, err)
 }
@@ -89,9 +89,9 @@ func TestStoreErr(t *testing.T) {
 func TestStoreSwitchPeer(t *testing.T) {
 	store := testkit.CreateMockStore(t, createMockTiKVStoreOptions(2)...)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockTiFlashStoreCount", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockTiFlashStoreCount"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockTiFlashStoreCount"))
 	}()
 
 	tk := testkit.NewTestKit(t, store)
@@ -101,18 +101,18 @@ func TestStoreSwitchPeer(t *testing.T) {
 	tb := external.GetTableByName(t, tk, "test", "t")
 	tk.MustExec("set @@session.tidb_allow_tiflash_cop=ON")
 
-	err := domain.GetDomain(tk.Session()).DDLExecutor().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
+	err := domain.GetDomain(tk.Session()).DDL().UpdateTableReplicaInfo(tk.Session(), tb.Meta().ID, true)
 	require.NoError(t, err)
 
 	tk.MustExec("insert into t values(1,0)")
 	tk.MustExec("set @@session.tidb_isolation_read_engines=\"tiflash\"")
 	tk.MustExec("set @@session.tidb_allow_mpp=OFF")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash0", "return(\"tiflash0\")"))
 
 	tk.MustQuery("select count(*) from t").Check(testkit.Rows("1"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash1", "return(\"tiflash1\")"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/BatchCopRpcErrtiflash1", "return(\"tiflash1\")"))
 	err = tk.QueryToErr("select count(*) from t")
 	require.Error(t, err)
 }

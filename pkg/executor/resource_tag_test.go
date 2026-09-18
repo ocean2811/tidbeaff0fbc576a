@@ -20,15 +20,14 @@ import (
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/parser"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
-	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/external"
+	topsqlstate "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikvrpc"
@@ -50,14 +49,14 @@ func TestResourceGroupTag(t *testing.T) {
 		conf.TopSQL.ReceiverAddress = "mock-agent"
 	})
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/unistoreRPCClientSendHook", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCClientSendHook"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/unistoreRPCClientSendHook"))
 	}()
 
 	var sqlDigest, planDigest *parser.Digest
 	var tagLabel tipb.ResourceGroupTagLabel
-	checkFn := func(int64) {}
+	checkFn := func() {}
 	unistoreRPCClientSendHook := func(req *tikvrpc.Request) {
 		var startKey []byte
 		var ctx *kvrpcpb.Context
@@ -99,10 +98,8 @@ func TestResourceGroupTag(t *testing.T) {
 		require.NoError(t, err)
 		sqlDigest = parser.NewDigest(tag.SqlDigest)
 		planDigest = parser.NewDigest(tag.PlanDigest)
-		if tag.Label != nil {
-			tagLabel = *tag.Label
-		}
-		checkFn(tag.TableId)
+		tagLabel = *tag.Label
+		checkFn()
 	}
 	unistore.UnistoreRPCClientSendHook.Store(&unistoreRPCClientSendHook)
 
@@ -189,15 +186,14 @@ func TestResourceGroupTag(t *testing.T) {
 		_, expectSQLDigest := parser.NormalizeDigest(ca.sql)
 		var expectPlanDigest *parser.Digest
 		checkCnt := 0
-		checkFn = func(tid int64) {
+		checkFn = func() {
 			if ca.ignore {
 				return
 			}
-			require.Equal(t, tbInfo.Meta().ID, tid)
 			if expectPlanDigest == nil {
 				info := tk.Session().ShowProcess()
 				require.NotNil(t, info)
-				p, ok := info.Plan.(base.Plan)
+				p, ok := info.Plan.(plannercore.Plan)
 				require.True(t, ok)
 				_, expectPlanDigest = plannercore.NormalizePlan(p)
 
@@ -211,6 +207,7 @@ func TestResourceGroupTag(t *testing.T) {
 			require.True(t, ok)
 			checkCnt++
 		}
+
 		if strings.HasPrefix(ca.sql, "select") {
 			tk.MustQuery(ca.sql)
 		} else {

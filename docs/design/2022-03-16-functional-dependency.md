@@ -2,7 +2,7 @@
 
 - Author(s): [AilinKid](https://github.com/AilinKid) (Lingxiang Tai) [winoros](https://github.com/winoros) (Yiding Cui)
 - Last updated: 2022-03-16
-- Motivation Issue: https://github.com/pingcap/tidb/issues/29766
+- Motivation Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/29766
 - Related Document: https://pingcap.feishu.cn/docs/doccndyrRWfcGALhjcyVhOrxWYd
 
 ## Table of Contents

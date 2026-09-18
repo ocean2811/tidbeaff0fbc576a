@@ -16,17 +16,21 @@ package aggregation
 
 import (
 	"bytes"
+	"context"
+	"fmt"
 	"math"
+	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/size"
 )
 
 // AggFuncDesc describes an aggregation function signature, only used in planner.
@@ -44,7 +48,7 @@ type AggFuncDesc struct {
 
 // NewAggFuncDesc creates an aggregation function signature descriptor.
 // this func cannot be called twice as the TypeInfer has changed the type of args in the first time.
-func NewAggFuncDesc(ctx expression.BuildContext, name string, args []expression.Expression, hasDistinct bool) (*AggFuncDesc, error) {
+func NewAggFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, hasDistinct bool) (*AggFuncDesc, error) {
 	b, err := newBaseFuncDesc(ctx, name, args)
 	if err != nil {
 		return nil, err
@@ -53,57 +57,22 @@ func NewAggFuncDesc(ctx expression.BuildContext, name string, args []expression.
 }
 
 // NewAggFuncDescForWindowFunc creates an aggregation function from window functions, where baseFuncDesc may be ready.
-func NewAggFuncDescForWindowFunc(ctx expression.BuildContext, desc *WindowFuncDesc, hasDistinct bool) (*AggFuncDesc, error) {
+func NewAggFuncDescForWindowFunc(ctx sessionctx.Context, desc *WindowFuncDesc, hasDistinct bool) (*AggFuncDesc, error) {
 	if desc.RetTp == nil { // safety check
 		return NewAggFuncDesc(ctx, desc.Name, desc.Args, hasDistinct)
 	}
 	return &AggFuncDesc{baseFuncDesc: baseFuncDesc{desc.Name, desc.Args, desc.RetTp}, HasDistinct: hasDistinct}, nil
 }
 
-// Hash64 returns the hash64 for the aggregation function signature.
-func (a *AggFuncDesc) Hash64(h base.Hasher) {
-	a.baseFuncDesc.Hash64(h)
-	h.HashInt(int(a.Mode))
-	h.HashBool(a.HasDistinct)
-	h.HashInt(len(a.OrderByItems))
-	for _, item := range a.OrderByItems {
-		item.Hash64(h)
-	}
-	// groupingID will be deprecated soon.
-}
-
-// Equals checks whether two aggregation function signatures are equal.
-func (a *AggFuncDesc) Equals(other any) bool {
-	otherAgg, ok := other.(*AggFuncDesc)
-	if !ok {
-		return false
-	}
-	if a == nil {
-		return otherAgg == nil
-	}
-	if otherAgg == nil {
-		return false
-	}
-	if a.Mode != otherAgg.Mode || a.HasDistinct != otherAgg.HasDistinct || len(a.OrderByItems) != len(otherAgg.OrderByItems) {
-		return false
-	}
-	for i := range a.OrderByItems {
-		if !a.OrderByItems[i].Equals(otherAgg.OrderByItems[i]) {
-			return false
-		}
-	}
-	return a.baseFuncDesc.Equals(&otherAgg.baseFuncDesc)
-}
-
-// StringWithCtx returns the string representation within given ctx.
-func (a *AggFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) string {
+// String implements the fmt.Stringer interface.
+func (a *AggFuncDesc) String() string {
 	buffer := bytes.NewBufferString(a.Name)
 	buffer.WriteString("(")
 	if a.HasDistinct {
 		buffer.WriteString("distinct ")
 	}
 	for i, arg := range a.Args {
-		buffer.WriteString(arg.StringWithCtx(ctx, redact))
+		buffer.WriteString(arg.String())
 		if i+1 != len(a.Args) {
 			buffer.WriteString(", ")
 		}
@@ -112,7 +81,7 @@ func (a *AggFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) s
 		buffer.WriteString(" order by ")
 	}
 	for i, arg := range a.OrderByItems {
-		buffer.WriteString(arg.StringWithCtx(ctx, redact))
+		buffer.WriteString(arg.String())
 		if i+1 != len(a.OrderByItems) {
 			buffer.WriteString(", ")
 		}
@@ -122,7 +91,7 @@ func (a *AggFuncDesc) StringWithCtx(ctx expression.ParamValues, redact string) s
 }
 
 // Equal checks whether two aggregation function signatures are equal.
-func (a *AggFuncDesc) Equal(ctx expression.EvalContext, other *AggFuncDesc) bool {
+func (a *AggFuncDesc) Equal(ctx sessionctx.Context, other *AggFuncDesc) bool {
 	if a.HasDistinct != other.HasDistinct {
 		return false
 	}
@@ -154,10 +123,9 @@ func (a *AggFuncDesc) Clone() *AggFuncDesc {
 // ordinal indicates the column ordinal of the intermediate result.
 func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFuncDesc) {
 	partialAggDesc = a.Clone()
-	switch a.Mode {
-	case CompleteMode:
+	if a.Mode == CompleteMode {
 		partialAggDesc.Mode = Partial1Mode
-	case FinalMode:
+	} else if a.Mode == FinalMode {
 		partialAggDesc.Mode = Partial2Mode
 	}
 	finalAggDesc = &AggFuncDesc{
@@ -185,37 +153,11 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 			RetType: types.NewFieldType(mysql.TypeString),
 		})
 		finalAggDesc.Args = args
-	case ast.AggFuncCount:
-		args := make([]expression.Expression, 0, 1)
-		if a.HasDistinct {
-			// This is hack. Actually, the input type is not a.Args for final agg,
-			// but the return type of partial agg.
-			// `args = a.Args` is just for getting correct final agg func.
-			args = a.Args
-		} else {
-			args = append(args, &expression.Column{
-				Index:   ordinal[0],
-				RetType: a.RetTp,
-			})
-		}
-		finalAggDesc.Args = args
 	default:
 		args := make([]expression.Expression, 0, 1)
-		argRetTp := a.RetTp
-		if a.Name == ast.AggFuncMaxCount || a.Name == ast.AggFuncMinCount {
-			// AggFuncDesc.Split is used by executor-internal parallel HashAgg.
-			// Its final worker merges internal PartialResult objects, so this
-			// descriptor keeps one slot with the original value type for building
-			// the final AggFunc and for spill/restore.
-			//
-			// This is not the row-based two-phase shape of max_count/min_count.
-			// A row-based final/partial2 max_count/min_count must consume
-			// [count, extrema value], which is currently rejected by the executor.
-			argRetTp = a.Args[0].GetType(nil).Clone()
-		}
 		args = append(args, &expression.Column{
 			Index:   ordinal[0],
-			RetType: argRetTp,
+			RetType: a.RetTp,
 		})
 		finalAggDesc.Args = args
 		if finalAggDesc.Name == ast.AggFuncGroupConcat || finalAggDesc.Name == ast.AggFuncApproxPercentile {
@@ -258,15 +200,15 @@ func (a *AggFuncDesc) Split(ordinal []int) (partialAggDesc, finalAggDesc *AggFun
 // +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
 // |    1 |         1 |      95 | 95.0000 |         95 |          95 |         95 |      95 |      95 | NULL |     NULL |
 // +------+-----------+---------+---------+------------+-------------+------------+---------+---------+------+----------+
-func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
+func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
 	switch a.Name {
-	case ast.AggFuncCount, ast.AggFuncMaxCount, ast.AggFuncMinCount:
+	case ast.AggFuncCount:
 		return a.evalNullValueInOuterJoin4Count(ctx, schema)
-	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncMax, ast.AggFuncMin,
+	case ast.AggFuncSum, ast.AggFuncMax, ast.AggFuncMin,
 		ast.AggFuncFirstRow:
 		return a.evalNullValueInOuterJoin4Sum(ctx, schema)
 	case ast.AggFuncAvg, ast.AggFuncGroupConcat:
-		return types.Datum{}, false, nil
+		return types.Datum{}, false
 	case ast.AggFuncBitAnd:
 		return a.evalNullValueInOuterJoin4BitAnd(ctx, schema)
 	case ast.AggFuncBitOr, ast.AggFuncBitXor:
@@ -277,35 +219,32 @@ func (a *AggFuncDesc) EvalNullValueInOuterJoin(ctx expression.BuildContext, sche
 }
 
 // GetAggFunc gets an evaluator according to the aggregation function signature.
-func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation {
+func (a *AggFuncDesc) GetAggFunc(ctx sessionctx.Context) Aggregation {
 	aggFunc := aggFunction{AggFuncDesc: a}
 	switch a.Name {
 	case ast.AggFuncSum:
 		return &sumFunction{aggFunction: aggFunc}
-	case ast.AggFuncSumInt:
-		return &sumIntFunction{aggFunction: aggFunc}
 	case ast.AggFuncCount:
 		return &countFunction{aggFunction: aggFunc}
 	case ast.AggFuncAvg:
 		return &avgFunction{aggFunction: aggFunc}
 	case ast.AggFuncGroupConcat:
-		return &concatFunction{aggFunction: aggFunc, maxLen: ctx.GetGroupConcatMaxLen()}
+		var s string
+		var err error
+		var maxLen uint64
+		s, err = ctx.GetSessionVars().GetSessionOrGlobalSystemVar(context.Background(), variable.GroupConcatMaxLen)
+		if err != nil {
+			panic(fmt.Sprintf("Error happened when GetAggFunc: no system variable named '%s'", variable.GroupConcatMaxLen))
+		}
+		maxLen, err = strconv.ParseUint(s, 10, 64)
+		if err != nil {
+			panic(fmt.Sprintf("Error happened when GetAggFunc: illegal value for system variable named '%s'", variable.GroupConcatMaxLen))
+		}
+		return &concatFunction{aggFunction: aggFunc, maxLen: maxLen}
 	case ast.AggFuncMax:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
 	case ast.AggFuncMin:
-		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType(ctx.GetEvalCtx()).GetCollate())}
-	case ast.AggFuncMaxCount:
-		cmpArgIdx := 0
-		if (a.Mode == FinalMode || a.Mode == Partial2Mode) && len(a.Args) > 1 {
-			cmpArgIdx = 1
-		}
-		return &maxMinCountFunction{aggFunction: aggFunc, isMax: true, ctor: collate.GetCollator(a.Args[cmpArgIdx].GetType(ctx.GetEvalCtx()).GetCollate())}
-	case ast.AggFuncMinCount:
-		cmpArgIdx := 0
-		if (a.Mode == FinalMode || a.Mode == Partial2Mode) && len(a.Args) > 1 {
-			cmpArgIdx = 1
-		}
-		return &maxMinCountFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[cmpArgIdx].GetType(ctx.GetEvalCtx()).GetCollate())}
+		return &maxMinFunction{aggFunction: aggFunc, isMax: false, ctor: collate.GetCollator(a.Args[0].GetType().GetCollate())}
 	case ast.AggFuncFirstRow:
 		return &firstRowFunction{aggFunction: aggFunc}
 	case ast.AggFuncBitOr:
@@ -319,68 +258,56 @@ func (a *AggFuncDesc) GetAggFunc(ctx expression.AggFuncBuildContext) Aggregation
 	}
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
+func (a *AggFuncDesc) evalNullValueInOuterJoin4Count(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
 	for _, arg := range a.Args {
-		result, err := expression.EvaluateExprWithNull(ctx, schema, arg, true)
-		if err != nil {
-			return types.Datum{}, false, err
-		}
+		result := expression.EvaluateExprWithNull(ctx, schema, arg)
 		con, ok := result.(*expression.Constant)
 		if !ok || con.Value.IsNull() {
-			return types.Datum{}, ok, nil
+			return types.Datum{}, ok
 		}
 	}
-	return types.NewDatum(1), true, nil
+	return types.NewDatum(1), true
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
-	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0], true)
-	if err != nil {
-		return types.Datum{}, false, err
-	}
+func (a *AggFuncDesc) evalNullValueInOuterJoin4Sum(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
+	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
-		return types.Datum{}, ok, nil
+		return types.Datum{}, ok
 	}
-	return con.Value, true, nil
+	return con.Value, true
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
-	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0], true)
-	if err != nil {
-		return types.Datum{}, false, err
-	}
+func (a *AggFuncDesc) evalNullValueInOuterJoin4BitAnd(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
+	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
-		return types.NewDatum(uint64(math.MaxUint64)), true, nil
+		return types.NewDatum(uint64(math.MaxUint64)), true
 	}
-	return con.Value, true, nil
+	return con.Value, true
 }
 
-func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx expression.BuildContext, schema *expression.Schema) (types.Datum, bool, error) {
-	result, err := expression.EvaluateExprWithNull(ctx, schema, a.Args[0], true)
-	if err != nil {
-		return types.Datum{}, false, err
-	}
+func (a *AggFuncDesc) evalNullValueInOuterJoin4BitOr(ctx sessionctx.Context, schema *expression.Schema) (types.Datum, bool) {
+	result := expression.EvaluateExprWithNull(ctx, schema, a.Args[0])
 	con, ok := result.(*expression.Constant)
 	if !ok || con.Value.IsNull() {
-		return types.NewDatum(0), true, nil
+		return types.NewDatum(0), true
 	}
-	return con.Value, true, nil
+	return con.Value, true
 }
 
 // UpdateNotNullFlag4RetType checks if we should remove the NotNull flag for the return type of the agg.
 func (a *AggFuncDesc) UpdateNotNullFlag4RetType(hasGroupBy, allAggsFirstRow bool) error {
 	var removeNotNull bool
 	switch a.Name {
-	case ast.AggFuncCount, ast.AggFuncMaxCount, ast.AggFuncMinCount, ast.AggFuncApproxCountDistinct, ast.AggFuncApproxPercentile,
+	case ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncApproxPercentile,
 		ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue, ast.WindowFuncNthValue, ast.WindowFuncRowNumber,
 		ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncNtile, ast.WindowFuncPercentRank,
 		ast.WindowFuncLead, ast.WindowFuncLag, ast.AggFuncJsonObjectAgg, ast.AggFuncJsonArrayagg,
 		ast.AggFuncVarSamp, ast.AggFuncVarPop, ast.AggFuncStddevPop, ast.AggFuncStddevSamp:
 		removeNotNull = false
-	case ast.AggFuncSum, ast.AggFuncSumInt, ast.AggFuncAvg, ast.AggFuncGroupConcat:
+	case ast.AggFuncSum, ast.AggFuncAvg, ast.AggFuncGroupConcat:
 		if !hasGroupBy {
 			removeNotNull = true
 		}

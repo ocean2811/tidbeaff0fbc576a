@@ -15,17 +15,15 @@
 package infosync
 
 import (
-	"net"
-	"slices"
-	"strconv"
+	"fmt"
 	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/binloginfo"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/versioninfo"
 )
 
 // MockGlobalServerInfoManagerEntry is a mock global ServerInfoManager entry.
@@ -35,7 +33,7 @@ var MockGlobalServerInfoManagerEntry = &MockGlobalServerInfoManager{
 
 // MockGlobalServerInfoManager manages serverInfos in Distributed unit tests.
 type MockGlobalServerInfoManager struct {
-	infos          []*serverinfo.ServerInfo
+	infos          []*ServerInfo
 	mu             sync.Mutex
 	mockServerPort uint // used to mock ServerInfo, then every mock server will have different port
 }
@@ -54,28 +52,34 @@ func (m *MockGlobalServerInfoManager) Delete(idx int) error {
 	if idx >= len(m.infos) || idx < 0 {
 		return errors.New("server idx out of bound")
 	}
-	m.infos = slices.Delete(m.infos, idx, idx+1)
+	m.infos = append(m.infos[:idx], m.infos[idx+1:]...)
 	return nil
 }
 
-// DeleteByExecID delete ServerInfo by execID.
-func (m *MockGlobalServerInfoManager) DeleteByExecID(execID string) {
+// DeleteByID delete ServerInfo by host:port.
+func (m *MockGlobalServerInfoManager) DeleteByID(id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for i := range m.infos {
-		name := net.JoinHostPort(m.infos[i].IP, strconv.FormatUint(uint64(m.infos[i].Port), 10))
-		if name == execID {
-			m.infos = slices.Delete(m.infos, i, i+1)
+	idx := -1
+	for i := 0; i < len(m.infos); i++ {
+		name := fmt.Sprintf("%s:%d", m.infos[i].IP, m.infos[i].Port)
+		if name == id {
+			idx = i
 			break
 		}
 	}
+	if idx == -1 {
+		return nil
+	}
+	m.infos = append(m.infos[:idx], m.infos[idx+1:]...)
+	return nil
 }
 
 // GetAllServerInfo return all serverInfo in a map.
-func (m *MockGlobalServerInfoManager) GetAllServerInfo() map[string]*serverinfo.ServerInfo {
+func (m *MockGlobalServerInfoManager) GetAllServerInfo() map[string]*ServerInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	allInfo := make(map[string]*serverinfo.ServerInfo)
+	allInfo := make(map[string]*ServerInfo)
 	for _, info := range m.infos {
 		allInfo[info.ID] = info
 	}
@@ -83,24 +87,20 @@ func (m *MockGlobalServerInfoManager) GetAllServerInfo() map[string]*serverinfo.
 }
 
 // getServerInfo gets self tidb server information.
-func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter func() uint64) *serverinfo.ServerInfo {
+func (m *MockGlobalServerInfoManager) getServerInfo(id string, serverIDGetter func() uint64) *ServerInfo {
 	cfg := config.GetGlobalConfig()
 
 	// TODO: each mock server can have different config
-	info := &serverinfo.ServerInfo{
-		StaticInfo: serverinfo.StaticInfo{
-			ID:             id,
-			IP:             cfg.AdvertiseAddress,
-			Port:           m.mockServerPort,
-			StatusPort:     cfg.Status.StatusPort,
-			Lease:          cfg.Lease,
-			StartTimestamp: time.Now().Unix(),
-			Keyspace:       config.GetGlobalKeyspaceName(),
-			ServerIDGetter: serverIDGetter,
-		},
-		DynamicInfo: serverinfo.DynamicInfo{
-			Labels: cfg.Labels,
-		},
+	info := &ServerInfo{
+		ID:             id,
+		IP:             cfg.AdvertiseAddress,
+		Port:           m.mockServerPort,
+		StatusPort:     cfg.Status.StatusPort,
+		Lease:          cfg.Lease,
+		BinlogStatus:   binloginfo.GetStatus().String(),
+		StartTimestamp: time.Now().Unix(),
+		Labels:         cfg.Labels,
+		ServerIDGetter: serverIDGetter,
 	}
 
 	m.mockServerPort++

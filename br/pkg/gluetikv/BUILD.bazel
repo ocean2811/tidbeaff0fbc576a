@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "gluetikv",
     srcs = ["glue.go"],
-    importpath = "github.com/pingcap/tidb/br/pkg/gluetikv",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/gluetikv",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/glue",

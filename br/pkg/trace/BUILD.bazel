@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "trace",
     srcs = ["tracing.go"],
-    importpath = "github.com/pingcap/tidb/br/pkg/trace",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/trace",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_cheynewallace_tabby//:tabby",

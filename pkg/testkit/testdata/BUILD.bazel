@@ -3,10 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "testdata",
     srcs = ["testdata.go"],
-    importpath = "github.com/pingcap/tidb/pkg/testkit/testdata",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testdata",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/util/context",
+        "//pkg/sessionctx/stmtctx",
         "@com_github_stretchr_testify//require",
     ],
 )

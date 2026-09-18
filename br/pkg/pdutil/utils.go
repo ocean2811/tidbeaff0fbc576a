@@ -8,16 +8,14 @@ import (
 	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/pingcap/errors"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/pkg/store/pdtypes"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/httputil"
-	pd "github.com/tikv/pd/client/http"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/httputil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/pdtypes"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 )
 
 // UndoFunc is a 'undo' operation of some undoable command.
@@ -27,6 +25,10 @@ type UndoFunc func(context.Context) error
 // Nop is the 'zero value' of undo func.
 var Nop UndoFunc = func(context.Context) error { return nil }
 
+const (
+	placementRuleURL = "/pd/api/v1/config/rules"
+)
+
 // GetPlacementRules return the current placement rules.
 func GetPlacementRules(ctx context.Context, pdAddr string, tlsConf *tls.Config) ([]pdtypes.Rule, error) {
 	cli := httputil.NewClient(tlsConf)
@@ -34,7 +36,7 @@ func GetPlacementRules(ctx context.Context, pdAddr string, tlsConf *tls.Config) 
 	if tlsConf != nil {
 		prefix = "https://"
 	}
-	reqURL := fmt.Sprintf("%s%s%s", prefix, pdAddr, pd.PlacementRules)
+	reqURL := prefix + pdAddr + placementRuleURL
 	req, err := http.NewRequestWithContext(ctx, "GET", reqURL, nil)
 	if err != nil {
 		return nil, errors.Trace(err)

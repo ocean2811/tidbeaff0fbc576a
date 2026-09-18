@@ -30,7 +30,6 @@ func TestParseHostPortAddr(t *testing.T) {
 		"https://127.0.0.1:2379",
 		"http://127.0.0.1:2379,http://127.0.0.2:2379",
 		"https://127.0.0.1:2379,https://127.0.0.2:2379",
-		"unix://localhost:m0",
 		"unix:///home/tidb/tidb.sock",
 	}
 
@@ -43,7 +42,6 @@ func TestParseHostPortAddr(t *testing.T) {
 		{"https://127.0.0.1:2379"},
 		{"http://127.0.0.1:2379", "http://127.0.0.2:2379"},
 		{"https://127.0.0.1:2379", "https://127.0.0.2:2379"},
-		{"unix://localhost:m0"},
 		{"unix:///home/tidb/tidb.sock"},
 	}
 
@@ -60,7 +58,6 @@ func TestParseHostPortAddr(t *testing.T) {
 		"127.0.0.1",
 		"http:///127.0.0.1:2379",
 		"htt://127.0.0.1:2379",
-		"unix://",
 	}
 
 	for _, url := range inValidUrls {

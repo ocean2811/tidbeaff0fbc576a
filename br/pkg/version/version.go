@@ -14,15 +14,13 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/dbutil"
-	"github.com/pingcap/tidb/pkg/util/engine"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version/build"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/engine"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/opt"
 	"go.uber.org/zap"
 )
 
@@ -88,7 +86,7 @@ type VerChecker func(store *metapb.Store, ver *semver.Version) error
 
 // CheckClusterVersion check TiKV version.
 func CheckClusterVersion(ctx context.Context, client pd.Client, checker VerChecker) error {
-	stores, err := client.GetAllStores(ctx, opt.WithExcludeTombstone())
+	stores, err := client.GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -134,9 +132,6 @@ func CheckVersionForBackup(backupVersion *semver.Version) VerChecker {
 // CheckVersionForBRPiTR checks whether version of the cluster and BR-pitr itself is compatible.
 // Note: BR'version >= 6.1.0 at least in this function
 func CheckVersionForBRPiTR(s *metapb.Store, tikvVersion *semver.Version) error {
-	if build.ReleaseVersion == build.ReleaseVersionForTest {
-		return nil
-	}
 	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
 	if err != nil {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
@@ -191,9 +186,6 @@ func CheckVersionForKeyspaceBR(_ *metapb.Store, tikvVersion *semver.Version) err
 
 // CheckVersionForBR checks whether version of the cluster and BR itself is compatible.
 func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
-	if build.ReleaseVersion == build.ReleaseVersionForTest {
-		return nil
-	}
 	BRVersion, err := semver.NewVersion(removeVAndHash(build.ReleaseVersion))
 	if err != nil {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "%s: invalid version, please recompile using `git fetch origin --tags && make build`", err)
@@ -204,8 +196,8 @@ func CheckVersionForBR(s *metapb.Store, tikvVersion *semver.Version) error {
 			s.Address, tikvVersion, build.ReleaseVersion)
 	}
 
-	// BR 9.x works with TiKV 7.x and not guarantee works with 6.x
-	if BRVersion.Major < tikvVersion.Major || BRVersion.Major-tikvVersion.Major > 2 {
+	// BR 6.x works with TiKV 5.x and not guarantee works with 4.x
+	if BRVersion.Major < tikvVersion.Major || BRVersion.Major-tikvVersion.Major > 1 {
 		return errors.Annotatef(berrors.ErrVersionMismatch, "TiKV node %s version %s and BR %s major version mismatch, please use the same version of BR",
 			s.Address, tikvVersion, build.ReleaseVersion)
 	}
@@ -324,7 +316,7 @@ func NormalizeBackupVersion(version string) *semver.Version {
 // NOTE: the executed query will be:
 // - `select tidb_version()` if target db is tidb
 // - `select version()` if target db is not tidb
-func FetchVersion(ctx context.Context, db dbutil.QueryExecutor) (string, error) {
+func FetchVersion(ctx context.Context, db utils.QueryExecutor) (string, error) {
 	var versionInfo string
 	const queryTiDB = "SELECT tidb_version();"
 	tidbRow := db.QueryRowContext(ctx, queryTiDB)
@@ -354,7 +346,7 @@ type ServerType int
 
 const (
 	// ServerTypeUnknown represents unknown server type
-	ServerTypeUnknown ServerType = iota
+	ServerTypeUnknown = iota
 	// ServerTypeMySQL represents MySQL server type
 	ServerTypeMySQL
 	// ServerTypeMariaDB represents MariaDB server type
@@ -394,42 +386,9 @@ var (
 	tidbVersionRegex = regexp.MustCompile(`-[v]?\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result
 	tidbReleaseVersionRegex = regexp.MustCompile(`v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
-	// `select version()` result for cloud version format.
-	tidbCloudServerVersionRegex = regexp.MustCompile(`TiDB-CLOUD\.(\d{4})(\d{2})\.(\d+)([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
-	// `select tidb_version()` result for cloud release version format.
-	tidbCloudReleaseVersionRegex = regexp.MustCompile(`Release Version:\s*CLOUD\.(\d{4})(\d{2})\.(\d+)([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 	// `select tidb_version()` result with full release version
-	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*(v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?|CLOUD\.\d{6}\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?)`)
+	tidbReleaseVersionFullRegex = regexp.MustCompile(`Release Version:\s*v\d+\.\d+\.\d+([0-9A-Za-z-]+(\.[0-9A-Za-z-]+)*)?`)
 )
-
-func parseTiDBXVersionToSemver(versionStr string) string {
-	// Cloud release version is exposed as
-	// TiDB-CLOUD.<YYYYMM>.<patch> or Release Version: CLOUD.<YYYYMM>.<patch>
-	// (optionally with pre-release suffix).
-	// See mysql.BuildTiDBXReleaseVersion, which converts semantic version
-	// v<YY>.<M>.<patch> into that wire-visible format. We parse it back here so
-	// BR version checks can keep working on semver-like values.
-	match := tidbCloudServerVersionRegex.FindStringSubmatch(versionStr)
-	if len(match) != 6 {
-		match = tidbCloudReleaseVersionRegex.FindStringSubmatch(versionStr)
-	}
-	if len(match) != 6 {
-		return ""
-	}
-	year, err := strconv.Atoi(match[1])
-	if err != nil || year < mysql.TiDBXVerMinYear || year > mysql.TiDBXVerMaxYear {
-		return ""
-	}
-	month, err := strconv.Atoi(match[2])
-	if err != nil || month < 1 || month > 12 {
-		return ""
-	}
-	patch, err := strconv.Atoi(match[3])
-	if err != nil {
-		return ""
-	}
-	return fmt.Sprintf("%d.%d.%d%s", year-2000, month, patch, match[4])
-}
 
 // ParseServerInfo parses exported server type and version info from version string
 func ParseServerInfo(src string) ServerInfo {
@@ -458,10 +417,6 @@ func ParseServerInfo(src string) ServerInfo {
 		} else {
 			versionStr = tidbVersionRegex.FindString(src)
 			versionStr = strings.TrimPrefix(versionStr, "-")
-		}
-		// try to parse TiDB X version if Classic tidb version parsing fails.
-		if versionStr == "" {
-			versionStr = parseTiDBXVersionToSemver(src)
 		}
 		versionStr = strings.TrimPrefix(versionStr, "v")
 	} else {

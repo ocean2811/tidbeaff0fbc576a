@@ -21,13 +21,13 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/meta/metabuild"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	_ "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	_ "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"go.uber.org/zap"
 )
 
@@ -237,8 +237,7 @@ func parseTable(t *table, stmt *ast.CreateTableStmt) error {
 	t.name = stmt.Table.Name.L
 	t.columns = make([]*column, 0, len(stmt.Cols))
 
-	mockTbl, err := ddl.BuildTableInfoFromAST(metabuild.NewNonStrictContext(), stmt)
-	mockTbl.ID = 1
+	mockTbl, err := ddl.MockTableInfo(mock.NewContext(), stmt, 1)
 	if err != nil {
 		return errors.Trace(err)
 	}

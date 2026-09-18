@@ -10,10 +10,10 @@ go_library(
         "statistics.go",
         "typeutil.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/store/pdtypes",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/pdtypes",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/config/configtypes",
+        "@com_github_docker_go_units//:go-units",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_pingcap_kvproto//pkg/pdpb",

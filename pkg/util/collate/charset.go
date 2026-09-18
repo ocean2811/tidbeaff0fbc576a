@@ -14,19 +14,15 @@
 
 package collate
 
-import "github.com/pingcap/tidb/pkg/parser/charset"
+import "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
 
 // switchDefaultCollation switch the default collation for charset according to the new collation config.
 func switchDefaultCollation(flag bool) {
 	if flag {
 		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKChineseCI
-		charset.CharacterSetInfos[charset.CharsetGB18030].DefaultCollation = charset.CollationGB18030ChineseCI
 	} else {
 		charset.CharacterSetInfos[charset.CharsetGBK].DefaultCollation = charset.CollationGBKBin
-		charset.CharacterSetInfos[charset.CharsetGB18030].DefaultCollation = charset.CollationGB18030Bin
 	}
 	charset.CharacterSetInfos[charset.CharsetGBK].Collations[charset.CollationGBKBin].IsDefault = !flag
 	charset.CharacterSetInfos[charset.CharsetGBK].Collations[charset.CollationGBKChineseCI].IsDefault = flag
-	charset.CharacterSetInfos[charset.CharsetGB18030].Collations[charset.CollationGB18030Bin].IsDefault = !flag
-	charset.CharacterSetInfos[charset.CharsetGB18030].Collations[charset.CollationGB18030ChineseCI].IsDefault = flag
 }

@@ -18,23 +18,22 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
-	"strings"
+	"fmt"
+	"os"
+	"path"
+	"runtime"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	keyspacepb "github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/placement"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/keyspace"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testsetup"
+	util2 "github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 	"github.com/stretchr/testify/require"
-	pdhttp "github.com/tikv/pd/client/http"
+	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/goleak"
 )
 
@@ -42,7 +41,6 @@ func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -50,8 +48,113 @@ func TestMain(m *testing.M) {
 	goleak.VerifyTestMain(m, opts...)
 }
 
+func TestTopology(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("integration.NewClusterV3 will create file contains a colon which is not allowed on Windows")
+	}
+	integration.BeforeTestExternal(t)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	currentID := "test"
+
+	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
+	defer cluster.Terminate(t)
+
+	client := cluster.RandClient()
+
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/mockServerInfo", "return(true)"))
+	defer func() {
+		err := failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/mockServerInfo")
+		require.NoError(t, err)
+	}()
+
+	info, err := GlobalInfoSyncerInit(ctx, currentID, func() uint64 { return 1 }, client, client, nil, keyspace.CodecV1, false)
+	require.NoError(t, err)
+
+	err = info.newTopologySessionAndStoreServerInfo(ctx, util2.NewSessionDefaultRetryCnt)
+	require.NoError(t, err)
+
+	topology, err := info.getTopologyFromEtcd(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(1282967700), topology.StartTimestamp)
+
+	v, ok := topology.Labels["foo"]
+	require.True(t, ok)
+	require.Equal(t, "bar", v)
+	require.Equal(t, info.getTopologyInfo(), *topology)
+
+	nonTTLKey := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, info.info.IP, info.info.Port)
+	ttlKey := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, info.info.IP, info.info.Port)
+
+	err = util.DeleteKeyFromEtcd(nonTTLKey, client, util2.NewSessionDefaultRetryCnt, time.Second)
+	require.NoError(t, err)
+
+	// Refresh and re-test if the key exists
+	err = info.RestartTopology(ctx)
+	require.NoError(t, err)
+
+	topology, err = info.getTopologyFromEtcd(ctx)
+	require.NoError(t, err)
+
+	s, err := os.Executable()
+	require.NoError(t, err)
+
+	dir := path.Dir(s)
+	require.Equal(t, dir, topology.DeployPath)
+	require.Equal(t, int64(1282967700), topology.StartTimestamp)
+	require.Equal(t, info.getTopologyInfo(), *topology)
+
+	// check ttl key
+	ttlExists, err := info.ttlKeyExists(ctx)
+	require.NoError(t, err)
+	require.True(t, ttlExists)
+
+	err = util.DeleteKeyFromEtcd(ttlKey, client, util2.NewSessionDefaultRetryCnt, time.Second)
+	require.NoError(t, err)
+
+	err = info.updateTopologyAliveness(ctx)
+	require.NoError(t, err)
+
+	ttlExists, err = info.ttlKeyExists(ctx)
+	require.NoError(t, err)
+	require.True(t, ttlExists)
+}
+
+func (is *InfoSyncer) getTopologyFromEtcd(ctx context.Context) (*TopologyInfo, error) {
+	key := fmt.Sprintf("%s/%s:%v/info", TopologyInformationPath, is.info.IP, is.info.Port)
+	resp, err := is.etcdCli.Get(ctx, key)
+	if err != nil {
+		return nil, err
+	}
+	if len(resp.Kvs) == 0 {
+		return nil, errors.New("not-exists")
+	}
+	if len(resp.Kvs) != 1 {
+		return nil, errors.New("resp.Kvs error")
+	}
+	var ret TopologyInfo
+	err = json.Unmarshal(resp.Kvs[0].Value, &ret)
+	if err != nil {
+		return nil, err
+	}
+	return &ret, nil
+}
+
+func (is *InfoSyncer) ttlKeyExists(ctx context.Context) (bool, error) {
+	key := fmt.Sprintf("%s/%s:%v/ttl", TopologyInformationPath, is.info.IP, is.info.Port)
+	resp, err := is.etcdCli.Get(ctx, key)
+	if err != nil {
+		return false, err
+	}
+	if len(resp.Kvs) >= 2 {
+		return false, errors.New("too many arguments in resp.Kvs")
+	}
+	return len(resp.Kvs) == 1, nil
+}
+
 func TestPutBundlesRetry(t *testing.T) {
-	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
+	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, false)
 	require.NoError(t, err)
 
 	bundle, err := placement.NewBundleFromOptions(&model.PlacementSettings{PrimaryRegion: "r1", Regions: "r1,r2"})
@@ -60,9 +163,9 @@ func TestPutBundlesRetry(t *testing.T) {
 
 	t.Run("serviceErrorShouldNotRetry", func(t *testing.T) {
 		require.NoError(t, PutRuleBundles(context.TODO(), []*placement.Bundle{{ID: bundle.ID}}))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/putRuleBundlesError", "1*return(true)"))
+		require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/putRuleBundlesError", "1*return(true)"))
 		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/putRuleBundlesError"))
+			require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/putRuleBundlesError"))
 		}()
 
 		err := PutRuleBundlesWithRetry(context.TODO(), []*placement.Bundle{bundle}, 3, time.Millisecond)
@@ -76,9 +179,9 @@ func TestPutBundlesRetry(t *testing.T) {
 
 	t.Run("nonServiceErrorShouldRetry", func(t *testing.T) {
 		require.NoError(t, PutRuleBundles(context.TODO(), []*placement.Bundle{{ID: bundle.ID}}))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/putRuleBundlesError", "3*return(false)"))
+		require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/putRuleBundlesError", "3*return(false)"))
 		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/putRuleBundlesError"))
+			require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/putRuleBundlesError"))
 		}()
 
 		err := PutRuleBundlesWithRetry(context.TODO(), []*placement.Bundle{bundle}, 3, time.Millisecond)
@@ -98,9 +201,9 @@ func TestPutBundlesRetry(t *testing.T) {
 
 	t.Run("nonServiceErrorRetryAndFail", func(t *testing.T) {
 		require.NoError(t, PutRuleBundles(context.TODO(), []*placement.Bundle{{ID: bundle.ID}}))
-		require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/infosync/putRuleBundlesError", "4*return(false)"))
+		require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/putRuleBundlesError", "4*return(false)"))
 		defer func() {
-			require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/domain/infosync/putRuleBundlesError"))
+			require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/putRuleBundlesError"))
 		}()
 
 		err := PutRuleBundlesWithRetry(context.TODO(), []*placement.Bundle{bundle}, 3, time.Millisecond)
@@ -115,7 +218,7 @@ func TestPutBundlesRetry(t *testing.T) {
 
 func TestTiFlashManager(t *testing.T) {
 	ctx := context.Background()
-	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
+	_, err := GlobalInfoSyncerInit(ctx, "test", func() uint64 { return 1 }, nil, nil, nil, keyspace.CodecV1, false)
 	tiflash := NewMockTiFlash()
 	SetMockTiFlash(tiflash)
 
@@ -138,111 +241,8 @@ func TestTiFlashManager(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, 1, stats.Count)
 
-	t.Run("circuitBreakerCancelsProgressCollection", func(t *testing.T) {
-		restore := config.RestoreFunc()
-		defer restore()
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.CSE.ColumnarCollectTimeout = 50 * time.Millisecond
-		})
-
-		requestCanceled := make(chan struct{}, 1)
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			<-r.Context().Done()
-			requestCanceled <- struct{}{}
-		}))
-		defer server.Close()
-
-		tikvStores := map[int64]pdhttp.StoreInfo{
-			1: {
-				Store: pdhttp.MetaStore{
-					ID:            1,
-					StatusAddress: strings.TrimPrefix(server.URL, "http://"),
-					StateName:     "Up",
-				},
-			},
-		}
-
-		progress, circuitBreakerTriggered, err := MustGetTiFlashProgressWithCircuitBreaker(context.Background(), 1024, 1, nil, tikvStores)
-		require.NoError(t, err)
-		require.True(t, circuitBreakerTriggered)
-		require.Equal(t, 1.0, progress)
-
-		select {
-		case <-requestCanceled:
-		case <-time.After(time.Second):
-			t.Fatal("expected progress collection request to be canceled")
-		}
-	})
-
-	t.Run("storageClassStatusCollectsCounters", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = w.Write([]byte(`{"ready":2,"total":3}`))
-		}))
-		defer server.Close()
-
-		tikvStores := map[int64]pdhttp.StoreInfo{
-			3: {Store: pdhttp.MetaStore{ID: 3, StatusAddress: strings.TrimPrefix(server.URL, "http://"), StateName: "Up"}},
-			1: {Store: pdhttp.MetaStore{ID: 1, StatusAddress: strings.TrimPrefix(server.URL, "http://"), StateName: "Offline"}},
-			2: {Store: pdhttp.MetaStore{ID: 2, StatusAddress: "127.0.0.1:1", StateName: "Tombstone"}},
-		}
-		statuses, err := CollectStorageClassStatus(context.Background(), 1024, model.StorageClassTierIA, tikvStores)
-		require.NoError(t, err)
-		require.Equal(t, []StorageClassStoreStatus{
-			{StoreID: 1, Ready: 2, Total: 3},
-			{StoreID: 3, Ready: 2, Total: 3},
-		}, statuses)
-	})
-
-	t.Run("storageClassStatusCancelsPendingRequests", func(t *testing.T) {
-		requestStarted := make(chan struct{})
-		requestCanceled := make(chan struct{})
-		schemaVersionSeen := make(chan bool, 1)
-		blockingServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			close(requestStarted)
-			<-r.Context().Done()
-			close(requestCanceled)
-		}))
-		defer blockingServer.Close()
-
-		failedServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			<-requestStarted
-			schemaVersionSeen <- r.URL.Query().Has("schema_version")
-			http.Error(w, "unavailable", http.StatusServiceUnavailable)
-		}))
-		defer failedServer.Close()
-
-		requestCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		tikvStores := map[int64]pdhttp.StoreInfo{
-			1: {
-				Store: pdhttp.MetaStore{
-					ID:            1,
-					StatusAddress: strings.TrimPrefix(failedServer.URL, "http://"),
-					StateName:     "Up",
-				},
-			},
-			2: {
-				Store: pdhttp.MetaStore{
-					ID:            2,
-					StatusAddress: strings.TrimPrefix(blockingServer.URL, "http://"),
-					StateName:     "Up",
-				},
-			},
-		}
-
-		statuses, err := CollectStorageClassStatus(requestCtx, 1024, model.StorageClassTierIA, tikvStores)
-		require.ErrorContains(t, err, "status 503")
-		require.Nil(t, statuses)
-		require.False(t, <-schemaVersionSeen)
-		select {
-		case <-requestCanceled:
-		case <-time.After(time.Second):
-			t.Fatal("expected pending storage class status request to be canceled")
-		}
-	})
-
-	// DeleteTiFlashPlacementRules
-	require.NoError(t, DeleteTiFlashPlacementRules(ctx, []int64{1}))
+	// DeleteTiFlashPlacementRule
+	require.NoError(t, DeleteTiFlashPlacementRule(ctx, "tiflash", rule.ID))
 	rules, err = GetTiFlashGroupRules(ctx, "tiflash")
 	require.NoError(t, err)
 	require.Equal(t, 0, len(rules))
@@ -257,12 +257,12 @@ func TestTiFlashManager(t *testing.T) {
 	ConfigureTiFlashPDForPartitions(true, &[]model.PartitionDefinition{
 		{
 			ID:       2,
-			Name:     ast.NewCIStr("p1"),
+			Name:     model.NewCIStr("p1"),
 			LessThan: []string{},
 		},
 		{
 			ID:       3,
-			Name:     ast.NewCIStr("p2"),
+			Name:     model.NewCIStr("p2"),
 			LessThan: []string{},
 		},
 	}, 3, &[]string{}, 100)
@@ -280,128 +280,42 @@ func TestTiFlashManager(t *testing.T) {
 	CloseTiFlashManager(ctx)
 }
 
-func TestInfoSyncerMarshal(t *testing.T) {
-	info := &serverinfo.ServerInfo{
-		StaticInfo: serverinfo.StaticInfo{
-			VersionInfo: serverinfo.VersionInfo{
-				Version: "8.8.8",
-				GitHash: "123456",
-			},
-			ID:             "tidb1",
-			IP:             "127.0.0.1",
-			Port:           4000,
-			StatusPort:     10080,
-			Lease:          "1s",
-			StartTimestamp: 10000,
-			ServerIDGetter: func() uint64 { return 0 },
-			JSONServerID:   1,
-		},
-		DynamicInfo: serverinfo.DynamicInfo{
-			Labels: map[string]string{"zone": "ap-northeast-1a"},
-		},
+func TestRuleOp(t *testing.T) {
+	rule := MakeNewRule(1, 2, []string{"a"})
+	ruleOp := RuleOp{
+		TiFlashRule:      &rule,
+		Action:           RuleOpAdd,
+		DeleteByIDPrefix: false,
 	}
-	data, err := json.Marshal(info)
+	j, err := json.Marshal(&ruleOp)
 	require.NoError(t, err)
-	require.Equal(t, data, []byte(`{"version":"8.8.8","git_hash":"123456",`+
-		`"ddl_id":"tidb1","ip":"127.0.0.1","listening_port":4000,"status_port":10080,"lease":"1s","start_timestamp":10000,`+
-		`"server_id":1,"labels":{"zone":"ap-northeast-1a"}}`))
-	var decodeInfo *serverinfo.ServerInfo
-	err = json.Unmarshal(data, &decodeInfo)
-	require.NoError(t, err)
-	require.Nil(t, decodeInfo.ServerIDGetter)
-	require.Equal(t, info.Version, decodeInfo.Version)
-	require.Equal(t, info.GitHash, decodeInfo.GitHash)
-	require.Equal(t, info.ID, decodeInfo.ID)
-	require.Equal(t, info.IP, decodeInfo.IP)
-	require.Equal(t, info.Port, decodeInfo.Port)
-	require.Equal(t, info.StatusPort, decodeInfo.StatusPort)
-	require.Equal(t, info.Lease, decodeInfo.Lease)
-	require.Equal(t, info.StartTimestamp, decodeInfo.StartTimestamp)
-	require.Equal(t, info.JSONServerID, decodeInfo.JSONServerID)
-	require.Equal(t, info.Labels, decodeInfo.Labels)
-}
-
-type mockKeyspaceConfigPDHTTPClient struct {
-	pdhttp.Client
-	t              *testing.T
-	expectedName   string
-	expectedParams *pdhttp.UpdateKeyspaceConfigParams
-	retErr         error
-}
-
-func (m *mockKeyspaceConfigPDHTTPClient) UpdateKeyspaceConfig(
-	ctx context.Context,
-	keyspaceName string,
-	params *pdhttp.UpdateKeyspaceConfigParams,
-) (*keyspacepb.KeyspaceMeta, error) {
-	require.NotNil(m.t, ctx)
-	require.Equal(m.t, m.expectedName, keyspaceName)
-	require.Equal(m.t, m.expectedParams, params)
-	if m.retErr != nil {
-		return nil, m.retErr
+	ruleOpExpect := &RuleOp{}
+	json.Unmarshal(j, ruleOpExpect)
+	require.Equal(t, ruleOp.Action, ruleOpExpect.Action)
+	require.Equal(t, *ruleOp.TiFlashRule, *ruleOpExpect.TiFlashRule)
+	ruleOps := make([]RuleOp, 0, 2)
+	for i := 0; i < 10; i += 2 {
+		rule := MakeNewRule(int64(i), 2, []string{"a"})
+		ruleOps = append(ruleOps, RuleOp{
+			TiFlashRule:      &rule,
+			Action:           RuleOpAdd,
+			DeleteByIDPrefix: false,
+		})
 	}
-	return &keyspacepb.KeyspaceMeta{}, nil
-}
-
-func TestSetKeyspaceConfig(t *testing.T) {
-	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
-	require.NoError(t, err)
-
-	value := "True"
-	precondition := "False"
-	expected := &pdhttp.UpdateKeyspaceConfigParams{
-		Config: map[string]*string{
-			"serverless_is_bootstrapped_for_restore": &value,
-		},
-		Preconditions: map[string]*string{
-			"serverless_is_bootstrapped_for_restore": &precondition,
-		},
+	for i := 1; i < 10; i += 2 {
+		rule := MakeNewRule(int64(i), 2, []string{"b"})
+		ruleOps = append(ruleOps, RuleOp{
+			TiFlashRule:      &rule,
+			Action:           RuleOpDel,
+			DeleteByIDPrefix: false,
+		})
 	}
-	restore := SetPDHttpCliForTest(&mockKeyspaceConfigPDHTTPClient{
-		t:              t,
-		expectedName:   "test-keyspace",
-		expectedParams: expected,
-	})
-	defer restore()
-
-	input := pdhttp.UpdateKeyspaceConfigParams{
-		Config: map[string]*string{
-			"serverless_is_bootstrapped_for_restore": &value,
-		},
-		Preconditions: map[string]*string{
-			"serverless_is_bootstrapped_for_restore": &precondition,
-		},
+	j, err = json.Marshal(ruleOps)
+	require.NoError(t, err)
+	var ruleOpsExpect []RuleOp
+	json.Unmarshal(j, &ruleOpsExpect)
+	for i := 0; i < len(ruleOps); i++ {
+		require.Equal(t, ruleOps[i].Action, ruleOpsExpect[i].Action)
+		require.Equal(t, *ruleOps[i].TiFlashRule, *ruleOpsExpect[i].TiFlashRule)
 	}
-
-	require.NoError(t, SetKeyspaceConfig(context.Background(), "test-keyspace", input))
-}
-
-func TestSetKeyspaceConfigWithoutPDHTTPClient(t *testing.T) {
-	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
-	require.NoError(t, err)
-
-	err = SetKeyspaceConfig(context.Background(), "test-keyspace", pdhttp.UpdateKeyspaceConfigParams{})
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "pd http cli is nil")
-}
-
-func TestSetKeyspaceConfigPropagatesPDHTTPError(t *testing.T) {
-	_, err := GlobalInfoSyncerInit(context.TODO(), "test", func() uint64 { return 1 }, nil, nil, nil, nil, keyspace.CodecV1, false, nil)
-	require.NoError(t, err)
-
-	expectedErr := errors.New("update keyspace config failed")
-	restore := SetPDHttpCliForTest(&mockKeyspaceConfigPDHTTPClient{
-		t:            t,
-		expectedName: "test-keyspace",
-		expectedParams: &pdhttp.UpdateKeyspaceConfigParams{
-			Config: map[string]*string{"k": nil},
-		},
-		retErr: expectedErr,
-	})
-	defer restore()
-
-	err = SetKeyspaceConfig(context.Background(), "test-keyspace", pdhttp.UpdateKeyspaceConfigParams{
-		Config: map[string]*string{"k": nil},
-	})
-	require.ErrorIs(t, err, expectedErr)
 }

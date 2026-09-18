@@ -21,9 +21,8 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
 	tikverr "github.com/tikv/client-go/v2/error"
-	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"google.golang.org/grpc/codes"
@@ -57,9 +56,9 @@ type RegionBatchRequestSender struct {
 }
 
 // NewRegionBatchRequestSender creates a RegionBatchRequestSender object.
-func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client, oracle oracle.Oracle, enableCollectExecutionInfo bool) *RegionBatchRequestSender {
+func NewRegionBatchRequestSender(cache *RegionCache, client tikv.Client, enableCollectExecutionInfo bool) *RegionBatchRequestSender {
 	return &RegionBatchRequestSender{
-		RegionRequestSender:        tikv.NewRegionRequestSender(cache.RegionCache, client, oracle),
+		RegionRequestSender:        tikv.NewRegionRequestSender(cache.RegionCache, client),
 		enableCollectExecutionInfo: enableCollectExecutionInfo,
 	}
 }
@@ -77,7 +76,7 @@ func (ss *RegionBatchRequestSender) SendReqToAddr(bo *Backoffer, rpcCtx *tikv.RP
 	start := time.Now()
 	resp, err = ss.GetClient().SendRequest(ctx, rpcCtx.Addr, req, timout)
 	if ss.Stats != nil && ss.enableCollectExecutionInfo {
-		ss.Stats.RecordRPCRuntimeStats(req.Type, time.Since(start))
+		tikv.RecordRegionRequestRuntimeStats(ss.Stats, req.Type, time.Since(start))
 	}
 	if err != nil {
 		cancel()

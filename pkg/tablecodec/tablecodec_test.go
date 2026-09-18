@@ -22,24 +22,17 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 )
-
-func defaultCodecEncoder() codec.Encoder {
-	return codec.NewEncoder(collate.NewCollationEnabled())
-}
 
 // TestTableCodec  tests some functions in package tablecodec
 // TODO: add more tests.
@@ -55,7 +48,7 @@ func TestTableCodec(t *testing.T) {
 	require.Equal(t, int64(2), h.IntValue())
 }
 
-// https://github.com/pingcap/tidb/issues/27687.
+// https://github.com/ocean2811/tidbeaff0fbc576a/issues/27687.
 func TestTableCodecInvalid(t *testing.T) {
 	tableID := int64(100)
 	buf := make([]byte, 0, 11)
@@ -107,7 +100,7 @@ func TestRowCodec(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.Local)
-	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -124,7 +117,7 @@ func TestRowCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equalf(t, 0, equal, "expect: %v, got %v", row[i], v)
 	}
@@ -138,7 +131,7 @@ func TestRowCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equal(t, 0, equal)
 	}
@@ -156,13 +149,13 @@ func TestRowCodec(t *testing.T) {
 		}
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.NoError(t, err1)
 		require.Equal(t, 0, equal)
 	}
 
 	// Make sure empty row return not nil value.
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{}, []int64{}, nil, nil)
+	bs, err = EncodeOldRow(sc, []types.Datum{}, []int64{}, nil, nil)
 	require.NoError(t, err)
 	require.Len(t, bs, 1)
 
@@ -176,7 +169,7 @@ func TestDecodeColumnValue(t *testing.T) {
 
 	// test timestamp
 	d := types.NewTimeDatum(types.NewTime(types.FromGoTime(time.Now()), mysql.TypeTimestamp, types.DefaultFsp))
-	bs, err := EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err := EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -184,7 +177,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeTimestamp)
 	d1, err := DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err := d1.Compare(sc.TypeCtx(), &d, collate.GetBinaryCollator())
+	cmp, err := d1.Compare(sc, &d, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -192,7 +185,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	elems := []string{"a", "b", "c", "d", "e"}
 	e, _ := types.ParseSetValue(elems, uint64(1))
 	d = types.NewMysqlSetDatum(e, "")
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -201,13 +194,13 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp.SetElems(elems)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc.TypeCtx(), &d, collate.GetCollator(tp.GetCollate()))
+	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.GetCollate()))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
 	// test bit
 	d = types.NewMysqlBitDatum(types.NewBinaryLiteralFromUint(3223600, 3))
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -216,13 +209,13 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp.SetFlen(24)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc.TypeCtx(), &d, collate.GetBinaryCollator())
+	cmp, err = d1.Compare(sc, &d, collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
 	// test empty enum
 	d = types.NewMysqlEnumDatum(types.Enum{})
-	bs, err = EncodeOldRow(sc.TimeZone(), []types.Datum{d}, []int64{1}, nil, nil)
+	bs, err = EncodeOldRow(sc, []types.Datum{d}, []int64{1}, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	_, bs, err = codec.CutOne(bs) // ignore colID
@@ -230,7 +223,7 @@ func TestDecodeColumnValue(t *testing.T) {
 	tp = types.NewFieldType(mysql.TypeEnum)
 	d1, err = DecodeColumnValue(bs, tp, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = d1.Compare(sc.TypeCtx(), &d, collate.GetCollator(tp.GetCollate()))
+	cmp, err = d1.Compare(sc, &d, collate.GetCollator(tp.GetCollate()))
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 }
@@ -241,7 +234,7 @@ func TestUnflattenDatums(t *testing.T) {
 	tps := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	output, err := UnflattenDatums(input, tps, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err := input[0].Compare(sc.TypeCtx(), &output[0], collate.GetBinaryCollator())
+	cmp, err := input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 
@@ -250,7 +243,7 @@ func TestUnflattenDatums(t *testing.T) {
 	tps[0].SetCollate("utf8mb4_unicode_ci")
 	output, err = UnflattenDatums(input, tps, sc.TimeZone())
 	require.NoError(t, err)
-	cmp, err = input[0].Compare(sc.TypeCtx(), &output[0], collate.GetBinaryCollator())
+	cmp, err = input[0].Compare(sc, &output[0], collate.GetBinaryCollator())
 	require.NoError(t, err)
 	require.Equal(t, 0, cmp)
 	require.Equal(t, "utf8mb4_unicode_ci", output[0].Collation())
@@ -267,11 +260,11 @@ func TestTimeCodec(t *testing.T) {
 	row := make([]types.Datum, colLen)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
-	ts, err := types.ParseTimestamp(types.DefaultStmtNoWarningContext,
+	ts, err := types.ParseTimestamp(stmtctx.NewStmtCtxWithTimeZone(time.UTC),
 		"2016-06-23 11:30:45")
 	require.NoError(t, err)
 	row[2] = types.NewDatum(ts)
-	du, _, err := types.ParseDuration(types.DefaultStmtNoWarningContext, "12:59:59.999999", 6)
+	du, _, err := types.ParseDuration(nil, "12:59:59.999999", 6)
 	require.NoError(t, err)
 	row[3] = types.NewDatum(du)
 
@@ -282,7 +275,7 @@ func TestTimeCodec(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	bs, err := EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
+	bs, err := EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -299,7 +292,7 @@ func TestTimeCodec(t *testing.T) {
 	for i, col := range cols {
 		v, ok := r[col.id]
 		require.True(t, ok)
-		equal, err1 := v.Compare(sc.TypeCtx(), &row[i], collate.GetBinaryCollator())
+		equal, err1 := v.Compare(sc, &row[i], collate.GetBinaryCollator())
 		require.Nil(t, err1)
 		require.Equal(t, 0, equal)
 	}
@@ -319,18 +312,18 @@ func TestCutRow(t *testing.T) {
 
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	data := make([][]byte, 3)
-	data[0], err = EncodeValue(sc.TimeZone(), nil, row[0])
+	data[0], err = EncodeValue(sc, nil, row[0])
 	require.NoError(t, err)
-	data[1], err = EncodeValue(sc.TimeZone(), nil, row[1])
+	data[1], err = EncodeValue(sc, nil, row[1])
 	require.NoError(t, err)
-	data[2], err = EncodeValue(sc.TimeZone(), nil, row[2])
+	data[2], err = EncodeValue(sc, nil, row[2])
 	require.NoError(t, err)
 	// Encode
 	colIDs := make([]int64, 0, 3)
 	for _, col := range cols {
 		colIDs = append(colIDs, col.id)
 	}
-	bs, err := EncodeOldRow(sc.TimeZone(), row, colIDs, nil, nil)
+	bs, err := EncodeOldRow(sc, row, colIDs, nil, nil)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 
@@ -362,14 +355,14 @@ func TestCutKeyNew(t *testing.T) {
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
+	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
 	valuesBytes, handleBytes, err := CutIndexKeyNew(indexKey, 3)
 	require.NoError(t, err)
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		valueBytes := valuesBytes[i]
 		var val types.Datum
 		_, val, _ = codec.DecodeOne(valueBytes)
@@ -385,7 +378,7 @@ func TestCutKey(t *testing.T) {
 	handle := types.NewIntDatum(100)
 	values = append(values, handle)
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
+	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -403,9 +396,9 @@ func TestCutKey(t *testing.T) {
 }
 
 func TestDecodeBadDecical(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/codec/errorInDecodeDecimal", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec/errorInDecodeDecimal", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/codec/errorInDecodeDecimal"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec/errorInDecodeDecimal"))
 	}()
 	dec := types.NewDecFromStringForTest("0.111")
 	b, err := codec.EncodeDecimal(nil, dec, 0, 0)
@@ -501,7 +494,7 @@ func TestDecodeIndexKey(t *testing.T) {
 		valueStrs = append(valueStrs, str)
 	}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	encodedValue, err := codec.EncodeKey(sc.TimeZone(), nil, values...)
+	encodedValue, err := codec.EncodeKey(sc, nil, values...)
 	require.NoError(t, err)
 	indexKey := EncodeIndexSeekKey(tableID, indexID, encodedValue)
 
@@ -559,8 +552,6 @@ func BenchmarkHasTablePrefixBuiltin(b *testing.B) {
 // Bench result:
 // BenchmarkEncodeValue      5000000           368 ns/op
 func BenchmarkEncodeValue(b *testing.B) {
-	sc := stmtctx.NewStmtCtx()
-
 	row := make([]types.Datum, 7)
 	row[0] = types.NewIntDatum(100)
 	row[1] = types.NewBytesDatum([]byte("abc"))
@@ -574,7 +565,7 @@ func BenchmarkEncodeValue(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		for _, d := range row {
 			encodedCol = encodedCol[:0]
-			_, err := EncodeValue(sc.TimeZone(), encodedCol, d)
+			_, err := EncodeValue(nil, encodedCol, d)
 			if err != nil {
 				b.Fatal(err)
 			}
@@ -599,15 +590,6 @@ func TestUntouchedIndexKValue(t *testing.T) {
 	untouchedIndexKey := []byte("t00000001_i000000001")
 	untouchedIndexValue := []byte{0, 0, 0, 0, 0, 0, 0, 1, 49}
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
-	commonHandleV1CommittedValue := []byte{0, IndexVersionFlag, 1}
-	require.False(t, IsUntouchedIndexKValue(untouchedIndexKey, commonHandleV1CommittedValue))
-	commonHandleV1UntouchedValue := []byte{1, IndexVersionFlag, 1, kv.UnCommitIndexKVFlag}
-	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, commonHandleV1UntouchedValue))
-	legacyUniqueValueWithMarkerLikeBytes := EncodeHandleInUniqueIndexValue(kv.IntHandle(0x017d010000000031), false)
-	require.Len(t, legacyUniqueValueWithMarkerLikeBytes, 8)
-	require.Equal(t, IndexVersionFlag, legacyUniqueValueWithMarkerLikeBytes[1])
-	require.Equal(t, kv.UnCommitIndexKVFlag, legacyUniqueValueWithMarkerLikeBytes[len(legacyUniqueValueWithMarkerLikeBytes)-1])
-	require.False(t, IsUntouchedIndexKValue(untouchedIndexKey, legacyUniqueValueWithMarkerLikeBytes))
 	IndexKey2TempIndexKey(untouchedIndexKey)
 	require.True(t, IsUntouchedIndexKValue(untouchedIndexKey, untouchedIndexValue))
 	elem := TempIndexValueElem{Handle: kv.IntHandle(1), Delete: true, Distinct: true}
@@ -617,7 +599,7 @@ func TestUntouchedIndexKValue(t *testing.T) {
 
 func TestTempIndexKey(t *testing.T) {
 	values := []types.Datum{types.NewIntDatum(1), types.NewBytesDatum([]byte("abc")), types.NewFloat64Datum(5.5)}
-	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.UTC).TimeZone(), nil, values...)
+	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.UTC), nil, values...)
 	require.NoError(t, err)
 	tableID := int64(4)
 	indexID := int64(5)
@@ -644,7 +626,7 @@ func TestTempIndexKey(t *testing.T) {
 
 func TestTempIndexValueCodec(t *testing.T) {
 	// Test encode temp index value.
-	encodedValue, err := codec.EncodeValue(stmtctx.NewStmtCtxWithTimeZone(time.UTC).TimeZone(), nil, types.NewIntDatum(1))
+	encodedValue, err := codec.EncodeValue(stmtctx.NewStmtCtxWithTimeZone(time.UTC), nil, types.NewIntDatum(1))
 	require.NoError(t, err)
 	encodedValueCopy := make([]byte, len(encodedValue))
 	copy(encodedValueCopy, encodedValue)
@@ -671,7 +653,7 @@ func TestTempIndexValueCodec(t *testing.T) {
 	remain, err = newTempIdxVal.DecodeOne(val)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(remain))
-	handle, err := DecodeHandleInIndexValue(newTempIdxVal.Value)
+	handle, err := DecodeHandleInUniqueIndexValue(newTempIdxVal.Value, false)
 	require.NoError(t, err)
 	require.Equal(t, handle.IntValue(), int64(100))
 	require.EqualValues(t, tempIdxVal, newTempIdxVal)
@@ -726,7 +708,7 @@ func TestTempIndexValueCodec(t *testing.T) {
 	result, err = DecodeTempIndexValue(val)
 	require.NoError(t, err)
 	require.Equal(t, 3, len(result))
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		if result[i].Handle == nil {
 			uv := binary.BigEndian.Uint64(result[i].Value)
 			result[i].Handle = kv.IntHandle(int64(uv))
@@ -745,7 +727,7 @@ func TestTempIndexValueCodec(t *testing.T) {
 func TestV2TableCodec(t *testing.T) {
 	const tableID int64 = 31415926
 	key := EncodeTablePrefix(tableID)
-	c, err := tikv.NewCodecV2(tikv.ModeTxn, &keyspacepb.KeyspaceMeta{Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: 271828}})
+	c, err := tikv.NewCodecV2(tikv.ModeTxn, 271828)
 	require.NoError(t, err)
 	key = c.EncodeKey(key)
 	tbid := DecodeTableID(key)
@@ -758,231 +740,4 @@ func TestV2TableCodec(t *testing.T) {
 	key = []byte("x001x001t123")
 	tbid = DecodeTableID(key)
 	require.Equal(t, int64(0), tbid)
-}
-
-// TestDecodeIndexHandleWithPartitionIDInKeyAndValue tests the scenario where
-// a GlobalIndexVersionV1+ non-unique index has partition ID in both the key
-// (new format) and the value (legacy global index format). This can produce
-// a nested PartitionHandle if not handled correctly.
-// See: https://github.com/pingcap/tidb/pull/65380#discussion_r2721786298
-func TestDecodeIndexHandleWithPartitionIDInKeyAndValue(t *testing.T) {
-	tableID := int64(100)
-	indexID := int64(1)
-	partitionID := int64(42)
-	handleID := int64(999)
-	colsLen := 1
-
-	// Build index key with one column value
-	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	indexedValues := []types.Datum{types.NewIntDatum(123)}
-	encodedCols, err := codec.EncodeKey(sc.TimeZone(), nil, indexedValues...)
-	require.NoError(t, err)
-
-	// Build the key: table prefix + table ID + index ID + encoded columns + partition handle suffix
-	// For GlobalIndexVersionV1+ non-unique indexes, the key suffix is:
-	// PartitionIDFlag + partition_id (8 bytes) + IntHandleFlag + handle (8 bytes)
-	key := make([]byte, 0)
-	key = append(key, tablePrefix...)
-	key = codec.EncodeInt(key, tableID)
-	key = append(key, indexPrefixSep...)
-	key = codec.EncodeInt(key, indexID)
-	key = append(key, encodedCols...)
-	// Add partition handle suffix (GlobalIndexVersionV1+ format)
-	key = append(key, PartitionIDFlag)
-	key = codec.EncodeInt(key, partitionID)
-	key = append(key, codec.IntHandleFlag)
-	key = codec.EncodeInt(key, handleID)
-
-	// Build index value with partition ID (global index value format)
-	// Format: TailLen | PartitionIDFlag | PartitionID | Padding
-	// We need len(value) >= 9 to trigger the partition ID check in DecodeIndexHandle
-	value := make([]byte, 0)
-	value = append(value, 0) // TailLen placeholder
-	value = append(value, PartitionIDFlag)
-	value = codec.EncodeInt(value, partitionID)
-	// Pad to make the value long enough (minimum 10 bytes for new encoding)
-	for len(value) < 10 {
-		value = append(value, 0)
-	}
-	value[0] = byte(len(value) - 1 - 1 - 8) // TailLen = total - 1(TailLen) - 1(PartitionIDFlag) - 8(PartitionID)
-
-	// Decode the handle
-	handle, err := DecodeIndexHandle(key, value, colsLen)
-	require.NoError(t, err)
-
-	// The handle should be a PartitionHandle
-	ph, ok := handle.(kv.PartitionHandle)
-	require.True(t, ok, "expected PartitionHandle, got %T", handle)
-
-	// The correct behavior should be:
-	// - PartitionID should equal the expected partition ID (42)
-	// - Inner handle should be IntHandle(999), not another PartitionHandle
-	require.Equal(t, partitionID, ph.PartitionID, "partition ID mismatch")
-
-	// Check that we do NOT have a nested PartitionHandle
-	// If the inner handle is also a PartitionHandle, that's the bug described in
-	// https://github.com/pingcap/tidb/pull/65380#discussion_r2721786298
-	_, isNested := ph.Handle.(kv.PartitionHandle)
-	require.False(t, isNested, "DecodeIndexHandle should not create nested PartitionHandle; "+
-		"when handle from key is already a PartitionHandle, skip value-based wrapping")
-
-	// Verify the inner handle is the expected IntHandle
-	require.Equal(t, kv.IntHandle(handleID), ph.Handle, "inner handle should be IntHandle")
-}
-
-// TestUniqueGlobalIndexKeyWithNullValues tests that for unique global indexes on
-// non-clustered tables:
-// - Non-NULL values do NOT have partition ID in the key (distinct = true)
-// - NULL values DO have partition ID in the key (distinct = false)
-// - Partition ID is always in the value for global indexes
-// This is critical after EXCHANGE PARTITION where duplicate _tidb_rowid values can exist.
-func TestUniqueGlobalIndexKeyWithNullValues(t *testing.T) {
-	tableID := int64(100)
-	partitionID := int64(42)
-	handleID := int64(999)
-
-	// Build a simple TableInfo and IndexInfo for a unique global index
-	// on a non-clustered table (no clustered index)
-	tblInfo := &model.TableInfo{
-		ID:   tableID,
-		Name: ast.NewCIStr("test_table"),
-		Columns: []*model.ColumnInfo{
-			{
-				ID:        1,
-				Name:      ast.NewCIStr("a"),
-				Offset:    0,
-				FieldType: *types.NewFieldType(mysql.TypeLong),
-			},
-			{
-				ID:        2,
-				Name:      ast.NewCIStr("b"),
-				Offset:    1,
-				FieldType: *types.NewFieldType(mysql.TypeLong),
-			},
-		},
-		// Non-clustered table (PKIsHandle = false, IsCommonHandle = false)
-		PKIsHandle:     false,
-		IsCommonHandle: false,
-	}
-
-	idxInfo := &model.IndexInfo{
-		ID:   1,
-		Name: ast.NewCIStr("idx_b"),
-		Columns: []*model.IndexColumn{
-			{
-				Name:   ast.NewCIStr("b"),
-				Offset: 1,
-				Length: types.UnspecifiedLength,
-			},
-		},
-		Unique:             true,
-		Global:             true,
-		GlobalIndexVersion: model.GlobalIndexVersionV1,
-		State:              model.StatePublic,
-	}
-
-	loc := time.UTC
-
-	// For unique index with non-NULL values, distinct = true,
-	// so the handle is NOT encoded in the key at all.
-	indexedValues := []types.Datum{types.NewIntDatum(123)}
-	handle := kv.NewPartitionHandle(partitionID, kv.IntHandle(handleID))
-
-	key, distinct, err := GenIndexKey(defaultCodecEncoder(), loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
-	require.NoError(t, err)
-	require.True(t, distinct, "unique index with non-NULL value should be distinct")
-
-	// The key should NOT contain the partition ID flag since distinct = true
-	// means no handle (and thus no partition ID) is encoded in the key
-	require.NotContains(t, key, []byte{PartitionIDFlag},
-		"unique index key with non-NULL value should NOT contain partition ID")
-
-	// Verify key structure: tablePrefix + tableID + indexPrefixSep + indexID + encodedValues
-	// No handle suffix expected
-	require.True(t, len(key) > 0, "key should not be empty")
-
-	// For unique index with NULL values, distinct = false,
-	// so the handle IS encoded in the key, including partition ID for V1+.
-	indexedValues = []types.Datum{types.NewDatum(nil)} // NULL value
-	handle = kv.NewPartitionHandle(partitionID, kv.IntHandle(handleID))
-
-	key, distinct, err = GenIndexKey(defaultCodecEncoder(), loc, tblInfo, idxInfo, tableID, indexedValues, handle, nil)
-	require.NoError(t, err)
-	require.False(t, distinct, "unique index with NULL value should NOT be distinct")
-
-	// The key SHOULD contain the partition ID since distinct = false
-	// and GlobalIndexVersion >= V1
-	containsPartitionIDFlag := false
-	for i := 0; i < len(key)-1; i++ {
-		if key[i] == PartitionIDFlag {
-			containsPartitionIDFlag = true
-			// Verify the partition ID is correctly encoded after the flag
-			if i+9 <= len(key) {
-				decodedPartID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(key[i+1 : i+9]))
-				require.Equal(t, partitionID, decodedPartID,
-					"partition ID in key should match expected value")
-			}
-			break
-		}
-	}
-	require.True(t, containsPartitionIDFlag,
-		"unique index key with NULL value should contain partition ID flag")
-
-	// For both distinct and non-distinct global indexes, partition ID
-	// should be encoded in the value.
-	indexedValues = []types.Datum{types.NewIntDatum(123)}
-	intHandle := kv.IntHandle(handleID)
-
-	// Generate the index value
-	value, err := genIndexValueVersion0(loc, tblInfo, idxInfo, false, true, false,
-		indexedValues, intHandle, partitionID, nil)
-	require.NoError(t, err)
-
-	// The value should contain the partition ID
-	containsPartitionIDFlag = false
-	for i := 0; i < len(value)-1; i++ {
-		if value[i] == PartitionIDFlag {
-			containsPartitionIDFlag = true
-			// Verify the partition ID is correctly encoded after the flag
-			if i+9 <= len(value) {
-				decodedPartID := codec.DecodeCmpUintToInt(binary.BigEndian.Uint64(value[i+1 : i+9]))
-				require.Equal(t, partitionID, decodedPartID,
-					"partition ID in value should match expected value")
-			}
-			break
-		}
-	}
-	require.True(t, containsPartitionIDFlag,
-		"global index value should contain partition ID flag")
-
-	// Test that legacy (version 0) unique indexes do NOT have partition ID in key
-	// even with NULL values - this verifies backward compatibility
-	idxInfoV0 := &model.IndexInfo{
-		ID:   1,
-		Name: ast.NewCIStr("idx_b_v0"),
-		Columns: []*model.IndexColumn{
-			{
-				Name:   ast.NewCIStr("b"),
-				Offset: 1,
-				Length: types.UnspecifiedLength,
-			},
-		},
-		Unique:             true,
-		Global:             true,
-		GlobalIndexVersion: 0, // Legacy version
-		State:              model.StatePublic,
-	}
-
-	indexedValues = []types.Datum{types.NewDatum(nil)} // NULL value
-	intHandle = kv.IntHandle(handleID)
-
-	key, distinct, err = GenIndexKey(defaultCodecEncoder(), loc, tblInfo, idxInfoV0, tableID, indexedValues, intHandle, nil)
-	require.NoError(t, err)
-	require.False(t, distinct, "unique index with NULL value should NOT be distinct")
-
-	// The key should NOT contain partition ID flag for version 0
-	for i := 0; i < len(key)-1; i++ {
-		require.NotEqual(t, PartitionIDFlag, key[i],
-			"legacy (v0) global index key should NOT contain partition ID flag")
-	}
 }

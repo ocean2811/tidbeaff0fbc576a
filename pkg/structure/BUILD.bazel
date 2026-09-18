@@ -9,7 +9,7 @@ go_library(
         "structure.go",
         "type.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/structure",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/structure",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errno",
@@ -29,7 +29,7 @@ go_test(
     ],
     embed = [":structure"],
     flaky = True,
-    shard_count = 5,
+    shard_count = 4,
     deps = [
         "//pkg/kv",
         "//pkg/parser/mysql",

@@ -17,7 +17,8 @@ package aggfuncs
 import (
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 const (
@@ -47,14 +48,14 @@ func (*cumeDist) ResetPartialResult(pr PartialResult) {
 	p.rows = p.rows[:0]
 }
 
-func (*cumeDist) UpdatePartialResult(_ AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (*cumeDist) UpdatePartialResult(_ sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4CumeDist)(pr)
 	p.rows = append(p.rows, rowsInGroup...)
 	memDelta += int64(len(rowsInGroup)) * DefRowSize
 	return memDelta, nil
 }
 
-func (r *cumeDist) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (r *cumeDist) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4CumeDist)(pr)
 	numRows := len(p.rows)
 	for p.lastRank < numRows && r.compareRows(p.rows[p.curIdx], p.rows[p.lastRank]) == 0 {

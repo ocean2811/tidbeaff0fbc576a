@@ -14,11 +14,7 @@
 
 package variable
 
-import (
-	"context"
-
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-)
+import "context"
 
 // MockGlobalAccessor implements GlobalVarAccessor interface. it's used in tests
 type MockGlobalAccessor struct {
@@ -80,7 +76,7 @@ func (m *MockGlobalAccessor) SetGlobalSysVar(ctx context.Context, name string, v
 	if sv == nil {
 		return ErrUnknownSystemVar.GenWithStackByArgs(name)
 	}
-	if value, err = sv.Validate(m.SessionVars, value, vardef.ScopeGlobal); err != nil {
+	if value, err = sv.Validate(m.SessionVars, value, ScopeGlobal); err != nil {
 		return err
 	}
 	if err = sv.SetGlobalFromHook(ctx, m.SessionVars, value, false); err != nil {
@@ -88,18 +84,6 @@ func (m *MockGlobalAccessor) SetGlobalSysVar(ctx context.Context, name string, v
 	}
 	m.vals[name] = value
 	return nil
-}
-
-// SetInstanceSysVar implements GlobalVarAccessor.SetInstanceSysVar interface.
-func (m *MockGlobalAccessor) SetInstanceSysVar(ctx context.Context, name string, value string) (err error) {
-	sv := GetSysVar(name)
-	if sv == nil {
-		return ErrUnknownSystemVar.GenWithStackByArgs(name)
-	}
-	if value, err = sv.Validate(m.SessionVars, value, vardef.ScopeGlobal); err != nil {
-		return err
-	}
-	return sv.SetGlobalFromHook(ctx, m.SessionVars, value, false)
 }
 
 // SetGlobalSysVarOnly implements GlobalVarAccessor.SetGlobalSysVarOnly interface.
@@ -116,7 +100,7 @@ func (m *MockGlobalAccessor) SetGlobalSysVarOnly(ctx context.Context, name strin
 func (m *MockGlobalAccessor) GetTiDBTableValue(name string) (string, error) {
 	// add for test tidb_gc_max_wait_time validation
 	if name == "tikv_gc_life_time" {
-		sv := GetSysVar(vardef.TiDBGCLifetime)
+		sv := GetSysVar(TiDBGCLifetime)
 		if sv == nil {
 			panic("Get SysVar Failed")
 		}

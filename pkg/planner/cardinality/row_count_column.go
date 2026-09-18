@@ -16,117 +16,176 @@ package cardinality
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/core/cost"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
-	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util/debugtrace"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/ranger"
 )
 
 func init() {
 	statistics.GetRowCountByColumnRanges = GetRowCountByColumnRanges
+	statistics.GetRowCountByIntColumnRanges = GetRowCountByIntColumnRanges
 	statistics.GetRowCountByIndexRanges = GetRowCountByIndexRanges
 }
 
 // GetRowCountByColumnRanges estimates the row count by a slice of Range.
-// PKIsHandle indicates whether the column is the single primary key column.
-func GetRowCountByColumnRanges(sctx planctx.PlanContext, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range, pkIsHandle bool) (result statistics.RowEstimate, err error) {
+func GetRowCountByColumnRanges(sctx sessionctx.Context, coll *statistics.HistColl, colUniqueID int64, colRanges []*ranger.Range) (result float64, err error) {
+	var name string
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		debugTraceGetRowCountInput(sctx, colUniqueID, colRanges)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	sc := sctx.GetSessionVars().StmtCtx
-	c := coll.GetCol(colUniqueID)
+	c, ok := coll.Columns[colUniqueID]
 	colInfoID := colUniqueID
 	if len(coll.UniqueID2colInfoID) > 0 {
 		colInfoID = coll.UniqueID2colInfoID[colUniqueID]
 	}
 	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
-	if statistics.ColumnStatsIsInvalid(c, sctx, coll, colUniqueID) {
-		var pseudoResult float64
-		if pkIsHandle {
-			if len(colRanges) == 0 {
-				return statistics.DefaultRowEst(0), nil
-			}
-			if colRanges[0].LowVal[0].Kind() == types.KindInt64 {
-				pseudoResult = getPseudoRowCountBySignedIntRanges(colRanges, float64(coll.RealtimeCount))
-			} else {
-				pseudoResult = getPseudoRowCountByUnsignedIntRanges(colRanges, float64(coll.RealtimeCount))
-			}
-		} else {
-			pseudoResult, err = getPseudoRowCountByColumnRanges(sc.TypeCtx(), float64(coll.RealtimeCount), colRanges, 0)
-			if err != nil {
-				return statistics.DefaultRowEst(0), err
-			}
+	if c != nil && c.Info != nil {
+		name = c.Info.Name.O
+	}
+	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
+		result, err = getPseudoRowCountByColumnRanges(sc, float64(coll.RealtimeCount), colRanges, 0)
+		if err == nil && sc.EnableOptimizerCETrace && ok {
+			ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats-Pseudo", uint64(result))
 		}
-		return statistics.DefaultRowEst(pseudoResult), nil
+		return result, err
 	}
-	result, err = getColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, pkIsHandle)
-	if err != nil {
-		return statistics.DefaultRowEst(0), errors.Trace(err)
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.RecordAnyValuesWithNames(sctx,
+			"Histogram NotNull Count", c.Histogram.NotNullCount(),
+			"TopN total count", c.TopN.TotalCount(),
+			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
+		)
 	}
-	return result, nil
+	result, err = GetColumnRowCount(sctx, c, colRanges, coll.RealtimeCount, coll.ModifyCount, false)
+	if sc.EnableOptimizerCETrace {
+		ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, colRanges, "Column Stats", uint64(result))
+	}
+	return result, errors.Trace(err)
+}
+
+// GetRowCountByIntColumnRanges estimates the row count by a slice of IntColumnRange.
+func GetRowCountByIntColumnRanges(sctx sessionctx.Context, coll *statistics.HistColl, colUniqueID int64, intRanges []*ranger.Range) (result float64, err error) {
+	var name string
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		debugTraceGetRowCountInput(sctx, colUniqueID, intRanges)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Name", name, "Result", result)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
+	sc := sctx.GetSessionVars().StmtCtx
+	c, ok := coll.Columns[colUniqueID]
+	colInfoID := colUniqueID
+	if len(coll.UniqueID2colInfoID) > 0 {
+		colInfoID = coll.UniqueID2colInfoID[colUniqueID]
+	}
+	recordUsedItemStatsStatus(sctx, c, coll.PhysicalID, colInfoID)
+	if c != nil && c.Info != nil {
+		name = c.Info.Name.O
+	}
+	if !ok || c.IsInvalid(sctx, coll.Pseudo) {
+		if len(intRanges) == 0 {
+			return 0, nil
+		}
+		if intRanges[0].LowVal[0].Kind() == types.KindInt64 {
+			result = getPseudoRowCountBySignedIntRanges(intRanges, float64(coll.RealtimeCount))
+		} else {
+			result = getPseudoRowCountByUnsignedIntRanges(intRanges, float64(coll.RealtimeCount))
+		}
+		if sc.EnableOptimizerCETrace && ok {
+			ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats-Pseudo", uint64(result))
+		}
+		return result, nil
+	}
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.RecordAnyValuesWithNames(sctx,
+			"Histogram NotNull Count", c.Histogram.NotNullCount(),
+			"TopN total count", c.TopN.TotalCount(),
+			"Increase Factor", c.GetIncreaseFactor(coll.RealtimeCount),
+		)
+	}
+	result, err = GetColumnRowCount(sctx, c, intRanges, coll.RealtimeCount, coll.ModifyCount, true)
+	if sc.EnableOptimizerCETrace {
+		ceTraceRange(sctx, coll.PhysicalID, []string{c.Info.Name.O}, intRanges, "Column Stats", uint64(result))
+	}
+	return result, errors.Trace(err)
 }
 
 // equalRowCountOnColumn estimates the row count by a slice of Range and a Datum.
-func equalRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount, modifyCount int64) (result statistics.RowEstimate, err error) {
+func equalRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, val types.Datum, encodedVal []byte, realtimeRowCount int64) (result float64, err error) {
+	if sctx.GetSessionVars().StmtCtx.EnableOptimizerDebugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		debugtrace.RecordAnyValuesWithNames(sctx, "Value", val.String(), "Encoded", encodedVal)
+		defer func() {
+			debugtrace.RecordAnyValuesWithNames(sctx, "Result", result, "Error", err)
+			debugtrace.LeaveContextCommon(sctx)
+		}()
+	}
 	if val.IsNull() {
-		return statistics.DefaultRowEst(float64(c.NullCount)), nil
+		return float64(c.NullCount), nil
 	}
 	if c.StatsVer < statistics.Version2 {
 		// All the values are null.
 		if c.Histogram.Bounds.NumRows() == 0 {
-			return statistics.DefaultRowEst(0.0), nil
+			return 0.0, nil
 		}
 		if c.Histogram.NDV > 0 && c.OutOfRange(val) {
-			outOfRangeCnt := outOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount()
-			return statistics.DefaultRowEst(outOfRangeCnt), nil
+			return outOfRangeEQSelectivity(sctx, c.Histogram.NDV, realtimeRowCount, int64(c.TotalRowCount())) * c.TotalRowCount(), nil
 		}
 		if c.CMSketch != nil {
 			count, err := statistics.QueryValue(sctx, c.CMSketch, c.TopN, val)
-			return statistics.DefaultRowEst(float64(count)), errors.Trace(err)
+			return float64(count), errors.Trace(err)
 		}
 		histRowCount, _ := c.Histogram.EqualRowCount(sctx, val, false)
-		return statistics.DefaultRowEst(histRowCount), nil
+		return histRowCount, nil
 	}
 
 	// Stats version == 2
 	// All the values are null.
 	if c.Histogram.Bounds.NumRows() == 0 && c.TopN.Num() == 0 {
-		return statistics.DefaultRowEst(0), nil
+		return 0, nil
 	}
 	// 1. try to find this value in TopN
 	if c.TopN != nil {
 		rowcount, ok := c.TopN.QueryTopN(sctx, encodedVal)
 		if ok {
-			return statistics.DefaultRowEst(float64(rowcount)), nil
+			return float64(rowcount), nil
 		}
 	}
 	// 2. try to find this value in bucket.Repeat(the last value in every bucket)
 	histCnt, matched := c.Histogram.EqualRowCount(sctx, val, true)
-	// Calculate histNDV here as it's needed for both the underrepresented check and later calculations
-	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
-	// A bucket's upper bound is a value observed in the data, so a zero
-	// Repeat is not a count of zero rows: it means no point frequency was
-	// recorded for it. Merged global histograms produce such buckets when
-	// an upper falls on a merge cut, and the sampled builder produces them
-	// when the estimated NDV exceeds the histogram's row count. Fall
-	// through to the uniform estimate rather than report an exact zero.
-	// also check if this last bucket end value is underrepresented
-	if matched && histCnt > 0 && !IsLastBucketEndValueUnderrepresented(sctx,
-		&c.Histogram, val, histCnt, histNDV, realtimeRowCount, modifyCount) {
-		return statistics.DefaultRowEst(histCnt), nil
+	if matched {
+		return histCnt, nil
 	}
-	// 3. use uniform distribution assumption for the rest, and address special cases for out of range
-	// or all values assumed to be contained within TopN.
-	rowEstimate := estimateRowCountWithUniformDistribution(sctx, c, realtimeRowCount, modifyCount)
-	return rowEstimate, nil
+	// 3. use uniform distribution assumption for the rest (even when this value is not covered by the range of stats)
+	histNDV := float64(c.Histogram.NDV - int64(c.TopN.Num()))
+	if histNDV <= 0 {
+		return 0, nil
+	}
+	return c.Histogram.NotNullCount() / histNDV, nil
 }
 
-// getColumnRowCount estimates the row count by a slice of Range.
-func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (statistics.RowEstimate, error) {
+// GetColumnRowCount estimates the row count by a slice of Range.
+func GetColumnRowCount(sctx sessionctx.Context, c *statistics.Column, ranges []*ranger.Range, realtimeRowCount, modifyCount int64, pkIsHandle bool) (float64, error) {
 	sc := sctx.GetSessionVars().StmtCtx
-	var totalCount statistics.RowEstimate
+	debugTrace := sc.EnableOptimizerDebugTrace
+	if debugTrace {
+		debugtrace.EnterContextCommon(sctx)
+		defer debugtrace.LeaveContextCommon(sctx)
+	}
+	var rowCount float64
 	for _, rg := range ranges {
 		highVal := *rg.HighVal[0].Clone()
 		lowVal := *rg.LowVal[0].Clone()
@@ -136,36 +195,43 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		if lowVal.Kind() == types.KindString {
 			lowVal.SetBytes(collate.GetCollator(lowVal.Collation()).Key(lowVal.GetString()))
 		}
-		cmp, err := lowVal.Compare(sc.TypeCtx(), &highVal, collate.GetBinaryCollator())
+		cmp, err := lowVal.Compare(sc, &highVal, collate.GetBinaryCollator())
 		if err != nil {
-			return statistics.DefaultRowEst(0), errors.Trace(err)
+			return 0, errors.Trace(err)
 		}
-		lowEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, lowVal)
-		err = sc.HandleError(err)
+		lowEncoded, err := codec.EncodeKey(sc, nil, lowVal)
 		if err != nil {
-			return statistics.DefaultRowEst(0), err
+			return 0, err
 		}
-		highEncoded, err := codec.EncodeKey(sc.TimeZone(), nil, highVal)
-		err = sc.HandleError(err)
+		highEncoded, err := codec.EncodeKey(sc, nil, highVal)
 		if err != nil {
-			return statistics.DefaultRowEst(0), err
+			return 0, err
+		}
+		if debugTrace {
+			debugTraceStartEstimateRange(sctx, rg, lowEncoded, highEncoded, rowCount)
 		}
 		if cmp == 0 {
 			// case 1: it's a point
 			if !rg.LowExclude && !rg.HighExclude {
 				// In this case, the row count is at most 1.
 				if pkIsHandle {
-					totalCount.AddAll(1)
+					rowCount++
+					if debugTrace {
+						debugTraceEndEstimateRange(sctx, 1, debugTraceUniquePoint)
+					}
 					continue
 				}
-				var cnt statistics.RowEstimate
-				cnt, err = equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
+				var cnt float64
+				cnt, err = equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount)
 				if err != nil {
-					return statistics.DefaultRowEst(0), errors.Trace(err)
+					return 0, errors.Trace(err)
 				}
 				// If the current table row count has changed, we should scale the row count accordingly.
-				cnt.MultiplyAll(c.GetIncreaseFactor(realtimeRowCount))
-				totalCount.Add(cnt)
+				cnt *= c.GetIncreaseFactor(realtimeRowCount)
+				rowCount += cnt
+				if debugTrace {
+					debugTraceEndEstimateRange(sctx, cnt, debugTracePoint)
+				}
 			}
 			continue
 		}
@@ -177,13 +243,16 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 			// case 2: it's a small range && using ver1 stats
 			if rangeVals != nil {
 				for _, val := range rangeVals {
-					cnt, err := equalRowCountOnColumn(sctx, c, val, lowEncoded, realtimeRowCount, modifyCount)
+					cnt, err := equalRowCountOnColumn(sctx, c, val, lowEncoded, realtimeRowCount)
 					if err != nil {
-						return statistics.DefaultRowEst(0), err
+						return 0, err
 					}
 					// If the current table row count has changed, we should scale the row count accordingly.
-					cnt.MultiplyAll(c.GetIncreaseFactor(realtimeRowCount))
-					totalCount.Add(cnt)
+					cnt *= c.GetIncreaseFactor(realtimeRowCount)
+					if debugTrace {
+						debugTraceEndEstimateRange(sctx, cnt, debugTraceVer1SmallRange)
+					}
+					rowCount += cnt
 				}
 
 				continue
@@ -198,118 +267,109 @@ func getColumnRowCount(sctx planctx.PlanContext, c *statistics.Column, ranges []
 		// And because we use (2, MaxValue] to represent expressions like a > 2 and use [MinNotNull, 3) to represent
 		//   expressions like b < 3, we need to exclude the special values.
 		if rg.LowExclude && !lowVal.IsNull() && lowVal.Kind() != types.KindMaxValue && lowVal.Kind() != types.KindMinNotNull {
-			lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount, modifyCount)
+			lowCnt, err := equalRowCountOnColumn(sctx, c, lowVal, lowEncoded, realtimeRowCount)
 			if err != nil {
-				return statistics.DefaultRowEst(0), errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
-			cnt.Subtract(lowCnt)
-			cnt.Clamp(0, c.NotNullCount())
+			cnt -= lowCnt
+			cnt = mathutil.Clamp(cnt, 0, c.NotNullCount())
 		}
 		if !rg.LowExclude && lowVal.IsNull() {
-			cnt.AddAll(float64(c.NullCount))
+			cnt += float64(c.NullCount)
 		}
 		if !rg.HighExclude && highVal.Kind() != types.KindMaxValue && highVal.Kind() != types.KindMinNotNull {
-			highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount, modifyCount)
+			highCnt, err := equalRowCountOnColumn(sctx, c, highVal, highEncoded, realtimeRowCount)
 			if err != nil {
-				return statistics.DefaultRowEst(0), errors.Trace(err)
+				return 0, errors.Trace(err)
 			}
-			cnt.Add(highCnt)
+			cnt += highCnt
 		}
-		// Clamp all 3 fields of RowEstimate to [0, realtimeRowCount]
-		cnt.Clamp(0, float64(realtimeRowCount))
+
+		cnt = mathutil.Clamp(cnt, 0, c.TotalRowCount())
 
 		// If the current table row count has changed, we should scale the row count accordingly.
-		increaseFactor := c.GetIncreaseFactor(realtimeRowCount)
-		cnt.MultiplyAll(increaseFactor)
+		cnt *= c.GetIncreaseFactor(realtimeRowCount)
 
-		// Calculate if the estimate already covers the full range of realtimeRowCount.
-		// Use a tolerance factor to avoid precision issues.
-		atFullRange := cnt.Est >= float64(realtimeRowCount)*(1-cost.ToleranceFactor)
-		// handling the out-of-range part if the estimate does not cover the full range.
-		if !atFullRange && ((c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal)) {
-			histNDV := c.NDV
-			// Exclude the TopN
-			if c.StatsVer == statistics.Version2 {
-				histNDV -= int64(c.TopN.Num())
-			}
-			var count statistics.RowEstimate
-			count.Add(c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, realtimeRowCount, modifyCount, histNDV))
-			cnt.Add(count)
+		histNDV := c.NDV
+		if c.StatsVer == statistics.Version2 {
+			histNDV = histNDV - int64(c.TopN.Num())
+		}
+		// handling the out-of-range part
+		if (c.OutOfRange(lowVal) && !lowVal.IsNull()) || c.OutOfRange(highVal) {
+			cnt += c.Histogram.OutOfRangeRowCount(sctx, &lowVal, &highVal, modifyCount, histNDV)
 		}
 
-		totalCount.Add(cnt)
+		if debugTrace {
+			debugTraceEndEstimateRange(sctx, cnt, debugTraceRange)
+		}
+		rowCount += cnt
 	}
-	totalCount.Clamp(1.0, float64(realtimeRowCount))
-	return totalCount, nil
+	rowCount = mathutil.Clamp(rowCount, 0, float64(realtimeRowCount))
+	return rowCount, nil
 }
 
 // betweenRowCountOnColumn estimates the row count for interval [l, r).
-func betweenRowCountOnColumn(sctx planctx.PlanContext, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) statistics.RowEstimate {
-	// TODO: Track min/max range for column estimates, currently only used for indexes.
+func betweenRowCountOnColumn(sctx sessionctx.Context, c *statistics.Column, l, r types.Datum, lowEncoded, highEncoded []byte) float64 {
 	histBetweenCnt := c.Histogram.BetweenRowCount(sctx, l, r)
 	if c.StatsVer <= statistics.Version1 {
 		return histBetweenCnt
 	}
-	topNCnt := float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded))
-	// Only add TopN count to the main estimate, keep min/max estimates from histogram
-	histBetweenCnt.Est += topNCnt
-	return histBetweenCnt
+	return float64(c.TopN.BetweenCount(sctx, lowEncoded, highEncoded)) + histBetweenCnt
 }
 
-// getPseudoRowCountWithPartialStats calculates the row count if there are no statistics on the index, but there are column stats available.
-func getPseudoRowCountWithPartialStats(sctx planctx.PlanContext, coll *statistics.HistColl, indexRanges []*ranger.Range,
-	tableRowCount float64, idxCols []*expression.Column) (totalCount float64, maxCount float64, err error) {
-	if tableRowCount == 0 {
-		return 0, 0, nil
+// functions below are mainly for testing.
+
+// ColumnGreaterRowCount estimates the row count where the column greater than value.
+func ColumnGreaterRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) float64 {
+	c, ok := t.Columns[colID]
+	if !ok || c.IsInvalid(sctx, t.Pseudo) {
+		return float64(t.RealtimeCount) / pseudoLessRate
 	}
-	// If it is a single column index, directly use column estimation instead.
-	if len(idxCols) == 1 {
-		var countEst statistics.RowEstimate
-		countEst, err = GetRowCountByColumnRanges(sctx, coll, idxCols[0].UniqueID, indexRanges, false)
-		if err != nil {
-			return 0, 0, err
-		}
-		return countEst.Est, 0, nil
+	return c.GreaterRowCount(value) * c.GetIncreaseFactor(t.RealtimeCount)
+}
+
+// columnLessRowCount estimates the row count where the column less than value. Note that null values are not counted.
+func columnLessRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) float64 {
+	c, ok := t.Columns[colID]
+	if !ok || c.IsInvalid(sctx, t.Pseudo) {
+		return float64(t.RealtimeCount) / pseudoLessRate
 	}
-	tmpRan := []*ranger.Range{
-		{
-			LowVal:    make([]types.Datum, 1),
-			HighVal:   make([]types.Datum, 1),
-			Collators: make([]collate.Collator, 1),
-		},
+	return c.LessRowCount(sctx, value) * c.GetIncreaseFactor(t.RealtimeCount)
+}
+
+// columnBetweenRowCount estimates the row count where column greater or equal to a and less than b.
+func columnBetweenRowCount(sctx sessionctx.Context, t *statistics.Table, a, b types.Datum, colID int64) (float64, error) {
+	sc := sctx.GetSessionVars().StmtCtx
+	c, ok := t.Columns[colID]
+	if !ok || c.IsInvalid(sctx, t.Pseudo) {
+		return float64(t.RealtimeCount) / pseudoBetweenRate, nil
 	}
-	var (
-		count float64
-		colID int64
-	)
-	totalCount = float64(0)
-	maxCount = float64(0)
-	for _, indexRange := range indexRanges {
-		selectivity := float64(1.0)
-		corrSelectivity := float64(1.0)
-		for i := range indexRange.LowVal {
-			tmpRan[0].LowVal[0] = indexRange.LowVal[i]
-			tmpRan[0].HighVal[0] = indexRange.HighVal[i]
-			tmpRan[0].Collators[0] = indexRange.Collators[0]
-			if i == len(indexRange.LowVal)-1 {
-				tmpRan[0].LowExclude = indexRange.LowExclude
-				tmpRan[0].HighExclude = indexRange.HighExclude
-			}
-			colID = idxCols[i].UniqueID
-			// GetRowCountByColumnRanges handles invalid stats internally by using pseudo estimation
-			var countEst statistics.RowEstimate
-			countEst, err = GetRowCountByColumnRanges(sctx, coll, colID, tmpRan, false)
-			if err != nil {
-				return 0, 0, errors.Trace(err)
-			}
-			count = countEst.Est
-			tempSelectivity := count / tableRowCount
-			selectivity *= tempSelectivity
-			corrSelectivity = min(corrSelectivity, tempSelectivity)
-		}
-		totalCount += selectivity * tableRowCount
-		maxCount += corrSelectivity * tableRowCount
+	aEncoded, err := codec.EncodeKey(sc, nil, a)
+	if err != nil {
+		return 0, err
 	}
-	totalCount = mathutil.Clamp(totalCount, 1, tableRowCount)
-	return totalCount, maxCount, nil
+	bEncoded, err := codec.EncodeKey(sc, nil, b)
+	if err != nil {
+		return 0, err
+	}
+	count := betweenRowCountOnColumn(sctx, c, a, b, aEncoded, bEncoded)
+	if a.IsNull() {
+		count += float64(c.NullCount)
+	}
+	return count * c.GetIncreaseFactor(t.RealtimeCount), nil
+}
+
+// ColumnEqualRowCount estimates the row count where the column equals to value.
+func ColumnEqualRowCount(sctx sessionctx.Context, t *statistics.Table, value types.Datum, colID int64) (float64, error) {
+	c, ok := t.Columns[colID]
+	if !ok || c.IsInvalid(sctx, t.Pseudo) {
+		return float64(t.RealtimeCount) / pseudoEqualRate, nil
+	}
+	encodedVal, err := codec.EncodeKey(sctx.GetSessionVars().StmtCtx, nil, value)
+	if err != nil {
+		return 0, err
+	}
+	result, err := equalRowCountOnColumn(sctx, c, value, encodedVal, t.ModifyCount)
+	result *= c.GetIncreaseFactor(t.RealtimeCount)
+	return result, errors.Trace(err)
 }

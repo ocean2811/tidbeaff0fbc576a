@@ -23,7 +23,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"text/template"
 	"time"
 
@@ -31,17 +30,15 @@ import (
 )
 
 var (
-	pkgDir  string
-	outDir  string
-	pgoFile string
-	nextGen bool
+	pkgDir string
+	outDir string
 )
 
 const codeTemplate = `
 package main
 
 import (
-	"github.com/pingcap/tidb/pkg/plugin"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/plugin"
 )
 
 func PluginManifest() *plugin.Manifest {
@@ -77,8 +74,6 @@ func PluginManifest() *plugin.Manifest {
 func init() {
 	flag.StringVar(&pkgDir, "pkg-dir", "", "plugin package folder path")
 	flag.StringVar(&outDir, "out-dir", "", "plugin packaged folder path")
-	flag.StringVar(&pgoFile, "pgo-file", "", "go profile-guided optimization(pgo) file path")
-	flag.BoolVar(&nextGen, "next-gen", false, "whether to build plugin with next-gen features")
 	flag.Usage = usage
 }
 
@@ -103,15 +98,8 @@ func main() {
 		log.Printf("unable to resolve absolute representation of output path , %+v\n", err)
 		flag.Usage()
 	}
-	if pgoFile != "" {
-		pgoFile, err = filepath.Abs(pgoFile)
-		if err != nil {
-			log.Printf("unable to resolve absolute representation of pgo-file path , %+v\n", err)
-			flag.Usage()
-		}
-	}
 
-	var manifest map[string]any
+	var manifest map[string]interface{}
 	_, err = toml.DecodeFile(filepath.Join(pkgDir, "manifest.toml"), &manifest)
 	if err != nil {
 		log.Printf("read pkg %s's manifest failure, %+v\n", pkgDir, err)
@@ -153,22 +141,9 @@ func main() {
 
 	outputFile := filepath.Join(outDir, pluginName+"-"+version+".so")
 	ctx := context.Background()
-	flags := make([]string, 0, 4)
-	flags = append(flags, "build")
-	if pgoFile != "" {
-		flags = append(flags, "-pgo="+pgoFile)
-	}
-
-	buildTags := []string{"codes"}
-	if nextGen {
-		buildTags = append(buildTags, "nextgen")
-	}
-
-	flags = append(flags,
-		"-tags="+strings.Join(buildTags, ","),
+	buildCmd := exec.CommandContext(ctx, "go", "build",
 		"-buildmode=plugin",
 		"-o", outputFile, pkgDir)
-	buildCmd := exec.CommandContext(ctx, "go", flags...)
 	buildCmd.Dir = pkgDir
 	buildCmd.Stderr = os.Stderr
 	buildCmd.Stdout = os.Stdout

@@ -19,7 +19,7 @@ import (
 	"log"
 
 	"github.com/kisielk/errcheck/errcheck"
-	"github.com/pingcap/tidb/build/linter/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/build/linter/util"
 )
 
 // Analyzer is the analyzer struct of errcheck.
@@ -34,6 +34,5 @@ func init() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

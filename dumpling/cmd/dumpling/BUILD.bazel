@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 go_library(
     name = "dumpling_lib",
     srcs = ["main.go"],
-    importpath = "github.com/pingcap/tidb/dumpling/cmd/dumpling",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/dumpling/cmd/dumpling",
     visibility = ["//visibility:private"],
     deps = [
         "//dumpling/cli",

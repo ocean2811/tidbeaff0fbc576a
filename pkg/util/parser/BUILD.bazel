@@ -6,10 +6,9 @@ go_library(
         "ast.go",
         "parser.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/parser",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/parser",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/parser",
         "//pkg/parser/ast",
         "//pkg/parser/format",
         "//pkg/util/logutil",

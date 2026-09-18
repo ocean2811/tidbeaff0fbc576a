@@ -20,7 +20,7 @@ import (
 	"strconv"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
 )
 
 var gogcValue int64

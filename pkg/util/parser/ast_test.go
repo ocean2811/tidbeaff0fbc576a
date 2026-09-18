@@ -17,9 +17,9 @@ package parser_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser"
-	_ "github.com/pingcap/tidb/pkg/types/parser_driver"
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	_ "github.com/ocean2811/tidbeaff0fbc576a/pkg/types/parser_driver"
+	utilparser "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/parser"
 	"github.com/stretchr/testify/require"
 )
 

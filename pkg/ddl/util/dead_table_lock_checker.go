@@ -20,9 +20,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/ddl/logutil"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/meta/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -50,7 +49,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 	var err error
 	var resp *clientv3.GetResponse
 	allInfos := make(map[string]struct{})
-	for range defaultRetryCnt {
+	for i := 0; i < defaultRetryCnt; i++ {
 		select {
 		case <-ctx.Done():
 			return nil, ctx.Err()
@@ -60,7 +59,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 		resp, err = d.etcdCli.Get(childCtx, DDLAllSchemaVersions, clientv3.WithPrefix())
 		cancel()
 		if err != nil {
-			logutil.DDLLogger().Info("clean dead table lock get alive servers failed.", zap.Error(err))
+			logutil.BgLogger().Info("clean dead table lock get alive servers failed.", zap.String("category", "ddl"), zap.Error(err))
 			time.Sleep(defaultRetryInterval)
 			continue
 		}
@@ -74,7 +73,7 @@ func (d *DeadTableLockChecker) getAliveServers(ctx context.Context) (map[string]
 }
 
 // GetDeadLockedTables gets dead locked tables.
-func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, is infoschema.MetaOnlyInfoSchema) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
+func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, schemas []*model.DBInfo) (map[model.SessionInfo][]model.TableLockTpInfo, error) {
 	if d.etcdCli == nil {
 		return nil, nil
 	}
@@ -83,19 +82,20 @@ func (d *DeadTableLockChecker) GetDeadLockedTables(ctx context.Context, is infos
 		return nil, err
 	}
 	deadLockTables := make(map[model.SessionInfo][]model.TableLockTpInfo)
-
-	tbls := is.ListTablesWithSpecialAttribute(func(t *model.TableInfo) bool {
-		return t.Lock != nil
-	})
-	for _, db := range tbls {
-		for _, tbl := range db.TableInfos {
+	for _, schema := range schemas {
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		default:
+		}
+		for _, tbl := range schema.Tables {
 			if tbl.Lock == nil {
 				continue
 			}
 			for _, se := range tbl.Lock.Sessions {
 				if _, ok := aliveServers[se.ServerID]; !ok {
 					deadLockTables[se] = append(deadLockTables[se], model.TableLockTpInfo{
-						SchemaID: tbl.DBID,
+						SchemaID: schema.ID,
 						TableID:  tbl.ID,
 						Tp:       tbl.Lock.Tp,
 					})

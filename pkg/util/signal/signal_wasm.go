@@ -14,11 +14,6 @@
 
 package signal
 
-import "os"
-
-// SetupUSR1Handler sets up a signal handler for SIGUSR1.
-func SetupUSR1Handler() {}
-
-// SetupSignalHandler is a no-op on WASM and never invokes shutdownFunc.
-func SetupSignalHandler(shutdownFunc func(sig os.Signal)) {
+// SetupSignalHandler setup signal handler for TiDB Server
+func SetupSignalHandler(shutdownFunc func(bool)) {
 }

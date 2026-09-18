@@ -15,57 +15,29 @@
 package testutil
 
 import (
-	"fmt"
-	"math"
-	"os"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/ingest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 )
 
-// InjectMockBackendCtx mock LitBackCtxMgr.
-func InjectMockBackendCtx(t *testing.T, store kv.Storage) (restore func()) {
-	oldLitDiskRoot := ingest.LitDiskRoot
-	oldLitMemRoot := ingest.LitMemRoot
-
+// InjectMockBackendMgr mock LitBackCtxMgr.
+func InjectMockBackendMgr(t *testing.T, store kv.Storage) (restore func()) {
 	tk := testkit.NewTestKit(t, store)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/ingest/mockNewBackendContext",
-		func(job *model.Job, cpOp ingest.CheckpointOperator, mockBackendCtx *ingest.BackendCtx) {
-			*mockBackendCtx = ingest.NewMockBackendCtx(job, tk.Session(), cpOp)
-		})
+	oldLitBackendMgr := ingest.LitBackCtxMgr
+	oldInitialized := ingest.LitInitialized
+
+	ingest.LitBackCtxMgr = ingest.NewMockBackendCtxMgr(func() sessionctx.Context {
+		tk.MustExec("rollback;")
+		tk.MustExec("begin;")
+		return tk.Session()
+	})
 	ingest.LitInitialized = true
-	ingest.LitDiskRoot = ingest.NewDiskRootImpl(t.TempDir())
-	ingest.LitMemRoot = ingest.NewMemRootImpl(math.MaxInt64)
 
 	return func() {
-		ingest.LitInitialized = false
-		ingest.LitDiskRoot = oldLitDiskRoot
-		ingest.LitMemRoot = oldLitMemRoot
+		ingest.LitBackCtxMgr = oldLitBackendMgr
+		ingest.LitInitialized = oldInitialized
 	}
-}
-
-// CheckIngestLeakageForTest is only used in test.
-func CheckIngestLeakageForTest(exitCode int) {
-	if exitCode == 0 {
-		leakObj := ""
-		if ingest.TrackerCountForTest.Load() != 0 {
-			leakObj = "disk usage tracker"
-		} else if ingest.BackendCounterForTest.Load() != 0 {
-			leakObj = "backend context"
-		}
-		if len(leakObj) > 0 {
-			fmt.Fprintf(os.Stderr, "add index leakage check failed: %s leak\n", leakObj)
-			os.Exit(1)
-		}
-		if registeredJob := metrics.GetRegisteredJob(); len(registeredJob) > 0 {
-			fmt.Fprintf(os.Stderr, "add index metrics leakage: %v\n", registeredJob)
-			os.Exit(1)
-		}
-	}
-	os.Exit(exitCode)
 }

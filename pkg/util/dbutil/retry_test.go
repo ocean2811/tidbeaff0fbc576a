@@ -20,7 +20,7 @@ import (
 	"testing"
 
 	"github.com/go-sql-driver/mysql"
-	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
 	"github.com/stretchr/testify/require"
 )
 

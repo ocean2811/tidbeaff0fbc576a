@@ -15,7 +15,7 @@
 package scheduler
 
 import (
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/util"
 )
 
 // Command is the command for scheduler

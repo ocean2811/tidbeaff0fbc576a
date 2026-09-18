@@ -20,19 +20,15 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/store/mockstore/mockcopr"
-	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testenv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/mockcopr"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/mockstorage"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/testutils"
@@ -43,9 +39,9 @@ import (
 // it should not block by the lock.
 func TestResolvedLargeTxnLocks(t *testing.T) {
 	// This is required since mock tikv does not support paging.
-	failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/DisablePaging", `return`)
+	failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/DisablePaging", `return`)
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/DisablePaging"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/DisablePaging"))
 	}()
 
 	rpcClient, cluster, pdClient, err := testutils.NewMockTiKV("", mockcopr.NewCoprRPCHandler())
@@ -56,21 +52,13 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 	tikvStore, err := tikv.NewTestTiKVStore(rpcClient, pdClient, nil, nil, 0)
 	require.NoError(t, err)
 
-	var keyspaceMeta *keyspacepb.KeyspaceMeta
-	if kerneltype.IsNextGen() {
-		testenv.UpdateConfigForNextgen(t)
-		keyspaceMeta = &keyspacepb.KeyspaceMeta{
-			Keyspace: &keyspacepb.KeyspaceMeta_Id{Id: uint32(0xFFFFFF) - 1},
-			Name:     keyspace.System,
-		}
-	}
-
-	store, err := mockstorage.NewMockStorage(tikvStore, keyspaceMeta)
+	store, err := mockstorage.NewMockStorage(tikvStore)
 	require.NoError(t, err)
 	defer func() {
 		require.NoError(t, store.Close())
 	}()
 
+	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(store)
 	require.NoError(t, err)
@@ -81,7 +69,7 @@ func TestResolvedLargeTxnLocks(t *testing.T) {
 	tk.MustExec("create table t (id int primary key, val int)")
 	dom = domain.GetDomain(tk.Session())
 	schema := dom.InfoSchema()
-	tbl, err := schema.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
+	tbl, err := schema.TableByName(model.NewCIStr("test"), model.NewCIStr("t"))
 	require.NoError(t, err)
 
 	tk.MustExec("insert into t values (1, 1)")

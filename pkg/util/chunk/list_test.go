@@ -20,8 +20,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +36,7 @@ func TestList(t *testing.T) {
 	srcRow := srcChunk.GetRow(0)
 
 	// Test basic append.
-	for range 5 {
+	for i := 0; i < 5; i++ {
 		l.AppendRow(srcRow)
 	}
 	require.Equal(t, 3, l.NumChunks())
@@ -46,7 +47,7 @@ func TestList(t *testing.T) {
 	l.Reset()
 	require.Len(t, l.freelist, 3)
 
-	for range 5 {
+	for i := 0; i < 5; i++ {
 		l.AppendRow(srcRow)
 	}
 	require.Empty(t, l.freelist)
@@ -65,7 +66,7 @@ func TestList(t *testing.T) {
 
 	// Test iteration.
 	l.Reset()
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		tmp := NewChunkWithCapacity(fields, 32)
 		tmp.AppendInt64(0, int64(i))
 		l.AppendRow(tmp.GetRow(0))
@@ -133,11 +134,11 @@ func BenchmarkListMemoryUsage(b *testing.B) {
 
 	initCap := 50
 	list := NewList(fieldTypes, 2, 8)
-	for range initCap {
+	for i := 0; i < initCap; i++ {
 		list.AppendRow(row)
 	}
 	b.ResetTimer()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		list.GetMemTracker().BytesConsumed()
 	}
 }
@@ -149,7 +150,7 @@ func BenchmarkListAdd(b *testing.B) {
 	l := NewList(fields, numRow, numRow)
 
 	b.ResetTimer()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		l.Add(chk)
 	}
 }
@@ -161,19 +162,19 @@ func BenchmarkListGetRow(b *testing.B) {
 	for _, chk := range chks {
 		l.Add(chk)
 	}
-	rnd := rand.New(rand.NewSource(0))
+	rand.Seed(0)
 	ptrs := make([]RowPtr, 0, b.N)
-	for range min(b.N, 10000) {
+	for i := 0; i < mathutil.Min(b.N, 10000); i++ {
 		ptrs = append(ptrs, RowPtr{
-			ChkIdx: rnd.Uint32() % uint32(numChk),
-			RowIdx: rnd.Uint32() % uint32(numRow),
+			ChkIdx: rand.Uint32() % uint32(numChk),
+			RowIdx: rand.Uint32() % uint32(numRow),
 		})
 	}
 	for i := 10000; i < cap(ptrs); i++ {
 		ptrs = append(ptrs, ptrs[i%10000])
 	}
 	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; i < b.N; i++ {
 		l.GetRow(ptrs[i])
 	}
 }

@@ -17,14 +17,13 @@ package implementation
 import (
 	"math"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/planner/cardinality"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/memo"
-	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/cardinality"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/memo"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
 )
 
 // TableDualImpl implementation of PhysicalTableDual.
@@ -33,7 +32,7 @@ type TableDualImpl struct {
 }
 
 // NewTableDualImpl creates a new table dual Implementation.
-func NewTableDualImpl(dual *physicalop.PhysicalTableDual) *TableDualImpl {
+func NewTableDualImpl(dual *plannercore.PhysicalTableDual) *TableDualImpl {
 	return &TableDualImpl{baseImpl{plan: dual}}
 }
 
@@ -48,7 +47,7 @@ type MemTableScanImpl struct {
 }
 
 // NewMemTableScanImpl creates a new table dual Implementation.
-func NewMemTableScanImpl(dual *physicalop.PhysicalMemTable) *MemTableScanImpl {
+func NewMemTableScanImpl(dual *plannercore.PhysicalMemTable) *MemTableScanImpl {
 	return &MemTableScanImpl{baseImpl{plan: dual}}
 }
 
@@ -65,11 +64,11 @@ type TableReaderImpl struct {
 }
 
 // NewTableReaderImpl creates a new table reader Implementation.
-func NewTableReaderImpl(reader *physicalop.PhysicalTableReader, source *logicalop.DataSource) *TableReaderImpl {
+func NewTableReaderImpl(reader *plannercore.PhysicalTableReader, source *plannercore.DataSource) *TableReaderImpl {
 	base := baseImpl{plan: reader}
 	impl := &TableReaderImpl{
 		baseImpl:    base,
-		tblInfo:     source.TableInfo,
+		tblInfo:     source.TableInfo(),
 		tblColHists: source.TblColHists,
 	}
 	return impl
@@ -77,7 +76,7 @@ func NewTableReaderImpl(reader *physicalop.PhysicalTableReader, source *logicalo
 
 // CalcCost calculates the cost of the table reader Implementation.
 func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	reader := impl.plan.(*physicalop.PhysicalTableReader)
+	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	width := cardinality.GetAvgRowSize(impl.plan.SCtx(), impl.tblColHists, reader.Schema().Columns, false, false)
 	sessVars := reader.SCtx().GetSessionVars()
 	// TableReaderImpl don't have tableInfo property, so using nil to replace it.
@@ -94,7 +93,7 @@ func (impl *TableReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 
 // GetCostLimit implements Implementation interface.
 func (impl *TableReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
-	reader := impl.plan.(*physicalop.PhysicalTableReader)
+	reader := impl.plan.(*plannercore.PhysicalTableReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {
@@ -111,7 +110,7 @@ type TableScanImpl struct {
 }
 
 // NewTableScanImpl creates a new table scan Implementation.
-func NewTableScanImpl(ts *physicalop.PhysicalTableScan, cols []*expression.Column,
+func NewTableScanImpl(ts *plannercore.PhysicalTableScan, cols []*expression.Column,
 	hists *statistics.HistColl) *TableScanImpl {
 	base := baseImpl{plan: ts}
 	impl := &TableScanImpl{
@@ -124,7 +123,7 @@ func NewTableScanImpl(ts *physicalop.PhysicalTableScan, cols []*expression.Colum
 
 // CalcCost calculates the cost of the table scan Implementation.
 func (impl *TableScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
-	ts := impl.plan.(*physicalop.PhysicalTableScan)
+	ts := impl.plan.(*plannercore.PhysicalTableScan)
 	width := cardinality.GetTableAvgRowSize(impl.plan.SCtx(), impl.tblColHists, impl.tblCols, kv.TiKV, true)
 	sessVars := ts.SCtx().GetSessionVars()
 	impl.cost = outCount * sessVars.GetScanFactor(ts.Table) * width
@@ -143,7 +142,7 @@ type IndexReaderImpl struct {
 
 // GetCostLimit implements Implementation interface.
 func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implementation) float64 {
-	reader := impl.plan.(*physicalop.PhysicalIndexReader)
+	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	copIterWorkers := float64(sessVars.DistSQLScanConcurrency())
 	if math.MaxFloat64/copIterWorkers < costLimit {
@@ -154,7 +153,7 @@ func (impl *IndexReaderImpl) GetCostLimit(costLimit float64, _ ...memo.Implement
 
 // CalcCost implements Implementation interface.
 func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Implementation) float64 {
-	reader := impl.plan.(*physicalop.PhysicalIndexReader)
+	reader := impl.plan.(*plannercore.PhysicalIndexReader)
 	sessVars := reader.SCtx().GetSessionVars()
 	networkCost := outCount * sessVars.GetNetworkFactor(impl.tblInfo) *
 		cardinality.GetAvgRowSize(reader.SCtx(), impl.tblColHists, children[0].GetPlan().Schema().Columns,
@@ -165,10 +164,10 @@ func (impl *IndexReaderImpl) CalcCost(outCount float64, children ...memo.Impleme
 }
 
 // NewIndexReaderImpl creates a new IndexReader Implementation.
-func NewIndexReaderImpl(reader *physicalop.PhysicalIndexReader, source *logicalop.DataSource) *IndexReaderImpl {
+func NewIndexReaderImpl(reader *plannercore.PhysicalIndexReader, source *plannercore.DataSource) *IndexReaderImpl {
 	return &IndexReaderImpl{
 		baseImpl:    baseImpl{plan: reader},
-		tblInfo:     source.TableInfo,
+		tblInfo:     source.TableInfo(),
 		tblColHists: source.TblColHists,
 	}
 }
@@ -181,7 +180,7 @@ type IndexScanImpl struct {
 
 // CalcCost implements Implementation interface.
 func (impl *IndexScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) float64 {
-	is := impl.plan.(*physicalop.PhysicalIndexScan)
+	is := impl.plan.(*plannercore.PhysicalIndexScan)
 	sessVars := is.SCtx().GetSessionVars()
 	rowSize := cardinality.GetIndexAvgRowSize(is.SCtx(), impl.tblColHists, is.Schema().Columns, is.Index.Unique)
 	cost := outCount * rowSize * sessVars.GetScanFactor(is.Table)
@@ -194,7 +193,7 @@ func (impl *IndexScanImpl) CalcCost(outCount float64, _ ...memo.Implementation) 
 }
 
 // NewIndexScanImpl creates a new IndexScan Implementation.
-func NewIndexScanImpl(scan *physicalop.PhysicalIndexScan, tblColHists *statistics.HistColl) *IndexScanImpl {
+func NewIndexScanImpl(scan *plannercore.PhysicalIndexScan, tblColHists *statistics.HistColl) *IndexScanImpl {
 	return &IndexScanImpl{
 		baseImpl:    baseImpl{plan: scan},
 		tblColHists: tblColHists,

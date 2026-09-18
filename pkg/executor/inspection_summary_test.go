@@ -19,12 +19,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,12 +46,12 @@ func TestInspectionSummary(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 
-	fpName := "github.com/pingcap/tidb/pkg/executor/mockMetricsTableData"
+	fpName := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/mockMetricsTableData"
 	require.NoError(t, failpoint.Enable(fpName, "return"))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
 
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx.TypeCtx(), s, mysql.TypeDatetime, types.MaxFsp)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		return time
 	}

@@ -17,11 +17,15 @@ package importintotest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/tests/realtikvtest"
 )
 
 func init() {
-	realtikvtest.UpdateTiDBConfig()
+	// need a real PD
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.Path = "127.0.0.1:2379"
+	})
 }
 
 func TestMain(m *testing.M) {

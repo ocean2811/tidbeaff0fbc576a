@@ -6,7 +6,7 @@ go_library(
         "option.go",
         "spool.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/resourcemanager/pool/spool",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/pool/spool",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/metrics",
@@ -15,6 +15,7 @@ go_library(
         "//pkg/resourcemanager/poolmanager",
         "//pkg/resourcemanager/util",
         "//pkg/util/logutil",
+        "//pkg/util/mathutil",
         "@com_github_prometheus_client_golang//prometheus",
         "@com_github_sasha_s_go_deadlock//:go-deadlock",
         "@org_uber_go_zap//:zap",

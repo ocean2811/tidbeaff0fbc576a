@@ -18,22 +18,19 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/cascades/base"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 type mockAggFuncSuite struct {
-	ctx     *mock.Context
+	ctx     sessionctx.Context
 	rows    []chunk.Row
 	nullRow chunk.Row
 }
@@ -42,10 +39,9 @@ func createAggFuncSuite() (s *mockAggFuncSuite) {
 	s = new(mockAggFuncSuite)
 	s.ctx = mock.NewContext()
 	s.ctx.GetSessionVars().GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
-	s.ctx.GetSessionVars().DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
 	s.rows = make([]chunk.Row, 0, 5050)
 	for i := 1; i <= 100; i++ {
-		for range i {
+		for j := 0; j < i; j++ {
 			s.rows = append(s.rows, chunk.MutRowFromDatums(types.MakeDatums(i)).ToRow())
 		}
 	}
@@ -63,7 +59,7 @@ func TestAvg(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	avgFunc := desc.GetAggFunc(ctx)
-	evalCtx := avgFunc.CreateContext(s.ctx)
+	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := avgFunc.GetResult(evalCtx)
 	require.True(t, result.IsNull())
@@ -83,7 +79,7 @@ func TestAvg(t *testing.T) {
 	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncAvg, []expression.Expression{col}, true)
 	require.NoError(t, err)
 	distinctAvgFunc := desc.GetAggFunc(ctx)
-	evalCtx = distinctAvgFunc.CreateContext(s.ctx)
+	evalCtx = distinctAvgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 	for _, row := range s.rows {
 		err := distinctAvgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 		require.NoError(t, err)
@@ -116,7 +112,7 @@ func TestAvgFinalMode(t *testing.T) {
 	require.NoError(t, err)
 	aggFunc.Mode = FinalMode
 	avgFunc := aggFunc.GetAggFunc(ctx)
-	evalCtx := avgFunc.CreateContext(s.ctx)
+	evalCtx := avgFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	for _, row := range rows {
 		err := avgFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, chunk.MutRowFromDatums(row).ToRow())
@@ -137,7 +133,7 @@ func TestSum(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	sumFunc := desc.GetAggFunc(ctx)
-	evalCtx := sumFunc.CreateContext(s.ctx)
+	evalCtx := sumFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := sumFunc.GetResult(evalCtx)
 	require.True(t, result.IsNull())
@@ -159,7 +155,7 @@ func TestSum(t *testing.T) {
 	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, true)
 	require.NoError(t, err)
 	distinctSumFunc := desc.GetAggFunc(ctx)
-	evalCtx = distinctSumFunc.CreateContext(s.ctx)
+	evalCtx = distinctSumFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 	for _, row := range s.rows {
 		err := distinctSumFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
 		require.NoError(t, err)
@@ -167,51 +163,6 @@ func TestSum(t *testing.T) {
 	result = distinctSumFunc.GetResult(evalCtx)
 	needed = types.NewDecFromStringForTest("5050")
 	require.True(t, result.GetMysqlDecimal().Compare(needed) == 0)
-}
-
-func TestCheckAggPushDownSumInt(t *testing.T) {
-	ctx := mock.NewContext()
-	col := &expression.Column{
-		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
-	}
-	desc, err := NewAggFuncDesc(ctx, ast.AggFuncSumInt, []expression.Expression{col}, false)
-	require.NoError(t, err)
-	require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
-	require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
-}
-
-func TestCheckAggPushDownMaxMinCount(t *testing.T) {
-	ctx := mock.NewContext()
-	col := &expression.Column{
-		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
-	}
-	for _, funcName := range []string{ast.AggFuncMaxCount, ast.AggFuncMinCount} {
-		desc, err := NewAggFuncDesc(ctx, funcName, []expression.Expression{col}, false)
-		require.NoError(t, err)
-
-		desc.Mode = CompleteMode
-		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
-		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiKV))
-
-		desc.Mode = Partial1Mode
-		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
-
-		desc.Mode = FinalMode
-		require.True(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
-
-		desc.Mode = DedupMode
-		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
-
-		countCol := &expression.Column{
-			Index:   1,
-			RetType: types.NewFieldType(mysql.TypeLonglong),
-		}
-		desc.Args = []expression.Expression{countCol, col}
-		desc.Mode = FinalMode
-		require.False(t, CheckAggPushDown(ctx.GetExprCtx().GetEvalCtx(), desc, kv.TiFlash))
-	}
 }
 
 func TestBitAnd(t *testing.T) {
@@ -224,7 +175,7 @@ func TestBitAnd(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitAnd, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	bitAndFunc := desc.GetAggFunc(ctx)
-	evalCtx := bitAndFunc.CreateContext(s.ctx)
+	evalCtx := bitAndFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := bitAndFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(math.MaxUint64), result.GetUint64())
@@ -262,7 +213,7 @@ func TestBitAnd(t *testing.T) {
 
 	// test bit_and( decimal )
 	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
-	bitAndFunc.ResetContext(s.ctx, evalCtx)
+	bitAndFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
 
 	result = bitAndFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(math.MaxUint64), result.GetUint64())
@@ -303,7 +254,7 @@ func TestBitOr(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitOr, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	bitOrFunc := desc.GetAggFunc(ctx)
-	evalCtx := bitOrFunc.CreateContext(s.ctx)
+	evalCtx := bitOrFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := bitOrFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(0), result.GetUint64())
@@ -341,7 +292,7 @@ func TestBitOr(t *testing.T) {
 
 	// test bit_or( decimal )
 	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
-	bitOrFunc.ResetContext(s.ctx, evalCtx)
+	bitOrFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
 
 	result = bitOrFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(0), result.GetUint64())
@@ -390,7 +341,7 @@ func TestBitXor(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncBitXor, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	bitXorFunc := desc.GetAggFunc(ctx)
-	evalCtx := bitXorFunc.CreateContext(s.ctx)
+	evalCtx := bitXorFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := bitXorFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(0), result.GetUint64())
@@ -428,7 +379,7 @@ func TestBitXor(t *testing.T) {
 
 	// test bit_xor( decimal )
 	col.RetType = types.NewFieldType(mysql.TypeNewDecimal)
-	bitXorFunc.ResetContext(s.ctx, evalCtx)
+	bitXorFunc.ResetContext(s.ctx.GetSessionVars().StmtCtx, evalCtx)
 
 	result = bitXorFunc.GetResult(evalCtx)
 	require.Equal(t, uint64(0), result.GetUint64())
@@ -469,7 +420,7 @@ func TestCount(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	countFunc := desc.GetAggFunc(ctx)
-	evalCtx := countFunc.CreateContext(s.ctx)
+	evalCtx := countFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := countFunc.GetResult(evalCtx)
 	require.Equal(t, int64(0), result.GetInt64())
@@ -490,7 +441,7 @@ func TestCount(t *testing.T) {
 	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncCount, []expression.Expression{col}, true)
 	require.NoError(t, err)
 	distinctCountFunc := desc.GetAggFunc(ctx)
-	evalCtx = distinctCountFunc.CreateContext(s.ctx)
+	evalCtx = distinctCountFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	for _, row := range s.rows {
 		err := distinctCountFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
@@ -514,7 +465,7 @@ func TestConcat(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, false)
 	require.NoError(t, err)
 	concatFunc := desc.GetAggFunc(ctx)
-	evalCtx := concatFunc.CreateContext(s.ctx)
+	evalCtx := concatFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := concatFunc.GetResult(evalCtx)
 	require.True(t, result.IsNull())
@@ -542,7 +493,7 @@ func TestConcat(t *testing.T) {
 	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncGroupConcat, []expression.Expression{col, sep}, true)
 	require.NoError(t, err)
 	distinctConcatFunc := desc.GetAggFunc(ctx)
-	evalCtx = distinctConcatFunc.CreateContext(s.ctx)
+	evalCtx = distinctConcatFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	row.SetDatum(0, types.NewIntDatum(1))
 	err = distinctConcatFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row.ToRow())
@@ -568,7 +519,7 @@ func TestFirstRow(t *testing.T) {
 	desc, err := NewAggFuncDesc(s.ctx, ast.AggFuncFirstRow, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	firstRowFunc := desc.GetAggFunc(ctx)
-	evalCtx := firstRowFunc.CreateContext(s.ctx)
+	evalCtx := firstRowFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	row := chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow()
 	err = firstRowFunc.Update(evalCtx, s.ctx.GetSessionVars().StmtCtx, row)
@@ -599,8 +550,8 @@ func TestMaxMin(t *testing.T) {
 	desc, err = NewAggFuncDesc(s.ctx, ast.AggFuncMin, []expression.Expression{col}, false)
 	require.NoError(t, err)
 	minFunc := desc.GetAggFunc(ctx)
-	maxEvalCtx := maxFunc.CreateContext(s.ctx)
-	minEvalCtx := minFunc.CreateContext(s.ctx)
+	maxEvalCtx := maxFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
+	minEvalCtx := minFunc.CreateContext(s.ctx.GetSessionVars().StmtCtx)
 
 	result := maxFunc.GetResult(maxEvalCtx)
 	require.True(t, result.IsNull())
@@ -648,142 +599,4 @@ func TestMaxMin(t *testing.T) {
 	require.Equal(t, int64(1), result.GetInt64())
 	partialResult := minFunc.GetPartialResult(minEvalCtx)
 	require.Equal(t, int64(1), partialResult[0].GetInt64())
-}
-
-func TestMaxMinCount(t *testing.T) {
-	s := createAggFuncSuite()
-	col := &expression.Column{
-		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
-	}
-
-	ctx := mock.NewContext()
-	maxDesc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMaxCount, []expression.Expression{col}, false)
-	require.NoError(t, err)
-	minDesc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMinCount, []expression.Expression{col}, false)
-	require.NoError(t, err)
-
-	maxFunc := maxDesc.GetAggFunc(ctx)
-	minFunc := minDesc.GetAggFunc(ctx)
-	maxEvalCtx := maxFunc.CreateContext(s.ctx)
-	minEvalCtx := minFunc.CreateContext(s.ctx)
-
-	maxResult := maxFunc.GetResult(maxEvalCtx)
-	minResult := minFunc.GetResult(minEvalCtx)
-	require.Equal(t, int64(0), maxResult.GetInt64())
-	require.Equal(t, int64(0), minResult.GetInt64())
-
-	rows := []chunk.Row{
-		chunk.MutRowFromDatums(types.MakeDatums(2)).ToRow(),
-		chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow(),
-		chunk.MutRowFromDatums(types.MakeDatums(3)).ToRow(),
-		chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow(),
-		chunk.MutRowFromDatums(types.MakeDatums(1)).ToRow(),
-		chunk.MutRowFromDatums(types.MakeDatums(nil)).ToRow(),
-	}
-
-	for _, row := range rows {
-		err = maxFunc.Update(maxEvalCtx, s.ctx.GetSessionVars().StmtCtx, row)
-		require.NoError(t, err)
-		err = minFunc.Update(minEvalCtx, s.ctx.GetSessionVars().StmtCtx, row)
-		require.NoError(t, err)
-	}
-
-	maxResult = maxFunc.GetResult(maxEvalCtx)
-	minResult = minFunc.GetResult(minEvalCtx)
-	require.Equal(t, int64(2), maxResult.GetInt64())
-	require.Equal(t, int64(2), minResult.GetInt64())
-
-	maxPartial := maxFunc.GetPartialResult(maxEvalCtx)
-	minPartial := minFunc.GetPartialResult(minEvalCtx)
-	require.Len(t, maxPartial, 2)
-	require.Len(t, minPartial, 2)
-	require.Equal(t, int64(2), maxPartial[0].GetInt64())
-	require.Equal(t, int64(3), maxPartial[1].GetInt64())
-	require.Equal(t, int64(2), minPartial[0].GetInt64())
-	require.Equal(t, int64(1), minPartial[1].GetInt64())
-
-	finalCountCol := &expression.Column{Index: 0, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	finalValueCol := &expression.Column{Index: 1, RetType: types.NewFieldType(mysql.TypeLonglong)}
-	maxFinalDesc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMaxCount, []expression.Expression{finalCountCol, finalValueCol}, false)
-	require.NoError(t, err)
-	maxFinalDesc.Mode = FinalMode
-	minFinalDesc, err := NewAggFuncDesc(s.ctx, ast.AggFuncMinCount, []expression.Expression{finalCountCol, finalValueCol}, false)
-	require.NoError(t, err)
-	minFinalDesc.Mode = FinalMode
-
-	maxFinalFunc := maxFinalDesc.GetAggFunc(ctx)
-	minFinalFunc := minFinalDesc.GetAggFunc(ctx)
-	maxFinalCtx := maxFinalFunc.CreateContext(s.ctx)
-	minFinalCtx := minFinalFunc.CreateContext(s.ctx)
-
-	finalRows := []chunk.Row{
-		chunk.MutRowFromDatums(types.MakeDatums(2, 3)).ToRow(),
-		chunk.MutRowFromDatums(types.MakeDatums(1, 3)).ToRow(),
-		chunk.MutRowFromDatums(types.MakeDatums(4, 2)).ToRow(),
-		chunk.MutRowFromDatums(types.MakeDatums(3, 1)).ToRow(),
-		chunk.MutRowFromDatums(types.MakeDatums(2, 1)).ToRow(),
-	}
-	for _, row := range finalRows {
-		err = maxFinalFunc.Update(maxFinalCtx, s.ctx.GetSessionVars().StmtCtx, row)
-		require.NoError(t, err)
-		err = minFinalFunc.Update(minFinalCtx, s.ctx.GetSessionVars().StmtCtx, row)
-		require.NoError(t, err)
-	}
-	maxFinalResult := maxFinalFunc.GetResult(maxFinalCtx)
-	minFinalResult := minFinalFunc.GetResult(minFinalCtx)
-	require.Equal(t, int64(3), maxFinalResult.GetInt64())
-	require.Equal(t, int64(5), minFinalResult.GetInt64())
-}
-
-func TestAggFuncDesc(t *testing.T) {
-	s := createAggFuncSuite()
-	col := &expression.Column{
-		Index:   0,
-		RetType: types.NewFieldType(mysql.TypeLonglong),
-	}
-	desc1, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
-	require.NoError(t, err)
-	desc2, err := NewAggFuncDesc(s.ctx, ast.AggFuncSum, []expression.Expression{col}, false)
-	require.NoError(t, err)
-	hasher1 := base.NewHashEqualer()
-	hasher2 := base.NewHashEqualer()
-	desc1.Hash64(hasher1)
-	desc2.Hash64(hasher2)
-	require.Equal(t, hasher1.Sum64(), hasher2.Sum64())
-
-	desc2.HasDistinct = true
-	hasher2.Reset()
-	desc2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-
-	desc2.HasDistinct = false
-	desc2.Mode = FinalMode
-	hasher2.Reset()
-	desc2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-
-	desc2.Mode = CompleteMode
-	desc2.Name = "whatever"
-	hasher2.Reset()
-	desc2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-
-	desc2.Name = ast.AggFuncSum
-	desc2.Args = []expression.Expression{}
-	hasher2.Reset()
-	desc2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-
-	desc2.Args = []expression.Expression{col}
-	desc2.RetTp = types.NewFieldType(mysql.TypeNewDecimal)
-	hasher2.Reset()
-	desc2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
-
-	desc2.RetTp = types.NewFieldType(mysql.TypeLonglong)
-	desc2.OrderByItems = []*util.ByItems{{Expr: col, Desc: true}}
-	hasher2.Reset()
-	desc2.Hash64(hasher2)
-	require.NotEqual(t, hasher1.Sum64(), hasher2.Sum64())
 }

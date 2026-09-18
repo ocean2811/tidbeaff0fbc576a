@@ -18,9 +18,10 @@ package ast
 import (
 	"io"
 
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/types"
 )
 
 // Node is the basic element of the AST.
@@ -30,23 +31,13 @@ type Node interface {
 	Restore(ctx *format.RestoreCtx) error
 	// Accept accepts Visitor to visit itself.
 	// The returned node should replace original node.
-	// proceed returns false to stop visiting.
+	// ok returns false to stop visiting.
 	//
 	// Implementation of this method should first call visitor.Enter,
 	// assign the returned node to its method receiver, if skipChildren returns true,
 	// children should be skipped. Otherwise, call its children in particular order that
 	// later elements depends on former elements. Finally, return visitor.Leave.
-	Accept(v Visitor) (node Node, proceed bool)
-	// AcceptInPlace accepts InPlaceVisitor to visit itself without replacing nodes.
-	// proceed returns false to stop visiting.
-	// It is separate from Accept to avoid the runtime replacement checks and child
-	// writebacks that would otherwise make in-place traversal significantly slower.
-	// Implementations must use the same traversal order and control flow as Accept,
-	// but must not assign visitor callback results back to the AST. The generator
-	// derives AcceptInPlace implementations from Accept to keep them in sync. Every
-	// implementation must honor Enter's skipChildren result by skipping children
-	// while still calling Leave for the current node.
-	AcceptInPlace(v InPlaceVisitor) (proceed bool)
+	Accept(v Visitor) (node Node, ok bool)
 	// Text returns the utf8 encoding text of the element.
 	Text() string
 	// OriginalText returns the original text of the element.
@@ -54,7 +45,6 @@ type Node interface {
 	// SetText sets original text to the Node.
 	SetText(enc charset.Encoding, text string)
 	// SetOriginTextPosition set the start offset of this node in the origin text.
-	// Only be called when `parser.lexer.skipPositionRecording` equals to false.
 	SetOriginTextPosition(offset int)
 	// OriginTextPosition get the start offset of this node in the origin text.
 	OriginTextPosition() int
@@ -100,11 +90,6 @@ type OptBinary struct {
 	Charset  string
 }
 
-// OptVectorType represents the element type of the vector.
-type VectorElementType struct {
-	Tp byte // Only FLOAT and DOUBLE is accepted.
-}
-
 // FuncNode represents function call expression node.
 type FuncNode interface {
 	ExprNode
@@ -116,12 +101,6 @@ type FuncNode interface {
 type StmtNode interface {
 	Node
 	statement()
-	// SEMCommand generates a string that represents the command type of the statement.
-	// It's only used for Security Enforcement Mode (SEM) for now. If it's going to be
-	// re-used for other purposes, we may need to rename and give it a clearer definition.
-	//
-	// The function of this method is similar to `GetStmtLabel`, but it returns more detail.
-	SEMCommand() string
 }
 
 // DDLNode represents DDL statement node.
@@ -134,6 +113,26 @@ type DDLNode interface {
 type DMLNode interface {
 	StmtNode
 	dmlStatement()
+}
+
+// ResultField represents a result field which can be a column from a table,
+// or an expression in select field. It is a generated property during
+// binding process. ResultField is the key element to evaluate a ColumnNameExpr.
+// After resolving process, every ColumnNameExpr will be resolved to a ResultField.
+// During execution, every row retrieved from table will set the row value to
+// ResultFields of that table, so ColumnNameExpr resolved to that ResultField can be
+// easily evaluated.
+type ResultField struct {
+	Column       *model.ColumnInfo
+	ColumnAsName model.CIStr
+	// EmptyOrgName indicates whether this field has an empty org_name. A field has an empty org name, if it's an
+	// expression. It's not sure whether it's safe to use empty string in `.Column.Name`, so a new field is added to
+	// indicate whether it's empty.
+	EmptyOrgName bool
+
+	Table       *model.TableInfo
+	TableAsName model.CIStr
+	DBName      model.CIStr
 }
 
 // ResultSetNode interface has a ResultFields property, represents a Node that returns result set.
@@ -161,29 +160,8 @@ type Visitor interface {
 	// Leave is called after children nodes have been visited.
 	// The returned node's type can be different from the input node if it is a ExprNode,
 	// Non-expression node must be the same type as the input node n.
-	// proceed returns false to stop visiting.
-	Leave(n Node) (node Node, proceed bool)
-}
-
-// InPlaceVisitor visits a Node without replacing nodes.
-// Enter and Leave have the same traversal control flow as Visitor. Callbacks
-// may intentionally mutate fields on the visited nodes; those mutations and
-// synchronization with concurrent access are the caller's responsibility.
-type InPlaceVisitor interface {
-	// Enter is called before children nodes are visited.
-	// When skipChildren is true, AcceptInPlace must skip all children and call Leave
-	// for the current node.
-	Enter(n Node) (skipChildren bool)
-	// Leave is called after children nodes have been visited.
-	// proceed returns false to stop visiting.
-	Leave(n Node) (proceed bool)
-}
-
-// Walk visits node using Node.AcceptInPlace's traversal order and control flow.
-// Callback mutations and synchronization with concurrent access are the
-// caller's responsibility.
-func Walk(node Node, visitor InPlaceVisitor) bool {
-	return node.AcceptInPlace(visitor)
+	// ok returns false to stop visiting.
+	Leave(n Node) (node Node, ok bool)
 }
 
 // GetStmtLabel generates a label for a statement.
@@ -195,6 +173,8 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "AnalyzeTable"
 	case *BeginStmt:
 		return "Begin"
+	case *ChangeStmt:
+		return "Change"
 	case *CommitStmt:
 		return "Commit"
 	case *CompactTableStmt:
@@ -207,14 +187,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "CreateTable"
 	case *CreateViewStmt:
 		return "CreateView"
-	case *CreateMaterializedViewStmt:
-		return "CreateMaterializedView"
-	case *CreateMaterializedViewLogStmt:
-		return "CreateMaterializedViewLog"
-	case *AlterMaterializedViewStmt:
-		return "AlterMaterializedView"
-	case *AlterMaterializedViewLogStmt:
-		return "AlterMaterializedViewLog"
 	case *CreateUserStmt:
 		return "CreateUser"
 	case *DeleteStmt:
@@ -228,14 +200,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 			return "DropView"
 		}
 		return "DropTable"
-	case *DropMaterializedViewStmt:
-		return "DropMaterializedView"
-	case *DropMaterializedViewLogStmt:
-		return "DropMaterializedViewLog"
-	case *PurgeMaterializedViewLogStmt:
-		return "PurgeMaterializedViewLog"
-	case *CancelMaterializedViewJobStmt:
-		return "CancelMaterializedViewJob"
 	case *ExplainStmt:
 		if _, ok := x.Stmt.(*ShowStmt); ok {
 			return "DescTable"
@@ -279,6 +243,8 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Use"
 	case *CreateBindingStmt:
 		return "CreateBinding"
+	case *IndexAdviseStmt:
+		return "IndexAdvise"
 	case *DropBindingStmt:
 		return "DropBinding"
 	case *TraceStmt:
@@ -287,8 +253,6 @@ func GetStmtLabel(stmtNode StmtNode) string {
 		return "Shutdown"
 	case *SavepointStmt:
 		return "Savepoint"
-	case *OptimizeTableStmt:
-		return "Optimize"
 	}
 	return "other"
 }

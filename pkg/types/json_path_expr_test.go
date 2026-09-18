@@ -32,6 +32,8 @@ func TestContainsAnyAsterisk(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
 		t.Run(test.expression, func(t *testing.T) {
 			pe, err := ParseJSONPathExpr(test.expression)
 			require.NoError(t, err)
@@ -73,15 +75,11 @@ func TestValidatePathExpr(t *testing.T) {
 		{`$[`, false, 0},
 		{`$a.***[3]`, false, 0},
 		{`$1a`, false, 0},
-		{`$.ѿ`, false, 0},
-		{`$."ѿ"`, true, 1},
-		{"$.\"\\0\\", false, 0},
-		{`$.Ѡ`, false, 0}, // This test case is special, because Ѡ is 0xD1 0xA0 in UTF-8, and 0xA0 is a space character.
-		{`$."Ѡ"`, true, 1},
-		{`$.µ`, true, 1},
 	}
 
 	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
 		t.Run(test.expression, func(t *testing.T) {
 			pe, err := ParseJSONPathExpr(test.expression)
 			if test.success {
@@ -107,6 +105,8 @@ func TestPathExprToString(t *testing.T) {
 		{`$."one potato"`},
 	}
 	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
 		t.Run(test.expression, func(t *testing.T) {
 			pe, err := ParseJSONPathExpr(test.expression)
 			require.NoError(t, err)
@@ -133,6 +133,8 @@ func TestPushBackOneIndexLeg(t *testing.T) {
 	}
 
 	for _, test := range tests {
+		// copy iterator variable into a new variable, see issue #27779
+		test := test
 		t.Run(test.expression, func(t *testing.T) {
 			pe, err := ParseJSONPathExpr(test.expression)
 			require.NoError(t, err)

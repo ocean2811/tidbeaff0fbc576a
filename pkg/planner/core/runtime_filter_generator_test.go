@@ -15,19 +15,17 @@
 package core_test
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testdata"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,23 +45,22 @@ func TestRuntimeFilterGenerator(t *testing.T) {
 	tk.MustExec("insert into t2 values (1,2, \"{}\")")
 	tk.MustExec("create table t1_tikv (k1 int)")
 	tk.MustExec("insert into t1_tikv values (1)")
-	tk.MustExec("analyze table t1, t2 all columns")
+	tk.MustExec("analyze table t1, t2")
 	tk.MustExec("INSERT INTO mysql.opt_rule_blacklist VALUES(\"join_reorder\");")
 	tk.MustExec("admin reload opt_rule_blacklist;")
 	// set tiflash replica
 	dom := domain.GetDomain(tk.Session())
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t1"))
-	require.NoError(t, err)
-	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
-		Count:     1,
-		Available: true,
-	}
-	tblInfo, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t2"))
-	require.NoError(t, err)
-	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
-		Count:     1,
-		Available: true,
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		tableName := tblInfo.Name.L
+		if tableName == "t1" || tableName == "t2" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
 	}
 
 	// runtime filter test case
@@ -78,15 +75,15 @@ func TestRuntimeFilterGenerator(t *testing.T) {
 	planSuiteData.LoadTestCases(t, &input, &output)
 	tk.MustExec("set @@tidb_allow_mpp=1; set @@tidb_enforce_mpp=1;")
 	tk.MustExec("set tidb_runtime_filter_mode=LOCAL;")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/mockPreferredBuildIndex", fmt.Sprintf(`return(%d)`, 0)))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/mockPreferredBuildIndex", fmt.Sprintf(`return(%d)`, 0)))
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/mockPreferredBuildIndex")
+		failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/mockPreferredBuildIndex")
 	}()
 	for i, ts := range input {
 		testdata.OnRecord(func() {
 			output[i].SQL = ts
-			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain format='plan_tree' " + ts).Rows())
+			output[i].Plan = testdata.ConvertRowsToStrings(tk.MustQuery("explain " + ts).Rows())
 		})
-		tk.MustQuery("explain format='plan_tree' " + ts).Check(testkit.Rows(output[i].Plan...))
+		tk.MustQuery("explain " + ts).Check(testkit.Rows(output[i].Plan...))
 	}
 }

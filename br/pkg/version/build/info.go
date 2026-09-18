@@ -6,33 +6,28 @@ import (
 	"bytes"
 	"fmt"
 	"runtime"
-	"strings"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/israce"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/israce"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/versioninfo"
 	"go.uber.org/zap"
 )
 
 // Version information.
 var (
-	ReleaseVersion        = getReleaseVersion()
-	BuildTS               = versioninfo.TiDBBuildTS
-	GitHash               = versioninfo.TiDBGitHash
-	GitBranch             = versioninfo.TiDBGitBranch
-	goVersion             = runtime.Version()
-	ReleaseVersionForTest = "nightly-dirty"
+	ReleaseVersion = getReleaseVersion()
+	BuildTS        = versioninfo.TiDBBuildTS
+	GitHash        = versioninfo.TiDBGitHash
+	GitBranch      = versioninfo.TiDBGitBranch
+	goVersion      = runtime.Version()
 )
 
 func getReleaseVersion() string {
-	if mysql.TiDBReleaseVersion != "None" && !strings.Contains(mysql.TiDBReleaseVersion, "this-is-a-placeholder") {
+	if mysql.TiDBReleaseVersion != "None" {
 		return mysql.TiDBReleaseVersion
 	}
-	// it's unreachable for normal path, only for realtikv tests
-	// we need to set the ReleaseVersion manually.
-	return ReleaseVersionForTest
+	return "v7.0.0-master"
 }
 
 // AppName is a name of a built binary.
@@ -57,9 +52,7 @@ func LogInfo(name AppName) {
 		zap.String("git-branch", GitBranch),
 		zap.String("go-version", goVersion),
 		zap.String("utc-build-time", BuildTS),
-		zap.Bool("race-enabled", israce.RaceEnabled),
-		zap.Bool("for-next-gen?", kerneltype.IsNextGen()),
-	)
+		zap.Bool("race-enabled", israce.RaceEnabled))
 }
 
 // Info returns version information.
@@ -70,11 +63,6 @@ func Info() string {
 	fmt.Fprintf(&buf, "Git Branch: %s\n", GitBranch)
 	fmt.Fprintf(&buf, "Go Version: %s\n", goVersion)
 	fmt.Fprintf(&buf, "UTC Build Time: %s\n", BuildTS)
-	fmt.Fprintf(&buf, "Race Enabled: %t\n", israce.RaceEnabled)
-	kt := "Classic"
-	if kerneltype.IsNextGen() {
-		kt = "Next-Gen"
-	}
-	fmt.Fprintf(&buf, "Kernel Type: %s", kt)
+	fmt.Fprintf(&buf, "Race Enabled: %t", israce.RaceEnabled)
 	return buf.String()
 }

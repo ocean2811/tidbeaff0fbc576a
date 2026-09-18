@@ -11,12 +11,12 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/util/redact"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/redact"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
 )
 
 const (
@@ -42,11 +42,6 @@ type TiKVClusterMeta interface {
 	// NOTE: once we support multi tasks, perhaps we need to allow the caller to provide a namespace.
 	// For now, all tasks (exactly one task in fact) use the same checkpoint.
 	BlockGCUntil(ctx context.Context, at uint64) (uint64, error)
-
-	// UnblockGC used to remove the service GC safe point in PD.
-	UnblockGC(ctx context.Context) error
-
-	FetchCurrentTS(ctx context.Context) (uint64, error)
 }
 
 type Store struct {

@@ -18,16 +18,15 @@ import (
 	"fmt"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/metabuild"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 )
 
 var once sync.Once
@@ -35,22 +34,21 @@ var once sync.Once
 // Init register the PERFORMANCE_SCHEMA virtual tables.
 // It should be init(), and the ideal usage should be:
 //
-// import _ "github.com/pingcap/tidb/perfschema"
+// import _ "github.com/ocean2811/tidbeaff0fbc576a/perfschema"
 //
-// This function depends on plan/core.init(), which initialize the expression.EvalSimpleAst function.
+// This function depends on plan/core.init(), which initialize the expression.EvalAstExpr function.
 // The initialize order is a problem if init() is used as the function name.
 func Init() {
 	initOnce := func() {
 		p := parser.New()
 		tbls := make([]*model.TableInfo, 0)
 		dbID := autoid.PerformanceSchemaDBID
-		ctx := metabuild.NewNonStrictContext()
 		for _, sql := range perfSchemaTables {
 			stmt, err := p.ParseOneStmt(sql, "", "")
 			if err != nil {
 				panic(err)
 			}
-			meta, err := ddl.BuildTableInfoFromAST(ctx, stmt.(*ast.CreateTableStmt))
+			meta, err := ddl.BuildTableInfoFromAST(stmt.(*ast.CreateTableStmt))
 			if err != nil {
 				panic(err)
 			}
@@ -63,19 +61,17 @@ func Init() {
 			for i, c := range meta.Columns {
 				c.ID = int64(i) + 1
 			}
-			meta.DBID = dbID
-			meta.State = model.StatePublic
 		}
 		dbInfo := &model.DBInfo{
 			ID:      dbID,
-			Name:    metadef.PerformanceSchemaName,
+			Name:    util.PerformanceSchemaName,
 			Charset: mysql.DefaultCharset,
 			Collate: mysql.DefaultCollationName,
+			Tables:  tbls,
 		}
-		dbInfo.Deprecated.Tables = tbls
 		infoschema.RegisterVirtualTable(dbInfo, tableFromMeta)
 	}
-	if expression.EvalSimpleAst != nil {
+	if expression.EvalAstExpr != nil {
 		once.Do(initOnce)
 	}
 }

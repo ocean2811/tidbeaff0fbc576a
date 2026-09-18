@@ -14,20 +14,20 @@
 
 package helper
 
-// TypeContext is the template context for each "github.com/pingcap/tidb/pkg/types".EvalType .
+// TypeContext is the template context for each "github.com/ocean2811/tidbeaff0fbc576a/pkg/types".EvalType .
 type TypeContext struct {
-	// Describe the name of "github.com/pingcap/tidb/pkg/types".ET{{ .ETName }} .
+	// Describe the name of "github.com/ocean2811/tidbeaff0fbc576a/pkg/types".ET{{ .ETName }} .
 	ETName string
-	// Describe the name of "github.com/pingcap/tidb/pkg/expression".VecExpr.VecEval{{ .TypeName }} .
+	// Describe the name of "github.com/ocean2811/tidbeaff0fbc576a/pkg/expression".VecExpr.VecEval{{ .TypeName }} .
 	TypeName string
-	// Describe the name of "github.com/pingcap/tidb/pkg/util/chunk".*Column.Append{{ .TypeNameInColumn }},
+	// Describe the name of "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk".*Column.Append{{ .TypeNameInColumn }},
 	// Resize{{ .TypeNameInColumn }}, Reserve{{ .TypeNameInColumn }}, Get{{ .TypeNameInColumn }} and
 	// {{ .TypeNameInColumn }}s.
 	// If undefined, it's same as TypeName.
 	TypeNameInColumn string
 	// Describe the type name in golang.
 	TypeNameGo string
-	// Same as "github.com/pingcap/tidb/pkg/util/chunk".getFixedLen() .
+	// Same as "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk".getFixedLen() .
 	Fixed bool
 }
 

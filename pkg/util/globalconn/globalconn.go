@@ -21,13 +21,13 @@ import (
 	"strconv"
 
 	"github.com/ngaut/sync2"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 // GCID is the Global Connection ID, providing UNIQUE connection IDs across the whole TiDB cluster.
 // Used when GlobalKill feature is enable.
-// See https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md
+// See https://github.com/ocean2811/tidbeaff0fbc576a/blob/master/docs/design/2020-06-01-global-kill.md
 // 32 bits version:
 //
 //	 31    21 20               1    0

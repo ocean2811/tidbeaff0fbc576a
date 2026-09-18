@@ -16,7 +16,7 @@ package types
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 

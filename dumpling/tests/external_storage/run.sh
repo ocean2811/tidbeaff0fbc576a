@@ -14,7 +14,7 @@ run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bi
 run_sql "create table \`$DB_NAME\`.\`$TABLE_NAME\` (a int);"
 run_sql "insert into \`$DB_NAME\`.\`$TABLE_NAME\` values (1), (2);"
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/setExtStorage=return(\"$DUMPLING_TEST_DIR/set_by_failpoint\")"
+export GO_FAILPOINTS="github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/setExtStorage=return(\"$DUMPLING_TEST_DIR/set_by_failpoint\")"
 run_dumpling -f "$DB_NAME.$TABLE_NAME" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
 
 files=`ls $DUMPLING_TEST_DIR/set_by_failpoint | wc -l`

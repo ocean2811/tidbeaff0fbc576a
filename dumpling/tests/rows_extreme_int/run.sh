@@ -34,7 +34,7 @@ run_sql "analyze table $DB_NAME.$TABLE_NAME2;"
 
 # dumping
 # test print status
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/EnableLogProgress=return()"
+export GO_FAILPOINTS="github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/EnableLogProgress=return()"
 export DUMPLING_TEST_DATABASE=$DB_NAME
 run_dumpling --rows 10 --loglevel debug -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
 

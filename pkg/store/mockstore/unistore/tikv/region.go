@@ -32,10 +32,10 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/metrics"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/pd"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/pd"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/mvcc"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 	"go.uber.org/zap"
 )
 
@@ -80,7 +80,7 @@ type latches struct {
 
 func newLatches() *latches {
 	l := &latches{}
-	for i := range 256 {
+	for i := 0; i < 256; i++ {
 		l.slots[i] = map[uint64]*sync.WaitGroup{}
 	}
 	return l
@@ -131,7 +131,7 @@ func (l *latches) release(keyHashes []uint64) {
 	}
 }
 
-func newRegionCtx(meta *metapb.Region, latches *latches, _ any) *regionCtx {
+func newRegionCtx(meta *metapb.Region, latches *latches, _ interface{}) *regionCtx {
 	regCtx := &regionCtx{
 		meta:        meta,
 		latches:     latches,
@@ -508,7 +508,7 @@ func (rm *StandAloneRegionManager) initStore(storeAddr string) error {
 	return nil
 }
 
-// initialSplit splits the cluster into multiple regions.
+// initSplit splits the cluster into multiple regions.
 func (rm *StandAloneRegionManager) initialSplit(root *metapb.Region) {
 	root.EndKey = codec.EncodeBytes(nil, []byte{'m'})
 	root.RegionEpoch.Version = 2
@@ -536,7 +536,7 @@ func (rm *StandAloneRegionManager) initialSplit(root *metapb.Region) {
 
 func (rm *StandAloneRegionManager) allocIDs(n int) ([]uint64, error) {
 	ids := make([]uint64, n)
-	for i := range n {
+	for i := 0; i < n; i++ {
 		id, err := rm.pdc.AllocID(context.Background())
 		if err != nil {
 			return nil, errors.Trace(err)
@@ -590,7 +590,7 @@ func (s *sampler) shrinkIfNeeded() {
 	if s.length < len(s.samples) {
 		return
 	}
-	for i := range len(s.samples) / 2 {
+	for i := 0; i < len(s.samples)/2; i++ {
 		s.samples[i], s.samples[i*2] = s.samples[i*2], s.samples[i]
 	}
 	s.length /= 2

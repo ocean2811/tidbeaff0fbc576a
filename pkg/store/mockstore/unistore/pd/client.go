@@ -26,8 +26,7 @@ import (
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/kvproto/pkg/pdpb"
 	"github.com/pingcap/log"
-	"github.com/tikv/pd/client/clients/router"
-	"github.com/tikv/pd/client/opt"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -41,9 +40,9 @@ type Client interface {
 	Bootstrap(ctx context.Context, store *metapb.Store, region *metapb.Region) (*pdpb.BootstrapResponse, error)
 	IsBootstrapped(ctx context.Context) (bool, error)
 	PutStore(ctx context.Context, store *metapb.Store) error
-	GetStore(ctx context.Context, storeID uint64, opts ...opt.GetStoreOption) (*metapb.Store, error)
-	GetRegion(ctx context.Context, key []byte, opts ...opt.GetRegionOption) (*router.Region, error)
-	GetRegionByID(ctx context.Context, regionID uint64, opts ...opt.GetRegionOption) (*router.Region, error)
+	GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error)
+	GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error)
+	GetRegionByID(ctx context.Context, regionID uint64, opts ...pd.GetRegionOption) (*pd.Region, error)
 	ReportRegion(*pdpb.RegionHeartbeatRequest)
 	AskSplit(ctx context.Context, region *metapb.Region) (*pdpb.AskSplitResponse, error)
 	AskBatchSplit(ctx context.Context, region *metapb.Region, count int) (*pdpb.AskBatchSplitResponse, error)
@@ -112,7 +111,7 @@ func NewClient(pdAddrs []string, tag string) (Client, error) {
 		err     error
 		members *pdpb.GetMembersResponse
 	)
-	for range maxRetryCount {
+	for i := 0; i < maxRetryCount; i++ {
 		if members, err = c.updateLeader(); err == nil {
 			break
 		}
@@ -256,7 +255,7 @@ func (c *client) leaderClient() pdpb.PDClient {
 
 func (c *client) doRequest(ctx context.Context, f func(context.Context, pdpb.PDClient) error) error {
 	var err error
-	for range maxRetryCount {
+	for i := 0; i < maxRetryCount; i++ {
 		ctx1, cancel := context.WithTimeout(ctx, pdTimeout)
 		err = f(ctx1, c.leaderClient())
 		cancel()
@@ -449,7 +448,7 @@ func (c *client) PutStore(ctx context.Context, store *metapb.Store) error {
 	return nil
 }
 
-func (c *client) GetStore(ctx context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
+func (c *client) GetStore(ctx context.Context, storeID uint64) (*metapb.Store, error) {
 	var resp *pdpb.GetStoreResponse
 	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		var err1 error
@@ -468,7 +467,7 @@ func (c *client) GetStore(ctx context.Context, storeID uint64, _ ...opt.GetStore
 	return resp.Store, nil
 }
 
-func (c *client) GetAllStores(ctx context.Context, _ ...opt.GetStoreOption) ([]*metapb.Store, error) {
+func (c *client) GetAllStores(ctx context.Context, _ ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	var resp *pdpb.GetAllStoresResponse
 	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		var err1 error
@@ -505,7 +504,7 @@ func (c *client) GetClusterConfig(ctx context.Context) (*metapb.Cluster, error) 
 	return resp.Cluster, nil
 }
 
-func (c *client) GetRegion(ctx context.Context, key []byte, _ ...opt.GetRegionOption) (*router.Region, error) {
+func (c *client) GetRegion(ctx context.Context, key []byte, _ ...pd.GetRegionOption) (*pd.Region, error) {
 	var resp *pdpb.GetRegionResponse
 	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		var err1 error
@@ -521,7 +520,7 @@ func (c *client) GetRegion(ctx context.Context, key []byte, _ ...opt.GetRegionOp
 	if herr := resp.Header.GetError(); herr != nil {
 		return nil, errors.New(herr.String())
 	}
-	r := &router.Region{
+	r := &pd.Region{
 		Meta:         resp.Region,
 		Leader:       resp.Leader,
 		PendingPeers: resp.PendingPeers,
@@ -532,7 +531,7 @@ func (c *client) GetRegion(ctx context.Context, key []byte, _ ...opt.GetRegionOp
 	return r, nil
 }
 
-func (c *client) GetRegionByID(ctx context.Context, regionID uint64, _ ...opt.GetRegionOption) (*router.Region, error) {
+func (c *client) GetRegionByID(ctx context.Context, regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
 	var resp *pdpb.GetRegionResponse
 	err := c.doRequest(ctx, func(ctx context.Context, client pdpb.PDClient) error {
 		var err1 error
@@ -548,7 +547,7 @@ func (c *client) GetRegionByID(ctx context.Context, regionID uint64, _ ...opt.Ge
 	if herr := resp.Header.GetError(); herr != nil {
 		return nil, errors.New(herr.String())
 	}
-	r := &router.Region{
+	r := &pd.Region{
 		Meta:         resp.Region,
 		Leader:       resp.Leader,
 		PendingPeers: resp.PendingPeers,

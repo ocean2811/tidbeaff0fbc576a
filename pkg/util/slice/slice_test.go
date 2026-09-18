@@ -23,18 +23,22 @@ import (
 
 func TestSlice(t *testing.T) {
 	tests := []struct {
-		a     []int
-		allOf bool
+		a      []int
+		anyOf  bool
+		noneOf bool
+		allOf  bool
 	}{
-		{[]int{}, true},
-		{[]int{1, 2, 3}, false},
-		{[]int{1, 3}, false},
-		{[]int{2, 2, 4}, true},
+		{[]int{}, false, true, true},
+		{[]int{1, 2, 3}, true, false, false},
+		{[]int{1, 3}, false, true, false},
+		{[]int{2, 2, 4}, true, false, true},
 	}
 
 	for _, test := range tests {
 		t.Run(fmt.Sprint(test.a), func(t *testing.T) {
-			even := func(val int) bool { return val%2 == 0 }
+			even := func(i int) bool { return test.a[i]%2 == 0 }
+			require.Equal(t, test.anyOf, AnyOf(test.a, even))
+			require.Equal(t, test.noneOf, NoneOf(test.a, even))
 			require.Equal(t, test.allOf, AllOf(test.a, even))
 		})
 	}

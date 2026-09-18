@@ -5,8 +5,8 @@ This is a template for TiDB's change proposal process, documented [here](./READM
 # Proposal: Support Common Table Expression
 
 - Author(s): [@guo-shaoge](https://github.com/guo-shaoge), [@wjhuang2016](https://github.com/wjhuang2016)
-- Discussion PR: https://github.com/pingcap/tidb/pull/24147
-- Tracking Issue: https://github.com/pingcap/tidb/issues/17472
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/pull/24147
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/17472
 
 ## Table of Contents
 

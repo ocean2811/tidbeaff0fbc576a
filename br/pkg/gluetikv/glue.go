@@ -5,14 +5,14 @@ package gluetikv
 import (
 	"context"
 
-	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/store/driver"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/glue"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/summary"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version/build"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver"
 	pd "github.com/tikv/pd/client"
 )
 
@@ -46,7 +46,7 @@ func (Glue) Open(path string, option pd.SecurityOption) (kv.Storage, error) {
 		conf.Security.ClusterSSLKey = option.KeyPath
 		config.StoreGlobalConfig(conf)
 	}
-	return (&driver.TiKVDriver{}).Open(path)
+	return driver.TiKVDriver{}.Open(path)
 }
 
 // OwnsStorage implements glue.Glue.
@@ -72,8 +72,4 @@ func (Glue) GetVersion() string {
 // UseOneShotSession implements glue.Glue.
 func (g Glue) UseOneShotSession(store kv.Storage, closeDomain bool, fn func(glue.Session) error) error {
 	return nil
-}
-
-func (Glue) GetClient() glue.GlueClient {
-	return glue.ClientCLP
 }

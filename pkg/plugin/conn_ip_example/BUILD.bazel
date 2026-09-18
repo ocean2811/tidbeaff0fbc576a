@@ -3,11 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "conn_ip_example_lib",
     srcs = ["conn_ip_example.go"],
-    importpath = "github.com/pingcap/tidb/pkg/plugin/conn_ip_example",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/plugin/conn_ip_example",
     visibility = ["//visibility:private"],
     deps = [
         "//pkg/plugin",
-        "//pkg/sessionctx/vardef",
         "//pkg/sessionctx/variable",
     ],
 )

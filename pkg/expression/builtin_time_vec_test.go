@@ -18,12 +18,12 @@ import (
 	"math"
 	"math/rand"
 	"testing"
-	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,7 +35,7 @@ func newPeriodGener() *periodGener {
 	return &periodGener{newDefaultRandGen()}
 }
 
-func (g *periodGener) gen() any {
+func (g *periodGener) gen() interface{} {
 	return int64((g.randGen.Intn(2500)+1)*100 + g.randGen.Intn(12) + 1)
 }
 
@@ -48,7 +48,7 @@ func newUnitStrGener() *unitStrGener {
 	return &unitStrGener{newDefaultRandGen()}
 }
 
-func (g *unitStrGener) gen() any {
+func (g *unitStrGener) gen() interface{} {
 	units := []string{
 		"MICROSECOND",
 		"SECOND",
@@ -68,7 +68,7 @@ func (g *unitStrGener) gen() any {
 // tzStrGener is used to generate strings which are timezones
 type tzStrGener struct{}
 
-func (g *tzStrGener) gen() any {
+func (g *tzStrGener) gen() interface{} {
 	tzs := []string{
 		"",
 		"GMT",
@@ -180,7 +180,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.SecToTime: {
 		{retEvalType: types.ETDuration, childrenTypes: []types.EvalType{types.ETReal}},
 	},
-	// This test case may fail due to the issue: https://github.com/pingcap/tidb/issues/13638.
+	// This test case may fail due to the issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/13638.
 	// We remove this case to stabilize CI, and will reopen this when we fix the issue above.
 	// ast.TimestampAdd: {
 	// 	{
@@ -392,8 +392,6 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.Week: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt}},
-		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime, types.ETInt},
-			constants: []*Constant{nil, {Value: types.NewDatum(nil), RetType: types.NewFieldType(mysql.TypeLonglong)}}},
 	},
 	ast.Month: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}},
@@ -523,7 +521,7 @@ var vecBuiltinTimeCases = map[string][]vecExprBenchCase{
 	ast.LastDay: {
 		{retEvalType: types.ETDatetime, childrenTypes: []types.EvalType{types.ETDatetime}},
 	},
-	/* TODO: to fix https://github.com/pingcap/tidb/issues/9716 in vectorized evaluation.
+	/* TODO: to fix https://github.com/ocean2811/tidbeaff0fbc576a/issues/9716 in vectorized evaluation.
 	ast.Extract: {
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDatetime}, geners: []dataGenerator{newDateTimeUnitStrGener(), nil}},
 		{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETString, types.ETDuration},
@@ -572,33 +570,6 @@ func TestVectorizedBuiltinTimeFunc(t *testing.T) {
 	testVectorizedBuiltinFunc(t, vecBuiltinTimeCases)
 }
 
-func TestVectorizedTimeFormatEmptyFormatReturnsNull(t *testing.T) {
-	ctx := createContext(t)
-
-	durationType := types.NewFieldType(mysql.TypeDuration)
-	durationType.SetDecimal(types.DefaultFsp)
-	formatType := types.NewFieldType(mysql.TypeString)
-
-	col0 := &Column{RetType: durationType, Index: 0}
-	col1 := &Column{RetType: formatType, Index: 1}
-	f, err := funcs[ast.TimeFormat].getFunction(ctx, []Expression{col0, col1})
-	require.NoError(t, err)
-	require.True(t, f.vectorized() && f.isChildrenVectorized())
-
-	input := chunk.NewChunkWithCapacity([]*types.FieldType{durationType, formatType}, 2)
-	input.AppendDuration(0, types.Duration{Duration: 12*time.Hour + 34*time.Minute + 56*time.Second, Fsp: types.DefaultFsp})
-	input.AppendString(1, "")
-	input.AppendDuration(0, types.Duration{Duration: time.Hour + 2*time.Minute + 3*time.Second, Fsp: types.DefaultFsp})
-	input.AppendString(1, "%H:%i:%s")
-
-	result := chunk.NewColumn(formatType, 2)
-	require.NoError(t, vecEvalType(ctx, f, types.ETString, input, result))
-	require.Equal(t, 2, result.Rows())
-	require.True(t, result.IsNull(0))
-	require.False(t, result.IsNull(1))
-	require.Equal(t, "01:02:03", result.GetString(1))
-}
-
 func BenchmarkVectorizedBuiltinTimeEvalOneVec(b *testing.B) {
 	benchmarkVectorizedEvalOneVec(b, vecBuiltinTimeCases)
 }
@@ -608,9 +579,9 @@ func BenchmarkVectorizedBuiltinTimeFunc(b *testing.B) {
 }
 
 func TestVecMonth(t *testing.T) {
-	ctx := createContext(t)
-	typeFlags := ctx.GetSessionVars().StmtCtx.TypeFlags()
-	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(true))
+	ctx := mock.NewContext()
+	ctx.GetSessionVars().SQLMode |= mysql.ModeNoZeroDate
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = true
 	input := chunk.New([]*types.FieldType{types.NewFieldType(mysql.TypeDatetime)}, 3, 3)
 	input.Reset()
 	input.AppendTime(0, types.ZeroDate)
@@ -618,12 +589,11 @@ func TestVecMonth(t *testing.T) {
 	input.AppendTime(0, types.ZeroDate)
 
 	f, _, _, result := genVecBuiltinFuncBenchCase(ctx, ast.Month, vecExprBenchCase{retEvalType: types.ETInt, childrenTypes: []types.EvalType{types.ETDatetime}})
-	require.True(t, f.vectorized() && f.isChildrenVectorized())
-	require.True(t, ctx.GetSessionVars().SQLMode.HasStrictMode())
-	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
+	require.True(t, ctx.GetSessionVars().StrictSQLMode)
+	require.NoError(t, f.vecEvalInt(input, result))
 	require.Equal(t, 0, len(ctx.GetSessionVars().StmtCtx.GetWarnings()))
 
 	ctx.GetSessionVars().StmtCtx.InInsertStmt = true
-	ctx.GetSessionVars().StmtCtx.SetTypeFlags(typeFlags.WithTruncateAsWarning(false))
-	require.NoError(t, vecEvalType(ctx, f, types.ETInt, input, result))
+	ctx.GetSessionVars().StmtCtx.TruncateAsWarning = false
+	require.NoError(t, f.vecEvalInt(input, result))
 }

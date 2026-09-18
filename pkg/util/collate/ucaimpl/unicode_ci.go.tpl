@@ -18,16 +18,9 @@
 
 package collate
 
-import "unicode/utf8"
-
 // {{.Name}} implements UCA. see http://unicode.org/reports/tr10/
 type {{.Name}} struct {
 	impl {{.ImplName}}
-}
-
-// Clone implements Collator interface.
-func (uc *{{.Name}}) Clone() Collator {
-	return &{{.Name}}{impl: uc.impl.Clone()}
 }
 
 // Compare implements Collator interface.
@@ -42,20 +35,11 @@ func (uc *{{.Name}}) Compare(a, b string) int {
 	ar, br := rune(0), rune(0)
 	// decode index of a, b
 	ai, bi := 0, 0
-	arLen, brLen := 0, 0
 	for {
 		if an == 0 {
 			if as == 0 {
 				for an == 0 && ai < len(a) {
-					// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
-					// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
-					// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
-					ar, arLen = utf8.DecodeRuneInString(a[ai:])
-					invalid := ar == utf8.RuneError && arLen == 1
-					if invalid {
-						return 0
-					}
-					ai = ai + arLen
+					ar, ai = decodeRune(a, ai)
 					an, as = uc.impl.GetWeight(ar)
 				}
 			} else {
@@ -67,15 +51,7 @@ func (uc *{{.Name}}) Compare(a, b string) int {
 		if bn == 0 {
 			if bs == 0 {
 				for bn == 0 && bi < len(b) {
-					// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
-					// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
-					// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
-					br, brLen = utf8.DecodeRuneInString(b[bi:])
-					invalid := br == utf8.RuneError && brLen == 1
-					if invalid {
-						return 0
-					}
-					bi = bi + brLen
+					br, bi = decodeRune(b, bi)
 					bn, bs = uc.impl.GetWeight(br)
 				}
 			} else {
@@ -108,27 +84,16 @@ func (uc *{{.Name}}) Key(str string) []byte {
 	return uc.KeyWithoutTrimRightSpace(uc.impl.Preprocess(str))
 }
 
-// ImmutableKey implements Collator interface.
-func (uc *{{.Name}}) ImmutableKey(str string) []byte {
-	return uc.KeyWithoutTrimRightSpace(uc.impl.Preprocess(str))
-}
-
 // KeyWithoutTrimRightSpace implements Collator interface.
 func (uc *{{.Name}}) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
 	r := rune(0)
 	si := 0                        // decode index of s
 	sn, ss := uint64(0), uint64(0) // weight of str. weight in unicode_ci may has 8 uint16s. sn indicate first 4 u16s, ss indicate last 4 u16s
-	rLen := 0
 
 	for si < len(str) {
-		r, rLen = utf8.DecodeRuneInString(str[si:])
-		invalid := r == utf8.RuneError && rLen == 1
-		if invalid {
-			return buf
-		}
+		r, si = decodeRune(str, si)
 
-		si = si + rLen
 		sn, ss = uc.impl.GetWeight(r)
 
 		for sn != 0 {
@@ -146,9 +111,4 @@ func (uc *{{.Name}}) KeyWithoutTrimRightSpace(str string) []byte {
 // Pattern implements Collator interface.
 func (uc *{{.Name}}) Pattern() WildcardPattern {
 	return uc.impl.Pattern()
-}
-
-// MaxKeyLen implements Collator interface.
-func (uc *{{.Name}}) MaxKeyLen(s string) int {
-	return utf8.RuneCountInString(s) * 16
 }

@@ -15,21 +15,16 @@
 package metadatalocktest
 
 import (
-	"context"
 	"fmt"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
-	ingesttestutil "github.com/pingcap/tidb/pkg/ddl/ingest/testutil"
-	mysql "github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	ingesttestutil "github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/ingest/testutil"
+	mysql "github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,6 +41,7 @@ func TestMDLBasicSelect(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -83,6 +79,7 @@ func TestMDLBasicInsert(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -120,6 +117,7 @@ func TestMDLBasicUpdate(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -157,6 +155,7 @@ func TestMDLBasicDelete(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -194,6 +193,7 @@ func TestMDLBasicPointGet(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int, unique key(a));")
 	tk.MustExec("insert into t values(1), (2), (3);")
 
@@ -231,6 +231,7 @@ func TestMDLBasicBatchPointGet(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int, unique key(a));")
 	tk.MustExec("insert into t values(1), (2), (3);")
 
@@ -269,6 +270,7 @@ func TestMDLAddForeignKey(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t1(id int key);")
 	tk.MustExec("create table t2(id int key);")
 
@@ -309,6 +311,7 @@ func TestMDLRRUpdateSchema(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -356,6 +359,7 @@ func TestMDLRCUpdateSchema(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -404,6 +408,7 @@ func TestMDLAutoCommitReadOnly(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -441,6 +446,7 @@ func TestMDLAnalyze(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -482,6 +488,7 @@ func TestMDLAnalyzePartition(t *testing.T) {
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int) partition by range(a) ( PARTITION p0 VALUES LESS THAN (0), PARTITION p1 VALUES LESS THAN (100), PARTITION p2 VALUES LESS THAN MAXVALUE );")
 	tk.MustExec("insert into t values(1), (2), (3), (4);")
 
@@ -523,6 +530,7 @@ func TestMDLAutoCommitNonReadOnly(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -560,6 +568,7 @@ func TestMDLLocalTemporaryTable(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -604,6 +613,7 @@ func TestMDLGlobalTemporaryTable(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create global temporary table t(a int) ON COMMIT DELETE ROWS;")
 
 	var wg sync.WaitGroup
@@ -650,6 +660,7 @@ func TestMDLCacheTable(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -692,6 +703,7 @@ func TestMDLStaleRead(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -719,6 +731,7 @@ func TestMDLTiDBSnapshot(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -770,6 +783,7 @@ func TestMDLPartitionTable(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int) partition by hash(a) partitions 10;")
 	tk.MustExec("insert into t values(1), (2), (3), (4);")
 
@@ -807,6 +821,7 @@ func TestMDLPreparePlanBlockDDL(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1), (2), (3), (4);")
 
@@ -851,6 +866,7 @@ func TestMDLPreparePlanCacheInvalid(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1), (2), (3), (4);")
 
@@ -882,7 +898,7 @@ func TestMDLPreparePlanCacheInvalid(t *testing.T) {
 
 func TestMDLPreparePlanCacheExecute(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	sv := server.CreateMockServer(t, store)
 
@@ -895,6 +911,7 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("create table t2(a int);")
 	tk.MustExec("insert into t values(1), (2), (3), (4);")
@@ -917,11 +934,7 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 
 	tk.MustQuery("select * from t2")
 	tk.MustExec(`set @a = 2, @b=4;`)
-	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan created outside this txn.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan since this table becomes dirty.
-	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-	tk.MustExec(`execute stmt_test_1 using @a, @b;`) // can't reuse the prior plan now.
+	tk.MustExec(`execute stmt_test_1 using @a, @b;`)
 	tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("1"))
 	// The plan is from cache, the metadata lock should be added to block the DDL.
 	ch <- struct{}{}
@@ -937,7 +950,7 @@ func TestMDLPreparePlanCacheExecute(t *testing.T) {
 
 func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer ingesttestutil.InjectMockBackendCtx(t, store)()
+	defer ingesttestutil.InjectMockBackendMgr(t, store)()
 
 	sv := server.CreateMockServer(t, store)
 
@@ -950,6 +963,7 @@ func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("create table t2(a int);")
 	tk.MustExec("insert into t values(1), (2), (3), (4);")
@@ -979,86 +993,7 @@ func TestMDLPreparePlanCacheExecute2(t *testing.T) {
 	tk.MustExec("admin check table t")
 }
 
-// TestMDLPreparePlanCacheExecuteInsert makes sure the insert statement handle the schema correctly in plan cache.
-func TestMDLPreparePlanCacheExecuteInsert(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	defer ingesttestutil.InjectMockBackendCtx(t, store)()
-
-	sv := server.CreateMockServer(t, store)
-
-	sv.SetDomain(dom)
-	dom.InfoSyncer().SetSessionManager(sv)
-	defer sv.Close()
-
-	conn1 := server.CreateMockConn(t, sv)
-	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
-	conn2 := server.CreateMockConn(t, sv)
-	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int primary key, b int);")
-	tk.MustExec("create table t2(a int);")
-	tk.MustExec("insert into t values(1, 1), (2, 2), (3, 3), (4, 4);")
-
-	tk.MustExec(`prepare insert_stmt from 'insert into t values (?, ?)'`)
-	tk.MustExec(`set @a=4, @b=4;`)
-
-	ch := make(chan struct{})
-
-	first := true
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-		switch job.SchemaState {
-		case model.StateWriteReorganization:
-			tbl, _ := dom.InfoSchema().TableByID(context.Background(), job.TableID)
-			idx := tbl.Meta().FindIndexByName("idx")
-			switch idx.BackfillState {
-			case model.BackfillStateRunning:
-				if first {
-					// generate plan, cache it, and make some row change to make
-					// sure backfill state 'merging' is not skipped.
-					tk.MustExec(`begin`)
-					tk.MustExec(`delete from t where a = 4;`)
-					tk.MustExec(`execute insert_stmt using @a, @b;`)
-					tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-					tk.MustExec(`commit`)
-
-					tk.MustExec("begin")
-					// Activate txn.
-					tk.MustExec("select * from t2")
-					first = false
-					return
-				}
-			}
-		}
-	})
-
-	ddl.MockDMLExecutionMerging = func() {
-		tk.MustExec(`delete from t where a = 4;`)
-		// we must generate a new plan here, because the schema has changed since
-		// the last plan was generated.
-		tk.MustExec(`execute insert_stmt using @a, @b;`)
-		tk.MustQuery("select @@last_plan_from_cache;").Check(testkit.Rows("0"))
-		tk.MustExec("commit")
-	}
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockDMLExecutionMerging", "1*return(true)->return(false)"))
-
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		<-ch
-		tkDDL.MustExec("alter table test.t add index idx(a);")
-		wg.Done()
-	}()
-
-	ch <- struct{}{}
-	wg.Wait()
-
-	tk.MustExec("admin check table t")
-}
-
 func TestMDLDisable2Enable(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("MDL is always enabled and read only in nextgen")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
@@ -1099,9 +1034,6 @@ func TestMDLDisable2Enable(t *testing.T) {
 }
 
 func TestMDLEnable2Disable(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("MDL is always enabled and read only in nextgen")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
@@ -1142,9 +1074,6 @@ func TestMDLEnable2Disable(t *testing.T) {
 }
 
 func TestSwitchMDL(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("MDL is always enabled and read only in nextgen")
-	}
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
 
@@ -1165,19 +1094,6 @@ func TestSwitchMDL(t *testing.T) {
 	tk.MustQuery("show global variables like 'tidb_enable_metadata_lock'").Check(testkit.Rows("tidb_enable_metadata_lock OFF"))
 }
 
-func TestSetMDLInNextGen(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("only run in nextgen")
-	}
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-
-	require.ErrorContains(t, tk.ExecToErr("set global tidb_enable_metadata_lock=0"),
-		"setting tidb_enable_metadata_lock is not supported in the next generation of TiDB")
-	require.ErrorContains(t, tk.ExecToErr("set global tidb_enable_metadata_lock=1"),
-		"setting tidb_enable_metadata_lock is not supported in the next generation of TiDB")
-}
-
 func TestMDLViewItself(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	sv := server.CreateMockServer(t, store)
@@ -1191,6 +1107,7 @@ func TestMDLViewItself(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1), (2), (3);")
 	tk.MustExec("create view v as select * from t")
@@ -1229,6 +1146,7 @@ func TestMDLViewBaseTable(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1), (2), (3);")
 	tk.MustExec("create view v as select * from t")
@@ -1267,6 +1185,7 @@ func TestMDLSavePoint(t *testing.T) {
 	conn2 := server.CreateMockConn(t, sv)
 	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -1312,6 +1231,7 @@ func TestMDLTableCreate(t *testing.T) {
 	tkDDL := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -1326,112 +1246,6 @@ func TestMDLTableCreate(t *testing.T) {
 	tk.MustExec("commit")
 }
 
-func TestMDLCreateMaterializedViewLogBlockByBaseTableTxn(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	sv := server.CreateMockServer(t, store)
-	sv.SetDomain(dom)
-	dom.InfoSyncer().SetSessionManager(sv)
-	defer sv.Close()
-
-	conn1 := server.CreateMockConn(t, sv)
-	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
-	conn2 := server.CreateMockConn(t, sv)
-	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
-	tk.MustExec("use test")
-	if kerneltype.IsClassic() {
-		tk.MustExec("set global tidb_enable_metadata_lock=1")
-	}
-	tk.MustExec("set tidb_mview_enable = on")
-	tkDDL.MustExec("set tidb_mview_enable = on")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (1)")
-
-	mdlWaitCh := make(chan struct{})
-	var mdlWaitOnce sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, schemaVer int64) {
-		if job.Type == model.ActionCreateMaterializedViewLog && schemaVer != 0 {
-			mdlWaitOnce.Do(func() { close(mdlWaitCh) })
-		}
-	})
-	ddlDone := make(chan error, 1)
-	go func() {
-		ddlDone <- tkDDL.ExecToErr("create materialized view log on test.t (a)")
-	}()
-
-	select {
-	case err := <-ddlDone:
-		require.FailNowf(t, "create materialized view log should be blocked by running transaction", "ddl finished before waiting for schema sync, err=%v", err)
-	case <-mdlWaitCh:
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW LOG to enter schema sync")
-	}
-	tk.MustExec("commit")
-
-	select {
-	case err := <-ddlDone:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		require.FailNow(t, "create materialized view log should finish after transaction commit")
-	}
-}
-
-func TestMDLCreateMaterializedViewLogNewTxnWriteMLog(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	sv := server.CreateMockServer(t, store)
-	sv.SetDomain(dom)
-	dom.InfoSyncer().SetSessionManager(sv)
-	defer sv.Close()
-
-	conn1 := server.CreateMockConn(t, sv)
-	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
-	conn2 := server.CreateMockConn(t, sv)
-	tkDDL := testkit.NewTestKitWithSession(t, store, conn2.Context().Session)
-	tk.MustExec("use test")
-	if kerneltype.IsClassic() {
-		tk.MustExec("set global tidb_enable_metadata_lock=1")
-	}
-	tk.MustExec("set tidb_mview_enable = on")
-	tkDDL.MustExec("set tidb_mview_enable = on")
-	tk.MustExec("create table t(a int)")
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (1)")
-
-	mdlWaitCh := make(chan struct{})
-	var mdlWaitOnce sync.Once
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeWaitSchemaSynced", func(job *model.Job, schemaVer int64) {
-		if job.Type == model.ActionCreateMaterializedViewLog && schemaVer != 0 {
-			mdlWaitOnce.Do(func() { close(mdlWaitCh) })
-		}
-	})
-	ddlDone := make(chan error, 1)
-	go func() {
-		ddlDone <- tkDDL.ExecToErr("create materialized view log on test.t (a)")
-	}()
-
-	select {
-	case err := <-ddlDone:
-		require.FailNowf(t, "create materialized view log should be blocked by running transaction", "ddl finished before waiting for schema sync, err=%v", err)
-	case <-mdlWaitCh:
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for CREATE MATERIALIZED VIEW LOG to enter schema sync")
-	}
-	tk.MustExec("commit")
-
-	select {
-	case err := <-ddlDone:
-		require.NoError(t, err)
-	case <-time.After(10 * time.Second):
-		require.FailNow(t, "create materialized view log should finish after transaction commit")
-	}
-
-	tk.MustExec("begin")
-	tk.MustExec("insert into t values (2)")
-	tk.MustExec("commit")
-	tk.MustQuery("select a from t order by a").Check(testkit.Rows("1", "2"))
-	tk.MustQuery("select a, `_MLOG$_DML_TYPE`, `_MLOG$_OLD_NEW` from `$mlog$t` order by a").Check(testkit.Rows("2 I 1"))
-}
-
 func TestMDLTableDrop(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -1439,6 +1253,7 @@ func TestMDLTableDrop(t *testing.T) {
 	tkDDL := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -1458,6 +1273,7 @@ func TestMDLDatabaseCreate(t *testing.T) {
 	tkDDL := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 
 	tk.MustExec("begin")
 
@@ -1477,6 +1293,7 @@ func TestMDLDatabaseDrop(t *testing.T) {
 	tkDDL := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -1497,6 +1314,7 @@ func TestMDLRenameTable(t *testing.T) {
 	tkDDL := testkit.NewTestKit(t, store)
 
 	tk.MustExec("use test")
+	tk.MustExec("set global tidb_enable_metadata_lock=1")
 	tk.MustExec("create table t(a int);")
 	tk.MustExec("insert into t values(1);")
 
@@ -1538,7 +1356,10 @@ func TestMDLUpdateEtcdFail(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int);")
 
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/schemaver/mockUpdateMDLToETCDError", `3*return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockUpdateMDLToETCDError", `3*return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockUpdateMDLToETCDError"))
+	}()
 
 	tk.MustExec("alter table test.t add column c int")
 }

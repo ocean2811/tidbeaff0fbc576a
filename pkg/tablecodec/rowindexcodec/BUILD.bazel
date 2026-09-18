@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "rowindexcodec",
     srcs = ["rowindexcodec.go"],
-    importpath = "github.com/pingcap/tidb/pkg/tablecodec/rowindexcodec",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec/rowindexcodec",
     visibility = ["//visibility:public"],
 )
 

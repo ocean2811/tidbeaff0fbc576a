@@ -18,15 +18,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggfuncs"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/aggregation"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,7 +42,7 @@ type windowTest struct {
 func (p *windowTest) genSrcChk() *chunk.Chunk {
 	srcChk := chunk.NewChunkWithCapacity([]*types.FieldType{p.dataType}, p.numRows)
 	dataGen := getDataGenFunc(p.dataType)
-	for i := range p.numRows {
+	for i := 0; i < p.numRows; i++ {
 		dt := dataGen(i)
 		srcChk.AppendDatum(0, &dt)
 	}
@@ -72,11 +72,11 @@ func testWindowFunc(t *testing.T, p windowTest) {
 	}
 
 	require.Len(t, p.results, p.numRows)
-	for i := range p.numRows {
+	for i := 0; i < p.numRows; i++ {
 		err = finalFunc.AppendFinalResult2Chunk(ctx, finalPr, resultChk)
 		require.NoError(t, err)
 		dt := resultChk.GetRow(0).GetDatum(0, desc.RetTp)
-		result, err := dt.Compare(ctx.GetSessionVars().StmtCtx.TypeCtx(), &p.results[i], collate.GetCollator(desc.RetTp.GetCollate()))
+		result, err := dt.Compare(ctx.GetSessionVars().StmtCtx, &p.results[i], collate.GetCollator(desc.RetTp.GetCollate()))
 		require.NoError(t, err)
 		require.Equal(t, 0, result)
 		resultChk.Reset()
@@ -94,7 +94,7 @@ func testWindowAggMemFunc(t *testing.T, p windowMemTest) {
 	finalPr, memDelta := finalFunc.AllocPartialResult()
 	require.Equal(t, p.allocMemDelta, memDelta)
 
-	updateMemDeltas, err := p.updateMemDeltaGens(updateMemDeltaGensParams{srcChk: srcChk, keyType: p.windowTest.dataType, valType: nil})
+	updateMemDeltas, err := p.updateMemDeltaGens(srcChk, p.windowTest.dataType)
 	require.NoError(t, err)
 
 	i := 0
@@ -107,7 +107,7 @@ func testWindowAggMemFunc(t *testing.T, p windowMemTest) {
 	}
 }
 
-func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expression, orderByCols int, numRows int, results ...any) windowTest {
+func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expression, orderByCols int, numRows int, results ...interface{}) windowTest {
 	pt := windowTest{
 		dataType: types.NewFieldType(tp),
 		numRows:  numRows,
@@ -127,7 +127,7 @@ func buildWindowTesterWithArgs(funcName string, tp byte, args []expression.Expre
 	return pt
 }
 
-func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, results ...any) windowTest {
+func buildWindowTester(funcName string, tp byte, constantArg uint64, orderByCols int, numRows int, results ...interface{}) windowTest {
 	pt := windowTest{
 		dataType: types.NewFieldType(tp),
 		numRows:  numRows,

@@ -3,13 +3,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "admin",
     srcs = ["admin.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/admin",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/admin",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errno",
         "//pkg/expression",
         "//pkg/kv",
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/sessionctx",
         "//pkg/table",

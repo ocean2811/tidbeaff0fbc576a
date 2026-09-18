@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
 )
 
 // GeneralEvent presents TiDB generate event.
@@ -40,9 +40,10 @@ const (
 // GeneralEventFromString gets the `GeneralEvent` from the given string
 func GeneralEventFromString(s string) (GeneralEvent, error) {
 	upperStr := strings.ToUpper(s)
-	for i := range GeneralEventCount {
-		if i.String() == upperStr {
-			return i, nil
+	for i := 0; i < int(GeneralEventCount); i++ {
+		event := GeneralEvent(i)
+		if event.String() == upperStr {
+			return event, nil
 		}
 	}
 	return 0, errors.Errorf("Invalid general event: %s", s)
@@ -126,13 +127,3 @@ type execStartTimeCtxKeyType struct{}
 
 // ExecStartTimeCtxKey indicates stmt start execution time.
 var ExecStartTimeCtxKey = execStartTimeCtxKeyType{}
-
-type prepareStmtIDCtxKeyType struct{}
-
-// PrepareStmtIDCtxKey indicates the prepared statement ID.
-var PrepareStmtIDCtxKey = prepareStmtIDCtxKeyType{}
-
-type isRetryingCtx struct{}
-
-// IsRetryingCtxKey indicates whether the current execution is a retry.
-var IsRetryingCtxKey = isRetryingCtx{}

@@ -18,13 +18,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/format/textrow"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -53,30 +52,6 @@ func TestDumpColumn(t *testing.T) {
 	require.Equal(t, mysql.TypeString, dumpType(mysql.TypeSet))
 	require.Equal(t, mysql.TypeString, dumpType(mysql.TypeEnum))
 	require.Equal(t, mysql.TypeBit, dumpType(mysql.TypeBit))
-}
-
-func BenchmarkDumpColumn(b *testing.B) {
-	info := Info{
-		Schema:       "testSchema",
-		Table:        "testTable",
-		OrgTable:     "testOrgTable",
-		Name:         "testName",
-		OrgName:      "testOrgName",
-		ColumnLength: 1,
-		Charset:      106,
-		Flag:         0,
-		Decimal:      1,
-		Type:         14,
-		DefaultValue: "test",
-	}
-	encoder := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
-	buffer := make([]byte, 0, 1024)
-
-	b.ReportAllocs()
-	b.ResetTimer()
-	for b.Loop() {
-		buffer = info.DumpWithDefault(buffer[:0], encoder)
-	}
 }
 
 func TestDumpColumnWithDefault(t *testing.T) {
@@ -108,7 +83,7 @@ func TestDumpColumnWithDefault(t *testing.T) {
 
 func TestColumnNameLimit(t *testing.T) {
 	aLongName := make([]byte, 0, 300)
-	for range 300 {
+	for i := 0; i < 300; i++ {
 		aLongName = append(aLongName, 'a')
 	}
 	info := Info{
@@ -135,7 +110,7 @@ func TestDumpTextValue(t *testing.T) {
 		Decimal: mysql.NotFixedDec,
 	}}
 
-	dp := textrow.NewResultEncoder(charset.CharsetUTF8MB4)
+	dp := NewResultEncoder(charset.CharsetUTF8MB4)
 	null := types.NewIntDatum(0)
 	null.SetNull()
 	bs, err := DumpTextRow(nil, columns, chunk.MutRowFromDatums([]types.Datum{null}).ToRow(), dp)
@@ -191,7 +166,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "bar", mustDecodeStr(t, bs))
 
-	dp = textrow.NewResultEncoder("gbk")
+	dp = NewResultEncoder("gbk")
 	columns[0].Type = mysql.TypeVarchar
 	dt := []types.Datum{types.NewStringDatum("一")}
 	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
@@ -199,18 +174,20 @@ func TestDumpTextValue(t *testing.T) {
 	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
 
 	columns[0].Charset = uint16(mysql.CharsetNameToID("gbk"))
-	dp = textrow.NewResultEncoder("binary")
+	dp = NewResultEncoder("binary")
 	bs, err = DumpTextRow(nil, columns, chunk.MutRowFromDatums(dt).ToRow(), dp)
 	require.NoError(t, err)
 	require.Equal(t, []byte{0xd2, 0xbb}, []byte(mustDecodeStr(t, bs)))
 
 	var d types.Datum
 
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	sc.IgnoreZeroInDate = true
 	losAngelesTz, err := time.LoadLocation("America/Los_Angeles")
 	require.NoError(t, err)
-	typeCtx := types.NewContext(types.StrictFlags.WithIgnoreZeroInDate(true), losAngelesTz, contextutil.IgnoreWarn)
+	sc.SetTimeZone(losAngelesTz)
 
-	time, err := types.ParseTime(typeCtx, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0)
+	time, err := types.ParseTime(sc, "2017-01-05 23:59:59.575601", mysql.TypeDatetime, 0, nil)
 	require.NoError(t, err)
 	d.SetMysqlTime(time)
 	columns[0].Type = mysql.TypeDatetime
@@ -218,7 +195,7 @@ func TestDumpTextValue(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "2017-01-06 00:00:00", mustDecodeStr(t, bs))
 
-	duration, _, err := types.ParseDuration(typeCtx, "11:30:45", 0)
+	duration, _, err := types.ParseDuration(sc, "11:30:45", 0)
 	require.NoError(t, err)
 	d.SetMysqlDuration(duration)
 	columns[0].Type = mysql.TypeDuration

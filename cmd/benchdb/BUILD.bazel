@@ -3,14 +3,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 go_library(
     name = "benchdb_lib",
     srcs = ["main.go"],
-    importpath = "github.com/pingcap/tidb/cmd/benchdb",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/cmd/benchdb",
     visibility = ["//visibility:private"],
     deps = [
-        "//pkg/config",
-        "//pkg/ddl",
         "//pkg/parser/terror",
         "//pkg/session",
-        "//pkg/session/sessionapi",
         "//pkg/store",
         "//pkg/store/driver",
         "//pkg/util/logutil",

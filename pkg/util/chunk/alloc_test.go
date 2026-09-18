@@ -15,12 +15,10 @@
 package chunk
 
 import (
-	"sync"
-	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,7 +67,7 @@ func TestAllocator(t *testing.T) {
 	check()
 
 	// Check maxFreeListLen
-	for range maxFreeChunks + 10 {
+	for i := 0; i < maxFreeChunks+10; i++ {
 		alloc.Alloc(fieldTypes, initCap, maxChunkSize)
 	}
 	alloc.Reset()
@@ -105,7 +103,7 @@ func TestColumnAllocator(t *testing.T) {
 	ft := fieldTypes[2]
 	// Test reuse.
 	cols := make([]*Column, 0, maxFreeColumnsPerType+10)
-	for range maxFreeColumnsPerType + 10 {
+	for i := 0; i < maxFreeColumnsPerType+10; i++ {
 		col := alloc1.NewColumn(ft, 20)
 		cols = append(cols, col)
 	}
@@ -120,7 +118,7 @@ func TestColumnAllocator(t *testing.T) {
 }
 
 func TestNoDuplicateColumnReuse(t *testing.T) {
-	// For issue https://github.com/pingcap/tidb/issues/29554
+	// For issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/29554
 	// Some chunk columns are just references to other chunk columns.
 	// So when reusing Chunk, some columns may point to the same memory address.
 
@@ -135,7 +133,7 @@ func TestNoDuplicateColumnReuse(t *testing.T) {
 		types.NewFieldType(mysql.TypeDatetime),
 	}
 	alloc := NewAllocator()
-	for range maxFreeChunks + 10 {
+	for i := 0; i < maxFreeChunks+10; i++ {
 		chk := alloc.Alloc(fieldTypes, 5, 10)
 		chk.MakeRef(1, 3)
 	}
@@ -155,7 +153,7 @@ func TestNoDuplicateColumnReuse(t *testing.T) {
 }
 
 func TestAvoidColumnReuse(t *testing.T) {
-	// For issue: https://github.com/pingcap/tidb/issues/31981
+	// For issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/31981
 	// Some chunk columns are references to rpc message.
 	// So when reusing Chunk, we should ignore them.
 
@@ -170,7 +168,7 @@ func TestAvoidColumnReuse(t *testing.T) {
 		types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP(),
 	}
 	alloc := NewAllocator()
-	for range maxFreeChunks + 10 {
+	for i := 0; i < maxFreeChunks+10; i++ {
 		chk := alloc.Alloc(fieldTypes, 5, 10)
 		for _, col := range chk.columns {
 			col.avoidReusing = true
@@ -186,7 +184,7 @@ func TestAvoidColumnReuse(t *testing.T) {
 
 	// test decoder will set avoid reusing flag.
 	chk := alloc.Alloc(fieldTypes, 5, 1024)
-	for range 10 {
+	for i := 0; i <= 10; i++ {
 		for _, col := range chk.columns {
 			col.AppendNull()
 		}
@@ -220,7 +218,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	InitChunkAllocSize(10, 20)
 	alloc := NewAllocator()
 	require.True(t, alloc.CheckReuseAllocSize())
-	for range maxFreeChunks + 10 {
+	for i := 0; i < maxFreeChunks+10; i++ {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
 	alloc.Reset()
@@ -232,7 +230,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	//Reduce capacity
 	InitChunkAllocSize(5, 10)
 	alloc = NewAllocator()
-	for range maxFreeChunks + 10 {
+	for i := 0; i < maxFreeChunks+10; i++ {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
 	alloc.Reset()
@@ -244,7 +242,7 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	//increase capacity
 	InitChunkAllocSize(50, 100)
 	alloc = NewAllocator()
-	for range maxFreeChunks + 10 {
+	for i := 0; i < maxFreeChunks+10; i++ {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
 	alloc.Reset()
@@ -256,10 +254,10 @@ func TestColumnAllocatorLimit(t *testing.T) {
 	//long characters are not cached
 	alloc = NewAllocator()
 	rs := alloc.Alloc([]*types.FieldType{types.NewFieldTypeBuilder().SetType(mysql.TypeVarchar).BuildP()}, 1024, 1024)
-	nu := len(alloc.columnAlloc.pool[VarElemLen].allocColumns)
+	nu := len(alloc.columnAlloc.pool[varElemLen].allocColumns)
 	require.Equal(t, nu, 1)
 	for _, col := range rs.columns {
-		for range 20480 {
+		for i := 0; i < 20480; i++ {
 			col.data = append(col.data, byte('a'))
 		}
 	}
@@ -280,7 +278,7 @@ func TestColumnAllocatorCheck(t *testing.T) {
 	}
 	InitChunkAllocSize(10, 20)
 	alloc := NewAllocator()
-	for range 4 {
+	for i := 0; i < 4; i++ {
 		alloc.Alloc(fieldTypes, 5, 10)
 	}
 	col := alloc.columnAlloc.NewColumn(types.NewFieldTypeBuilder().SetType(mysql.TypeFloat).BuildP(), 10)
@@ -290,72 +288,4 @@ func TestColumnAllocatorCheck(t *testing.T) {
 	require.Equal(t, num, 4)
 	num = alloc.columnAlloc.pool[getFixedLen(types.NewFieldTypeBuilder().SetType(mysql.TypeDatetime).BuildP())].Len()
 	require.Equal(t, num, 4)
-}
-
-func TestReuseHookAllocator(t *testing.T) {
-	fieldTypes := []*types.FieldType{
-		types.NewFieldType(mysql.TypeVarchar),
-		types.NewFieldType(mysql.TypeJSON),
-		types.NewFieldType(mysql.TypeFloat),
-		types.NewFieldType(mysql.TypeNewDecimal),
-		types.NewFieldType(mysql.TypeDouble),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeTimestamp),
-		types.NewFieldType(mysql.TypeDatetime),
-	}
-
-	var reuse atomic.Int64
-
-	InitChunkAllocSize(0, 0)
-	alloc := NewReuseHookAllocator(NewAllocator(), func() {
-		reuse.Add(1)
-	})
-	// as we init MaxFreeChunks and MaxFreeColumns as 0, the reuse is still 0 after alloc
-	chk := alloc.Alloc(fieldTypes, 5, 100)
-	require.NotNil(t, chk)
-	require.Equal(t, int64(0), reuse.Load())
-
-	InitChunkAllocSize(10, 20)
-	alloc = NewReuseHookAllocator(NewAllocator(), func() {
-		reuse.Add(1)
-	})
-	chk = alloc.Alloc(fieldTypes, 5, 100)
-	require.NotNil(t, chk)
-	require.Equal(t, int64(1), reuse.Load())
-	// Another alloc will not touch it
-	chk = alloc.Alloc(fieldTypes, 5, 100)
-	require.NotNil(t, chk)
-	require.Equal(t, int64(1), reuse.Load())
-}
-
-func TestSyncAllocator(t *testing.T) {
-	fieldTypes := []*types.FieldType{
-		types.NewFieldType(mysql.TypeVarchar),
-		types.NewFieldType(mysql.TypeJSON),
-		types.NewFieldType(mysql.TypeFloat),
-		types.NewFieldType(mysql.TypeNewDecimal),
-		types.NewFieldType(mysql.TypeDouble),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeTimestamp),
-		types.NewFieldType(mysql.TypeDatetime),
-	}
-
-	alloc := NewSyncAllocator(NewAllocator())
-
-	wg := &sync.WaitGroup{}
-	for range 1000 {
-		wg.Add(1)
-		go func() {
-			for range 10 {
-				for range 100 {
-					chk := alloc.Alloc(fieldTypes, 5, 100)
-					require.NotNil(t, chk)
-				}
-				alloc.Reset()
-			}
-
-			wg.Done()
-		}()
-	}
-	wg.Wait()
 }

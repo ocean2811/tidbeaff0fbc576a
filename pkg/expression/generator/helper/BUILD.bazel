@@ -3,6 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "helper",
     srcs = ["helper.go"],
-    importpath = "github.com/pingcap/tidb/pkg/expression/generator/helper",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/generator/helper",
     visibility = ["//visibility:public"],
 )

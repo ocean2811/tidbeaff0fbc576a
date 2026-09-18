@@ -3,6 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "testutil",
     srcs = ["testutil.go"],
-    importpath = "github.com/pingcap/tidb/pkg/server/internal/testutil",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/testutil",
     visibility = ["//pkg/server:__subpackages__"],
 )

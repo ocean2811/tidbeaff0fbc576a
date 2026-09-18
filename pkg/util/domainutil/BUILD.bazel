@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "domainutil",
     srcs = ["repair_vars.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/domainutil",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/domainutil",
     visibility = ["//visibility:public"],
-    deps = ["//pkg/meta/model"],
+    deps = ["//pkg/parser/model"],
 )

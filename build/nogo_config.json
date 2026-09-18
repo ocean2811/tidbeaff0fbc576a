@@ -4,11 +4,18 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "/rules_go_work-*": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code",
       "pkg/extension/enterprise/audit/entry.go": "pkg/extension/enterprise/audit/entry.go",
       "pkg/extension/enterprise/audit/filter.go": "pkg/extension/enterprise/audit/filter.go"
+    }
+  },
+  "asciicheck": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code",
+      "br/pkg/lightning/web/res_vfsdata.go": "ignore code"
     }
   },
   "asmdecl": {
@@ -60,37 +67,11 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
-  "exptostd": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
-    },
-    "only_files": {
-      "pkg/bindinfo/": "bindinfo code",
-      "pkg/meta/": "meta code",
-      "pkg/owner/": "owner code",
-      "pkg/planner/": "planner code",
-      "pkg/statistics/": "pkg/statistics/ code",
-      "pkg/ttl/": "ttl code",
-      "pkg/util/": "util code"
-    }
-  },
-  "printexpression": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code",
-      "build/linter/printexpression/testdata/": "ignore test code"
-    }
-  },
   "printf": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code",
-      "pkg/planner/core/plan_clone_generator.go": "ignore plan_clone_generator code",
-      "pkg/util/dbterror/ddl_terror.go": "ignore ddl_terror code"
+      ".*_generated\\.go$": "ignore generated code"
     }
   },
   "unreachable": {
@@ -105,7 +86,6 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "br/pkg/glue/console_glue_test.go": "ignore code",
       "br/pkg/restore/db_test.go": "ignore code",
       ".*_/testmain\\.go$": "ignore code"
@@ -116,15 +96,7 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo code"
-    }
-  },
-  "copyloopvar": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
     }
   },
   "ctrlflow": {
@@ -135,13 +107,6 @@
     }
   },
   "deadcode": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
-    }
-  },
-  "defers": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
@@ -174,7 +139,6 @@
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       ".*_test\\.go$": "ignore generated code",
       "pkg/util/logutil": "ignore util/logutil code",
       "tools/": "ignore tools code",
@@ -186,13 +150,19 @@
       ".*_/testmain\\.go$": "ignore code"
     }
   },
+  "exportloopref": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
   "filepermission": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".cgo/": "no need to cgo code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code"
     }
   },
@@ -202,7 +172,6 @@
       "pkg/statistics/table.go": "disable this limitation that prevents us from splitting struct fields for clarity",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       ".*_/testmain\\.go$": "ignore code",
       ".*_test\\.go$": "ignore test code"
     },
@@ -263,8 +232,8 @@
     },
     "only_files": {
       "util/gctuner": "only for util/gctuner",
-      "pkg/lightning/mydump/": "only for pkg/lightning/mydump/",
-      "lightning/pkg/importer/opts": "only for lightning/pkg/importer/opts",
+      "br/pkg/lightning/mydump/": "only for br/pkg/lightning/mydump/",
+      "br/pkg/lightning/importer/opts": "only for br/pkg/lightning/importer/opts",
       "pkg/executor/aggregate.go": "only for executor/aggregate.go",
       "pkg/types/json_binary_functions.go": "only for types/json_binary_functions.go",
       "pkg/types/json_binary_test.go": "only for types/json_binary_test.go",
@@ -283,47 +252,19 @@
   },
   "gofmt": {
     "exclude_files": {
-      "pkg/parser/": "parser/*.go code",
+      "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
-      ".*failpoint_binding__.go$": "ignore generated code",
-      "_cgo_gotypes.go": "skip _cgo_gotypes.go",
-      "_cgo_imports.go": "skip _cgo_imports.go",
-      ".*.cgo1.go": "skip cgo1.go"
-    }
-  },
-  "forbidigo": {
-    "exclude_files": {
-      "pkg/ddl/job_submitter.go": "ignore job_submitter code",
-      "pkg/ddl/executor.go": "ignore executor code",
-      "pkg/ddl/session/.*.go": "ignore session code",
-      "pkg/ddl/schematracker/.*.go": "ignore schematracker",
-      ".*test\\.go$": "ignore test files",
-      "pkg/parser/": "parser/*.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
-      "/cgo/": "ignore cgo code",
-      "/rules_go_work-*": "ignore generated code",
-      ".*test_/testmain\\.go$": "ignore generated code",
-      ".*failpoint_binding__.go$": "ignore generated code",
-      "_cgo_gotypes.go": "skip _cgo_gotypes.go",
-      "_cgo_imports.go": "skip _cgo_imports.go",
-      ".*.cgo1.go": "skip cgo1.go"
-    },
-    "only_files": {
-      "pkg/ddl/": "only for ddl code"
+      ".*failpoint_binding__.go$": "ignore generated code"
     }
   },
   "gci": {
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
       ".*\\.pb\\.go$": "generated code",
       "/rules_go_work-*": "ignore generated code",
@@ -344,7 +285,7 @@
       "/rules_go_work-*": "ignore generated code",
       "tools/check/ut.go": "ignore tools/check code",
       "cmd/mirror": "ignore cmd/mirror code",
-      "tools/check/xprog/xprog.go": "ignore tools/check code",
+      "tools/check/xprog.go": "ignore tools/check code",
       "cmd/pluginpkg/pluginpkg.go": "ignore cmd/pluginpkg code",
       "tools/check/xprog.go:": "ignore tools/check code",
       "tests/integrationtest/main.go": "ignore tests/integrationtest code",
@@ -372,21 +313,17 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
-      "/cgo/": "no need to vet cgo code"
-    }
-  },
-  "intrange": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code",
-      ".*_test\\.go$": "ignore test code",
-      ".*mock.go$": "ignore generated code",
       "/cgo/": "no need to vet cgo code"
     }
   },
   "inspect": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    }
+  },
+  "loopclosure": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
@@ -406,35 +343,35 @@
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       ".*pb\\.go$": "ignore generated code",
       "br/pkg/streamhelper/.*_test\\.go$": "ignore test code",
       "br/pkg/errors/errors.go": "ignore error",
       "br/pkg/rtree/logging_test.go": "ignore rtree code",
       "br/pkg/logutil/logging_test.go": "ignore logutil code",
       "br/pkg/storage/": "ignore storage code",
-      "pkg/objstore/mockobjstore/objstore_mock.go": "ignore storage code",
+      "br/pkg/mock/storage/storage.go": "ignore storage code",
       "br/pkg/utils/": "ignore utils code",
       "br/pkg/version/version.go": "ignore version code",
-      "pkg/lightning/common/errors.go": "ignore error",
-      "pkg/lightning/config/config.go": "ignore config code",
-      "pkg/lightning/config/config_test.go": "ignore config code",
-      "pkg/lightning/config/global.go": "ignore global code",
-      "pkg/lightning/mydump/": "ignore mydump code",
-      "pkg/lightning/checkpoints/checkpoints.go": "ignore checkpoints code",
-      "pkg/lightning/checkpoints/glue_checkpoint.go": "ignore glue_checkpoint code",
-      "pkg/ingestor/ingestctrl/": "ignore local code",
-      "pkg/lightning/backend/tidb/tidb.go": "ignore tidb code",
-      "pkg/lightning/backend/tidb/tidb_test.go": "ignore tidb code",
-      "pkg/lightning/checkpoints/checkpoints_test.go": "ignore checkpoints code",
-      "pkg/lightning/checkpoints/checkpoints_sql_test.go": "ignore checkpoints code",
-      "pkg/lightning/errormanager/errormanager_test.go": "ignore errormanager code",
-      "pkg/lightning/backend/kv/sql2kv_test.go": "ignore sql2kv code",
+      "br/pkg/lightning/common/errors.go": "ignore error",
+      "br/pkg/lightning/config/config.go": "ignore config code",
+      "br/pkg/lightning/config/config_test.go": "ignore config code",
+      "br/pkg/lightning/config/global.go": "ignore global code",
+      "br/pkg/lightning/mydump/": "ignore mydump code",
+      "br/pkg/lightning/checkpoints/checkpoints.go": "ignore checkpoints code",
+      "br/pkg/lightning/checkpoints/glue_checkpoint.go": "ignore glue_checkpoint code",
+      "br/pkg/lightning/backend/local/": "ignore local code",
+      "br/pkg/lightning/backend/tidb/tidb.go": "ignore tidb code",
+      "br/pkg/lightning/backend/tidb/tidb_test.go": "ignore tidb code",
+      "br/pkg/lightning/checkpoints/checkpoints_test.go": "ignore checkpoints code",
+      "br/pkg/lightning/checkpoints/checkpoints_sql_test.go": "ignore checkpoints code",
+      "br/pkg/lightning/errormanager/errormanager_test.go": "ignore errormanager code",
+      "br/pkg/lightning/backend/kv/sql2kv_test.go": "ignore sql2kv code",
       "br/pkg/stream/rewrite_meta_rawkv_test.go": "ignore rewrite_meta_rawkv code",
-      "lightning/pkg/server/lightning.go": "ignore lightning code",
-      "lightning/pkg/importer": "ignore importer code",
+      "br/pkg/lightning/lightning.go": "ignore lightning code",
+      "br/pkg/lightning/importer": "ignore importer code",
       "br/cmd/tidb-lightning-ctl/main.go": "ignore main code",
       "br/pkg/stream/rewrite_meta_rawkv.go": "ignore rewrite_meta_rawkv code",
+      "br/pkg/lightning/web/": "ignore web code",
       "br/pkg/mock/": "ignore mock code",
       "br/pkg/aws/ebs.go": "ignore ebs code",
       "br/pkg/backup/": "ignore backup code",
@@ -510,7 +447,6 @@
   "misspell": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
-      "pkg/planner/core/casetest/tpcds/main_test.go": "ignore code",
       "/cgo/": "ignore cgo code",
       "external/": "no need to vet third party code",
       "$GOROOT/": "ignore GOROOT code",
@@ -526,12 +462,26 @@
   },
   "nilness": {
     "exclude_files": {
-      "br/pkg/streamhelper/advancer_test.go": "please fix it",
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo"
+    }
+  },
+  "noloopclosure": {
+    "exclude_files": {
+      "pkg/parser/parser.go": "parser/parser.go code",
+      "external/": "no need to vet third party code",
+      ".*_generated\\.go$": "ignore generated code"
+    },
+    "only_files": {
+      "br/pkg/lightning/mydump/": "br/pkg/lightning/mydump/",
+      "br/pkg/lightning/importer/opts": "br/pkg/lightning/importer/opts",
+      "pkg/kv/": "kv code",
+      "pkg/util/memory": "util/memory",
+      "pkg/ddl/": "ddl",
+      "pkg/planner/": "planner",
+      "pkg/extension/": "extension code"
     }
   },
   "pkgfact": {
@@ -551,18 +501,15 @@
       "pkg/parser/goyacc/": "ignore goyacc code",
       "pkg/parser/ast/": "ignore parser/ast code",
       "pkg/parser/test_driver/": "ignore parser/test_driver code",
-      "pkg/planner/core/plan_clone_generated.go": "ignore plan_clone_generated code",
-      "pkg/planner/core/operator/logicalop/hash64_equals_generated.go": "ignore hash64_equals_generated code",
+      "dumpling/export/sql_type.go": "please fix it",
       ".*_test\\.go$": "ignore generated code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "pkg/plugin/conn_ip_example/": "plugin/conn_ip_example/"
     },
     "only_files": {
       "pkg/autoid_service/": "autoid_service",
       "pkg/bindinfo/": "bindinfo",
-      "pkg/lightning/": "pkg/lightning/",
-      "lightning/": "lightning/",
+      "br/pkg/lightning/": "br/pkg/lightning/",
       "pkg/executor/": "executor/",
       "pkg/types/json_binary_functions.go": "types/json_binary_functions.go",
       "pkg/types/json_binary_test.go": "types/json_binary_test.go",
@@ -572,7 +519,7 @@
       "pkg/expression/builtin_cast.go": "expression/builtin_cast code",
       "pkg/server/": "server/ code",
       "pkg/distsql/": "distsql code",
-      "pkg/dxf": "DXF code",
+      "pkg/disttask": "disttask code",
       "dumpling/export": "dumpling/export code",
       "pkg/lock/": "lock file",
       "pkg/errno/": "errno code",
@@ -589,10 +536,7 @@
       "pkg/resourcemanager/": "resourcemanager code",
       "pkg/keyspace/": "keyspace code",
       "pkg/owner/": "owner code",
-      "pkg/timer/": "timer code",
-      "pkg/domain": "domain code",
-      "pkg/workloadlearning": "workloadlearning code",
-      "pkg/kv": "kv code"
+      "pkg/timer/": "timer code"
     }
   },
   "shift": {
@@ -649,17 +593,15 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "/cgo/": "ignore cgo code",
       "/rules_go_work-*": "ignore generated code",
       ".*test_/testmain\\.go$": "ignore generated code",
       ".*failpoint_binding__.go$": "ignore generated code",
       "pkg/util/chunk": "ignore util/chunk",
-      "pkg/lightning/mydump/": "more than 50",
-      "lightning/pkg/importer/": "more than 50",
-      "pkg/ingestor/ingestctrl/": "more than 50",
+      "br/pkg/lightning/mydump/": "more than 50",
+      "br/pkg/lightning/importer/": "more than 50",
+      "br/pkg/lightning/backend/local/": "more than 50",
       "br/pkg/restore/": "more than 50",
-      "br/pkg/storage/": "more than 50",
       "pkg/ddl/tests/partition/": "more than 50"
     },
     "only_files": {
@@ -684,23 +626,54 @@
       "br/pkg/conn/": "br/pkg/conn/ coded",
       "br/pkg/checkpoint/": "br/pkg/checkpoint/ coded",
       "br/pkg/backup/": "br/pkg/backup/ coded",
-      "pkg/planner/core": "planner/core",
-      "pkg/executor/test": "executor/test",
+      "pkg/planer/core/casetest/binaryplan": "planer/core/casetest/binaryplan",
+      "pkg/planer/core/casetest/cbotest": "planer/core/casetest/cbotest",
+      "pkg/planer/core/casetest/dag": "planer/core/casetest/dag",
+      "pkg/planer/core/casetest/enforcempp": "planer/core/casetest/enforcempp",
+      "pkg/planer/core/casetest/flatplan": "planer/core/casetest/flatplan",
+      "pkg/planer/core/casetest/hint": "planer/core/casetest/hint",
+      "pkg/planer/core/casetest/mpp": "planer/core/casetest/mpp",
+      "pkg/planer/core/casetest/partition": "planer/core/casetest/partition",
+      "pkg/planer/core/casetest/pushdown": "planer/core/casetest/pushdown",
+      "pkg/planer/core/casetest/rule": "planer/core/casetest/rule",
+      "pkg/planer/core/casetest/scalarsubquery": "planer/core/casetest/scalarsubquery",
+      "pkg/planer/core/casetest/testdata": "planer/core/casetest/testdata",
+      "pkg/planer/core/casetest/windows": "planer/core/casetest/windows",
+      "pkg/planer/core/tests/": "planer/core/tests/",
+      "pkg/executor/test/admintest": "executor/test/admintest",
+      "pkg/executor/test/aggregate": "executor/test/aggregate",
+      "pkg/executor/test/autoidtest": "executor/test/autoidtest",
+      "pkg/executor/test/distsqltest": "executor/test/distsqltest",
+      "pkg/executor/test/fktest": "executor/test/fktest",
+      "pkg/executor/test/indexmergereadtest": "executor/test/indexmergereadtest",
+      "pkg/executor/test/jointest": "executor/test/jointest",
+      "pkg/executor/test/kvtest": "executor/test/kvtest",
+      "pkg/executor/test/loaddatatest": "executor/test/loaddatatest",
+      "pkg/executor/test/loadremotetest": "executor/test/loadremotetest",
+      "pkg/executor/test/memtest": "executor/test/memtest",
+      "pkg/executor/test/oomtest": "executor/test/oomtest",
+      "pkg/executor/test/partitiontest": "executor/test/partitiontest",
+      "pkg/executor/test/passwordtest": "executor/test/passwordtest",
+      "pkg/executor/test/seqtest": "executor/test/seqtest",
+      "pkg/executor/test/showtest": "executor/test/showtest",
+      "pkg/executor/test/simpletest": "executor/test/simpletest",
+      "pkg/executor/test/splittest": "executor/test/splittest",
+      "pkg/executor/test/tiflashtest": "executor/test/tiflashtest",
+      "pkg/executor/test/unstabletest": "executor/test/unstabletest",
       "br/": "br code",
       "pkg/session/test": "session/test code",
       "pkg/ddl/tests": "ddl/tests code",
-      "pkg/dxf/": "DXF code",
+      "pkg/disttask/": "disttask code",
       "pkg/timer/": "timer code",
       "pkg/util/": "util code",
-      "pkg/lightning/config/": "pkg/lightning/config code",
+      "br/pkg/lightning/config/": "br/pkg/lightning/config code",
       "br/pkg/storage": "br/pkg/storage code",
       "br/pkg/utils": "br/pkg/utils code",
       "pkg/planner/cascades": "planner/cascades code",
       "pkg/store/": "store code",
       "pkg/ttl/": "ttl code",
       "pkg/bindinfo/": "bindinfo code",
-      "pkg/domain/": "domain code",
-      "pkg/sessionctx/variable/tests": "variable tests"
+      "pkg/domain/": "domain code"
     }
   },
   "unconvert": {
@@ -709,8 +682,8 @@
       ".*\\.pb\\.go$": "generated code",
       "pkg/parser/parser.go": "generated code",
       "/cgo/": "no need to vet third party code for cgo",
-      "pkg/lightning/common/conn.go": "ignore: to fix it",
-      "pkg/lightning/common/storage_unix.go": "ignore: to fix it",
+      "br/pkg/lightning/common/conn.go": "ignore: to fix it",
+      "br/pkg/lightning/common/storage_unix.go": "ignore: to fix it",
       "br/pkg/task/common.go": "ignore: to fix it",
       ".*_generated\\.go$": "ignore generated code"
     }
@@ -727,7 +700,6 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "pkg/parser/digester.go": "ignore code"
     }
   },
@@ -736,7 +708,6 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "pkg/parser/digester_test.go": "ignore code"
     }
   },
@@ -745,10 +716,8 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "pkg/server/tidb_test.go": "ignore test code",
       "pkg/server/tests/tidb_test.go": "ignore test code",
-      "pkg/server/tests/commontest/tidb_test.go": "ignore test code",
       "pkg/server/tests/tidb_serial_test.go": "ignore test code",
       "pkg/server/tidb_serial_test.go": "ignore test code",
       "pkg/server/statistics_handler_test.go": "ignore test code",
@@ -898,7 +867,6 @@
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "pkg/parser/parser.go": "ignore code"
     }
   },
@@ -914,7 +882,6 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "tools/check/ut.go": "ignore code"
     }
   },
@@ -929,7 +896,6 @@
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "pkg/parser/parser.go": "ignore code"
     }
   },
@@ -1049,7 +1015,6 @@
     "exclude_files": {
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "pkg/parser/parser.go": "ignore generated code"
     }
   },
@@ -1059,14 +1024,13 @@
       "/build/": "no need to linter code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       ".*_test\\.go$": "ignore test code",
       "br/pkg/restore/split/client.go": "github.com/golang/protobuf deprecated",
       "br/pkg/streamhelper/advancer_cliext.go": "github.com/golang/protobuf deprecated",
-      "pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
-      "pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated",
-      "pkg/ingestor/ingestctrl/local.go": "grpc Compressor/Decompressor is deprecated",
-      "pkg/ingestor/ingestctrl/compress.go": "grpc Compressor/Decompressor is deprecated",
+      "br/pkg/lightning/checkpoints/checkpoints.go": "cfg.TikvImporter.Addr is deprecated",
+      "br/pkg/lightning/checkpoints/glue_checkpoint.go": "cfg.TikvImporter.Addr is deprecated",
+      "br/pkg/lightning/backend/local/local.go": "grpc Compressor/Decompressor is deprecated",
+      "br/pkg/lightning/backend/local/compress.go": "grpc Compressor/Decompressor is deprecated",
       "pkg/domain/infosync/resource_manager_client.go": "github.com/golang/protobuf deprecated"
     },
     "only_files": {
@@ -1087,16 +1051,14 @@
       "pkg/server/": "server code",
       "pkg/owner/": "owner code",
       "pkg/meta": "meta code",
-      "pkg/timer/": "timer code",
-      "pkg/statistics/": "statistics code"
+      "pkg/timer/": "timer code"
     }
   },
   "SA1029": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
+      "/external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       ".*_test\\.go$": "ignore test code"
     }
   },
@@ -1276,7 +1238,6 @@
       "cmd/mirror": "cmd/mirror code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "pkg/parser/yy_parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
@@ -1286,7 +1247,6 @@
       "external/": "no need to vet third party code",
       "cmd/mirror": "no need to mirror",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "pkg/parser/yy_parser.go": "ignore generated code",
       "pkg/parser/parser.go": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
@@ -1299,22 +1259,11 @@
       ".*_generated\\.go$": "ignore generated code"
     }
   },
-  "assertionapi": {
-    "exclude_files": {
-      "external/": "no need to vet third party code",
-      "pkg/parser/yy_parser.go": "ignore generated code",
-      "pkg/parser/parser.go": "ignore generated code",
-      ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
-      "/cgo/": "no need to vet third party code for cgo"
-    }
-  },
   "etcdconfig": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1322,7 +1271,6 @@
     "exclude_files": {
       "parser/parser.go": "parser/parser.go code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "external/": "no need to vet third party code",
       "build/linter/constructor/testdata/": "no need to vet the test inside the linter"
     }
@@ -1332,7 +1280,6 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1341,7 +1288,6 @@
       "pkg/parser/parser.go": "parser/parser.go code",
       ".*_test.go": "ignore test code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "external/": "no need to vet third party code"
     }
   },
@@ -1351,39 +1297,21 @@
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
   "QF1012": {
     "exclude_files": {
       "pkg/parser/parser.go": "parser/parser.go code",
-      "pkg/config/config.go": "config/config.go code",
-      "pkg/executor/analyze_col.go": "skip analyze_col.go for QF1012",
       ".*_test.go": "ignore test code",
       "external/": "no need to vet third party code",
       ".*_generated\\.go$": "ignore generated code",
-      ".*mock.go$": "ignore generated code",
       "/cgo/": "no need to vet third party code for cgo"
     }
   },
   "bootstrap": {
     "only_files": {
       "pkg/session/": "bootstrap code"
-    }
-  },
-  "appends": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
-    }
-  },
-  "unusedwrite": {
-    "exclude_files": {
-      "pkg/parser/parser.go": "parser/parser.go code",
-      "external/": "no need to vet third party code",
-      ".*_generated\\.go$": "ignore generated code"
     }
   }
 }

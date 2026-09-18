@@ -15,37 +15,30 @@
 package expression
 
 import (
-	"bytes"
-	"compress/zlib"
 	"context"
-	"crypto/md5"
-	"encoding/binary"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
 	"github.com/stretchr/testify/require"
 )
 
 var cryptTests = []struct {
 	chs      string
-	origin   any
-	password any
-	crypt    any
+	origin   interface{}
+	password interface{}
+	crypt    interface{}
 }{
 	{mysql.DefaultCollationName, "", "", ""},
 	{mysql.DefaultCollationName, "pingcap", "1234567890123456", "2C35B5A4ADF391"},
@@ -67,13 +60,13 @@ var cryptTests = []struct {
 func TestSQLDecode(t *testing.T) {
 	ctx := createContext(t)
 	for _, tt := range cryptTests {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		err = ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CollationConnection, tt.chs)
+		err = ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CollationConnection, tt.chs)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.Decode, primitiveValsToConstants(ctx, []any{tt.origin, tt.password})...)
+		f, err := newFunctionForTest(ctx, ast.Decode, primitiveValsToConstants(ctx, []interface{}{tt.origin, tt.password})...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(chunk.Row{})
 		require.NoError(t, err)
 		if !d.IsNull() {
 			d = toHex(d)
@@ -86,9 +79,9 @@ func TestSQLDecode(t *testing.T) {
 func TestSQLEncode(t *testing.T) {
 	ctx := createContext(t)
 	for _, test := range cryptTests {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, test.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, test.chs)
 		require.NoError(t, err)
-		err = ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CollationConnection, test.chs)
+		err = ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CollationConnection, test.chs)
 		require.NoError(t, err)
 		var h []byte
 		if test.crypt != nil {
@@ -96,9 +89,9 @@ func TestSQLEncode(t *testing.T) {
 		} else {
 			h = nil
 		}
-		f, err := newFunctionForTest(ctx, ast.Encode, primitiveValsToConstants(ctx, []any{h, test.password})...)
+		f, err := newFunctionForTest(ctx, ast.Encode, primitiveValsToConstants(ctx, []interface{}{h, test.password})...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(chunk.Row{})
 		require.NoError(t, err)
 		if test.origin != nil {
 			enc := charset.FindEncoding(test.chs)
@@ -115,40 +108,40 @@ func TestSQLEncode(t *testing.T) {
 
 var aesTests = []struct {
 	mode   string
-	origin any
-	params []any
-	crypt  any
+	origin interface{}
+	params []interface{}
+	crypt  interface{}
 }{
 	// test for ecb
-	{"aes-128-ecb", "pingcap", []any{"1234567890123456"}, "697BFE9B3F8C2F289DD82C88C7BC95C4"},
-	{"aes-128-ecb", "pingcap123", []any{"1234567890123456"}, "CEC348F4EF5F84D3AA6C4FA184C65766"},
-	{"aes-128-ecb", "pingcap", []any{"123456789012345678901234"}, "6F1589686860C8E8C7A40A78B25FF2C0"},
-	{"aes-128-ecb", "pingcap", []any{"123"}, "996E0CA8688D7AD20819B90B273E01C6"},
-	{"aes-128-ecb", "pingcap", []any{123}, "996E0CA8688D7AD20819B90B273E01C6"},
-	{"aes-128-ecb", nil, []any{123}, nil},
-	{"aes-192-ecb", "pingcap", []any{"1234567890123456"}, "9B139FD002E6496EA2D5C73A2265E661"},
-	{"aes-256-ecb", "pingcap", []any{"1234567890123456"}, "F80DCDEDDBE5663BDB68F74AEDDB8EE3"},
+	{"aes-128-ecb", "pingcap", []interface{}{"1234567890123456"}, "697BFE9B3F8C2F289DD82C88C7BC95C4"},
+	{"aes-128-ecb", "pingcap123", []interface{}{"1234567890123456"}, "CEC348F4EF5F84D3AA6C4FA184C65766"},
+	{"aes-128-ecb", "pingcap", []interface{}{"123456789012345678901234"}, "6F1589686860C8E8C7A40A78B25FF2C0"},
+	{"aes-128-ecb", "pingcap", []interface{}{"123"}, "996E0CA8688D7AD20819B90B273E01C6"},
+	{"aes-128-ecb", "pingcap", []interface{}{123}, "996E0CA8688D7AD20819B90B273E01C6"},
+	{"aes-128-ecb", nil, []interface{}{123}, nil},
+	{"aes-192-ecb", "pingcap", []interface{}{"1234567890123456"}, "9B139FD002E6496EA2D5C73A2265E661"},
+	{"aes-256-ecb", "pingcap", []interface{}{"1234567890123456"}, "F80DCDEDDBE5663BDB68F74AEDDB8EE3"},
 	// test for cbc
-	{"aes-128-cbc", "pingcap", []any{"1234567890123456", "1234567890123456"}, "2ECA0077C5EA5768A0485AA522774792"},
-	{"aes-128-cbc", "pingcap", []any{"123456789012345678901234", "1234567890123456"}, "483788634DA8817423BA0934FD2C096E"},
-	{"aes-192-cbc", "pingcap", []any{"1234567890123456", "1234567890123456"}, "516391DB38E908ECA93AAB22870EC787"},
-	{"aes-256-cbc", "pingcap", []any{"1234567890123456", "1234567890123456"}, "5D0E22C1E77523AEF5C3E10B65653C8F"},
-	{"aes-256-cbc", "pingcap", []any{"12345678901234561234567890123456", "1234567890123456"}, "A26BA27CA4BE9D361D545AA84A17002D"},
-	{"aes-256-cbc", "pingcap", []any{"1234567890123456", "12345678901234561234567890123456"}, "5D0E22C1E77523AEF5C3E10B65653C8F"},
+	{"aes-128-cbc", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "2ECA0077C5EA5768A0485AA522774792"},
+	{"aes-128-cbc", "pingcap", []interface{}{"123456789012345678901234", "1234567890123456"}, "483788634DA8817423BA0934FD2C096E"},
+	{"aes-192-cbc", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "516391DB38E908ECA93AAB22870EC787"},
+	{"aes-256-cbc", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "5D0E22C1E77523AEF5C3E10B65653C8F"},
+	{"aes-256-cbc", "pingcap", []interface{}{"12345678901234561234567890123456", "1234567890123456"}, "A26BA27CA4BE9D361D545AA84A17002D"},
+	{"aes-256-cbc", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "5D0E22C1E77523AEF5C3E10B65653C8F"},
 	// test for ofb
-	{"aes-128-ofb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "0515A36BBF3DE0"},
-	{"aes-128-ofb", "pingcap", []any{"123456789012345678901234", "1234567890123456"}, "C2A93A93818546"},
-	{"aes-192-ofb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "FE09DCCF14D458"},
-	{"aes-256-ofb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "2E70FCAC0C0834"},
-	{"aes-256-ofb", "pingcap", []any{"12345678901234561234567890123456", "1234567890123456"}, "83E2B30A71F011"},
-	{"aes-256-ofb", "pingcap", []any{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
+	{"aes-128-ofb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "0515A36BBF3DE0"},
+	{"aes-128-ofb", "pingcap", []interface{}{"123456789012345678901234", "1234567890123456"}, "C2A93A93818546"},
+	{"aes-192-ofb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "FE09DCCF14D458"},
+	{"aes-256-ofb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "2E70FCAC0C0834"},
+	{"aes-256-ofb", "pingcap", []interface{}{"12345678901234561234567890123456", "1234567890123456"}, "83E2B30A71F011"},
+	{"aes-256-ofb", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
 	// test for cfb
-	{"aes-128-cfb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "0515A36BBF3DE0"},
-	{"aes-128-cfb", "pingcap", []any{"123456789012345678901234", "1234567890123456"}, "C2A93A93818546"},
-	{"aes-192-cfb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "FE09DCCF14D458"},
-	{"aes-256-cfb", "pingcap", []any{"1234567890123456", "1234567890123456"}, "2E70FCAC0C0834"},
-	{"aes-256-cfb", "pingcap", []any{"12345678901234561234567890123456", "1234567890123456"}, "83E2B30A71F011"},
-	{"aes-256-cfb", "pingcap", []any{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
+	{"aes-128-cfb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "0515A36BBF3DE0"},
+	{"aes-128-cfb", "pingcap", []interface{}{"123456789012345678901234", "1234567890123456"}, "C2A93A93818546"},
+	{"aes-192-cfb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "FE09DCCF14D458"},
+	{"aes-256-cfb", "pingcap", []interface{}{"1234567890123456", "1234567890123456"}, "2E70FCAC0C0834"},
+	{"aes-256-cfb", "pingcap", []interface{}{"12345678901234561234567890123456", "1234567890123456"}, "83E2B30A71F011"},
+	{"aes-256-cfb", "pingcap", []interface{}{"1234567890123456", "12345678901234561234567890123456"}, "2E70FCAC0C0834"},
 }
 
 func TestAESEncrypt(t *testing.T) {
@@ -156,7 +149,7 @@ func TestAESEncrypt(t *testing.T) {
 
 	fc := funcs[ast.AesEncrypt]
 	for _, tt := range aesTests {
-		err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, tt.mode)
+		err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err)
 		args := []types.Datum{types.NewDatum(tt.origin)}
 		for _, param := range tt.params {
@@ -164,11 +157,11 @@ func TestAESEncrypt(t *testing.T) {
 		}
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err)
-		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt))
 	}
-	err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb")
+	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	testNullInput(t, ctx, ast.AesEncrypt)
 	testAmbiguousInput(t, ctx, ast.AesEncrypt)
@@ -179,39 +172,39 @@ func TestAESEncrypt(t *testing.T) {
 	gbkTests := []struct {
 		mode   string
 		chs    string
-		origin any
-		params []any
+		origin interface{}
+		params []interface{}
 		crypt  string
 	}{
 		// test for ecb
-		{"aes-128-ecb", "utf8mb4", "你好", []any{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
-		{"aes-128-ecb", "gbk", gbkStr, []any{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
-		{"aes-128-ecb", "utf8mb4", "123", []any{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
-		{"aes-128-ecb", "gbk", "123", []any{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"},
-		{"aes-128-ecb", "utf8mb4", "你好", []any{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
-		{"aes-128-ecb", "gbk", gbkStr, []any{"你好"}, "84982910338160D037615D283AD413DE"},
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
+		{"aes-128-ecb", "utf8mb4", "123", []interface{}{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
+		{"aes-128-ecb", "gbk", "123", []interface{}{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"},
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"你好"}, "84982910338160D037615D283AD413DE"},
 		// test for cbc
-		{"aes-128-cbc", "utf8mb4", "你好", []any{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
-		{"aes-128-cbc", "gbk", gbkStr, []any{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
-		{"aes-128-cbc", "utf8mb4", "123", []any{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
-		{"aes-128-cbc", "gbk", "123", []any{"你好", "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
-		{"aes-128-cbc", "utf8mb4", "你好", []any{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
-		{"aes-128-cbc", "gbk", gbkStr, []any{"你好", "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
+		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
+		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
+		{"aes-128-cbc", "utf8mb4", "123", []interface{}{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
+		{"aes-128-cbc", "gbk", "123", []interface{}{"你好", "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
+		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
+		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"你好", "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
 	}
 
 	for _, tt := range gbkTests {
 		msg := fmt.Sprintf("%v", tt)
-		err := ctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err, msg)
-		err = ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, tt.mode)
+		err = ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err, msg)
 
-		args := primitiveValsToConstants(ctx, []any{tt.origin})
+		args := primitiveValsToConstants(ctx, []interface{}{tt.origin})
 		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
 		f, err := fc.getFunction(ctx, args)
 
 		require.NoError(t, err, msg)
-		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err, msg)
 		require.Equal(t, types.NewDatum(tt.crypt), toHex(crypt), msg)
 	}
@@ -223,7 +216,7 @@ func TestAESDecrypt(t *testing.T) {
 	fc := funcs[ast.AesDecrypt]
 	for _, tt := range aesTests {
 		msg := fmt.Sprintf("%v", tt)
-		err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, tt.mode)
+		err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err, msg)
 		args := []types.Datum{fromHex(tt.crypt)}
 		for _, param := range tt.params {
@@ -231,7 +224,7 @@ func TestAESDecrypt(t *testing.T) {
 		}
 		f, err := fc.getFunction(ctx, datumsToConstants(args))
 		require.NoError(t, err, msg)
-		str, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		str, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err, msg)
 		if tt.origin == nil {
 			require.True(t, str.IsNull())
@@ -239,7 +232,7 @@ func TestAESDecrypt(t *testing.T) {
 		}
 		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str, msg)
 	}
-	err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb")
+	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	testNullInput(t, ctx, ast.AesDecrypt)
 	testAmbiguousInput(t, ctx, ast.AesDecrypt)
@@ -251,81 +244,81 @@ func TestAESDecrypt(t *testing.T) {
 	gbkTests := []struct {
 		mode   string
 		chs    string
-		origin any
-		params []any
+		origin interface{}
+		params []interface{}
 		crypt  string
 	}{
 		// test for ecb
-		{"aes-128-ecb", "utf8mb4", "你好", []any{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
-		{"aes-128-ecb", "gbk", gbkStr, []any{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
-		{"aes-128-ecb", "utf8mb4", "123", []any{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
-		{"aes-128-ecb", "gbk", "123", []any{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"},
-		{"aes-128-ecb", "utf8mb4", "你好", []any{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
-		{"aes-128-ecb", "gbk", gbkStr, []any{"你好"}, "84982910338160D037615D283AD413DE"},
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"123"}, "CEBD80EEC6423BEAFA1BB30FD7625CBC"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"123"}, "6AFA9D7BA2C1AED1603E804F75BB0127"},
+		{"aes-128-ecb", "utf8mb4", "123", []interface{}{"你好"}, "E03F6D9C1C86B82F5620EE0AA9BD2F6A"},
+		{"aes-128-ecb", "gbk", "123", []interface{}{"你好"}, "31A2D26529F0E6A38D406379ABD26FA5"},
+		{"aes-128-ecb", "utf8mb4", "你好", []interface{}{"你好"}, "3E2D8211DAE17143F22C2C5969A35263"},
+		{"aes-128-ecb", "gbk", gbkStr, []interface{}{"你好"}, "84982910338160D037615D283AD413DE"},
 		// test for cbc
-		{"aes-128-cbc", "utf8mb4", "你好", []any{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
-		{"aes-128-cbc", "gbk", gbkStr, []any{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
-		{"aes-128-cbc", "utf8mb4", "123", []any{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
-		{"aes-128-cbc", "gbk", "123", []any{"你好", "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
-		{"aes-128-cbc", "utf8mb4", "你好", []any{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
-		{"aes-128-cbc", "gbk", gbkStr, []any{"你好", "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
+		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"123", "1234567890123456"}, "B95509A516ACED59C3DF4EC41C538D83"},
+		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"123", "1234567890123456"}, "D4322D091B5DDE0DEB35B1749DA2483C"},
+		{"aes-128-cbc", "utf8mb4", "123", []interface{}{"你好", "1234567890123456"}, "E19E86A9E78E523267AFF36261AD117D"},
+		{"aes-128-cbc", "gbk", "123", []interface{}{"你好", "1234567890123456"}, "5A2F8F2C1841CC4E1D1640F1EA2A1A23"},
+		{"aes-128-cbc", "utf8mb4", "你好", []interface{}{"你好", "1234567890123456"}, "B73637C73302C909EA63274C07883E71"},
+		{"aes-128-cbc", "gbk", gbkStr, []interface{}{"你好", "1234567890123456"}, "61E13E9B00F2E757F4E925D3268227A0"},
 	}
 
 	for _, tt := range gbkTests {
 		msg := fmt.Sprintf("%v", tt)
-		err := ctx.GetSessionVars().SetSystemVar(vardef.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVar(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err, msg)
-		err = ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, tt.mode)
+		err = ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, tt.mode)
 		require.NoError(t, err, msg)
 		// Set charset and collate except first argument
 		args := datumsToConstants([]types.Datum{fromHex(tt.crypt)})
 		args = append(args, primitiveValsToConstants(ctx, tt.params)...)
 		f, err := fc.getFunction(ctx, args)
 		require.NoError(t, err, msg)
-		str, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		str, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err, msg)
 		require.Equal(t, types.NewCollationStringDatum(tt.origin.(string), charset.CollationBin), str, msg)
 	}
 }
 
-func testNullInput(t *testing.T, ctx *mock.Context, fnName string) {
-	err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb")
+func testNullInput(t *testing.T, ctx sessionctx.Context, fnName string) {
+	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	var argNull types.Datum
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, argNull}))
 	require.NoError(t, err)
-	crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	crypt, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, crypt.IsNull())
 
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull, arg}))
 	require.NoError(t, err)
-	crypt, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	crypt, err = evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, crypt.IsNull())
 }
 
-func testAmbiguousInput(t *testing.T, ctx *mock.Context, fnName string) {
+func testAmbiguousInput(t *testing.T, ctx sessionctx.Context, fnName string) {
 	fc := funcs[fnName]
 	arg := types.NewStringDatum("str")
 	// test for modes that require init_vector
-	err := ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-cbc")
+	err := ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-cbc")
 	require.NoError(t, err)
 	_, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg}))
 	require.Error(t, err)
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, types.NewStringDatum("iv < 16 bytes")}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	require.Error(t, err)
 
 	// test for modes that do not require init_vector
-	err = ctx.GetSessionVars().SetSystemVar(vardef.BlockEncryptionMode, "aes-128-ecb")
+	err = ctx.GetSessionVars().SetSystemVar(variable.BlockEncryptionMode, "aes-128-ecb")
 	require.NoError(t, err)
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{arg, arg, arg}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
 	require.GreaterOrEqual(t, len(warnings), 1)
@@ -340,7 +333,7 @@ func toHex(d types.Datum) (h types.Datum) {
 	return
 }
 
-func fromHex(str any) (d types.Datum) {
+func fromHex(str interface{}) (d types.Datum) {
 	if str == nil {
 		return
 	}
@@ -355,7 +348,7 @@ func TestSha1Hash(t *testing.T) {
 	ctx := createContext(t)
 	sha1Tests := []struct {
 		chs    string
-		origin any
+		origin interface{}
 		crypt  string
 	}{
 		{mysql.DefaultCollationName, "test", "a94a8fe5ccb19ba61c4c0873d391e987982fbbd3"},
@@ -372,10 +365,10 @@ func TestSha1Hash(t *testing.T) {
 
 	fc := funcs[ast.SHA]
 	for _, tt := range sha1Tests {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		f, _ := fc.getFunction(ctx, primitiveValsToConstants(ctx, []any{tt.origin}))
-		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		f, _ := fc.getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{tt.origin}))
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		res, err := crypt.ToString()
 		require.NoError(t, err)
@@ -384,7 +377,7 @@ func TestSha1Hash(t *testing.T) {
 	// test NULL input for sha
 	var argNull types.Datum
 	f, _ := fc.getFunction(ctx, datumsToConstants([]types.Datum{argNull}))
-	crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	crypt, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.True(t, crypt.IsNull())
 }
@@ -393,9 +386,9 @@ func TestSha2Hash(t *testing.T) {
 	ctx := createContext(t)
 	sha2Tests := []struct {
 		chs        string
-		origin     any
-		hashLength any
-		crypt      any
+		origin     interface{}
+		hashLength interface{}
+		crypt      interface{}
 		validCase  bool
 	}{
 		{mysql.DefaultCollationName, "pingcap", 0, "2871823be240f8ecd1d72f24c99eaa2e58af18b4b8ba99a4fc2823ba5c43930a", true},
@@ -443,11 +436,11 @@ func TestSha2Hash(t *testing.T) {
 
 	fc := funcs[ast.SHA2]
 	for _, tt := range sha2Tests {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, tt.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, tt.chs)
 		require.NoError(t, err)
-		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, []any{tt.origin, tt.hashLength}))
+		f, err := fc.getFunction(ctx, primitiveValsToConstants(ctx, []interface{}{tt.origin, tt.hashLength}))
 		require.NoError(t, err)
-		crypt, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		crypt, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoError(t, err)
 		if tt.validCase {
 			res, err := crypt.ToString()
@@ -463,7 +456,7 @@ func TestMD5Hash(t *testing.T) {
 	ctx := createContext(t)
 
 	cases := []struct {
-		args     any
+		args     interface{}
 		expected string
 		charset  string
 		isNil    bool
@@ -485,11 +478,11 @@ func TestMD5Hash(t *testing.T) {
 		{nil, "", "", true, false},
 	}
 	for _, c := range cases {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.charset)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.charset)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants(ctx, []any{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.MD5, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 		} else {
@@ -505,51 +498,32 @@ func TestMD5Hash(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func MD5HashOld(arg string) string {
-	sum := md5.Sum([]byte(arg))
-	return fmt.Sprintf("%x", sum)
-}
-
-func MD5HashNew(arg string) string {
-	sum := md5.Sum([]byte(arg))
-	return hex.EncodeToString(sum[:])
-}
-
-func BenchmarkMD5Hash(b *testing.B) {
-	b.ResetTimer()
-	b.ReportAllocs()
-	for i := 0; i < b.N; i++ {
-		MD5HashOld("abc")
-		//MD5HashNew("abc")
-	}
-}
-
 func TestRandomBytes(t *testing.T) {
 	ctx := createContext(t)
 
 	fc := funcs[ast.RandomBytes]
 	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(32)}))
 	require.NoError(t, err)
-	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+	out, err := evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, 32, len(out.GetBytes()))
 
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(1025)}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	require.Error(t, err)
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(-32)}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	require.Error(t, err)
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(0)}))
 	require.NoError(t, err)
-	_, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	_, err = evalBuiltinFunc(f, chunk.Row{})
 	require.Error(t, err)
 
 	f, err = fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewDatum(nil)}))
 	require.NoError(t, err)
-	out, err = evalBuiltinFunc(f, ctx, chunk.Row{})
+	out, err = evalBuiltinFunc(f, chunk.Row{})
 	require.NoError(t, err)
 	require.Equal(t, 0, len(out.GetBytes()))
 }
@@ -562,32 +536,13 @@ func decodeHex(str string) []byte {
 	return ret
 }
 
-func makeCompressedPayload(t *testing.T, declaredLength uint32, data []byte) []byte {
-	var compressed bytes.Buffer
-	writer := zlib.NewWriter(&compressed)
-	_, err := writer.Write(data)
-	require.NoError(t, err)
-	require.NoError(t, writer.Close())
-
-	payload := make([]byte, 4+compressed.Len())
-	binary.LittleEndian.PutUint32(payload, declaredLength)
-	copy(payload[4:], compressed.Bytes())
-	return payload
-}
-
-func requireLastZlibWarning(t *testing.T, ctx *mock.Context, expected error) {
-	warnings := ctx.GetSessionVars().StmtCtx.GetWarnings()
-	require.NotEmpty(t, warnings)
-	require.Truef(t, terror.ErrorEqual(expected, warnings[len(warnings)-1].Err), "warning %v", warnings[len(warnings)-1].Err)
-}
-
 func TestCompress(t *testing.T) {
 	ctx := createContext(t)
 	fc := funcs[ast.Compress]
 	tests := []struct {
 		chs    string
-		in     any
-		expect any
+		in     interface{}
+		expect interface{}
 	}{
 		{"", "hello world", string(decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"))},
 		{"", "", ""},
@@ -598,12 +553,12 @@ func TestCompress(t *testing.T) {
 		{"gbk", "你好", string(decodeHex("04000000789C3AF278D76140000000FFFF07F40325"))},
 	}
 	for _, test := range tests {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, test.chs)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, test.chs)
 		require.NoErrorf(t, err, "%v", test)
-		arg := primitiveValsToConstants(ctx, []any{test.in})
+		arg := primitiveValsToConstants(ctx, []interface{}{test.in})
 		f, err := fc.getFunction(ctx, arg)
 		require.NoErrorf(t, err, "%v", test)
-		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
 		if test.expect == nil {
 			require.Truef(t, out.IsNull(), "%v", test)
@@ -616,8 +571,8 @@ func TestCompress(t *testing.T) {
 func TestUncompress(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		in     any
-		expect any
+		in     interface{}
+		expect interface{}
 	}{
 		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), "hello world"},         // zlib result from MySQL
 		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), "hello world"}, // zlib result from TiDB
@@ -638,7 +593,7 @@ func TestUncompress(t *testing.T) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
-		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
 		if test.expect == nil {
 			require.Truef(t, out.IsNull(), "%v", test)
@@ -651,8 +606,8 @@ func TestUncompress(t *testing.T) {
 func TestUncompressLength(t *testing.T) {
 	ctx := createContext(t)
 	tests := []struct {
-		in     any
-		expect any
+		in     interface{}
+		expect interface{}
 	}{
 		{decodeHex("0B000000789CCB48CDC9C95728CF2FCA4901001A0B045D"), int64(11)},         // zlib result from MySQL
 		{decodeHex("0B000000789CCA48CDC9C95728CF2FCA4901040000FFFF1A0B045D"), int64(11)}, // zlib result from TiDB
@@ -672,7 +627,7 @@ func TestUncompressLength(t *testing.T) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
-		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
 		require.Equalf(t, types.NewDatum(test.expect), out, "%v", test)
 	}
@@ -683,12 +638,12 @@ func TestValidatePasswordStrength(t *testing.T) {
 	ctx.GetSessionVars().User = &auth.UserIdentity{Username: "testuser"}
 	globalVarsAccessor := variable.NewMockGlobalAccessor4Tests()
 	ctx.GetSessionVars().GlobalVarsAccessor = globalVarsAccessor
-	err := globalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordDictionary, "1234")
+	err := globalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordDictionary, "1234")
 	require.NoError(t, err)
 
 	tests := []struct {
-		in     any
-		expect any
+		in     interface{}
+		expect interface{}
 	}{
 		{nil, nil},
 		{"123", 0},
@@ -706,7 +661,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
-		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
 		if test.expect == nil {
 			require.Equal(t, types.NewDatum(nil), out)
@@ -715,13 +670,13 @@ func TestValidatePasswordStrength(t *testing.T) {
 		}
 	}
 	// enable password validation
-	err = globalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordEnable, "ON")
+	err = globalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordEnable, "ON")
 	require.NoError(t, err)
 	for _, test := range tests {
 		arg := types.NewDatum(test.in)
 		f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{arg}))
 		require.NoErrorf(t, err, "%v", test)
-		out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
+		out, err := evalBuiltinFunc(f, chunk.Row{})
 		require.NoErrorf(t, err, "%v", test)
 		require.Equalf(t, types.NewDatum(test.expect), out, "%v", test)
 	}
@@ -730,7 +685,7 @@ func TestValidatePasswordStrength(t *testing.T) {
 func TestPassword(t *testing.T) {
 	ctx := createContext(t)
 	cases := []struct {
-		args     any
+		args     interface{}
 		expected string
 		charset  string
 		isNil    bool
@@ -751,11 +706,11 @@ func TestPassword(t *testing.T) {
 
 	warnCount := len(ctx.GetSessionVars().StmtCtx.GetWarnings())
 	for _, c := range cases {
-		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(vardef.CharacterSetConnection, c.charset)
+		err := ctx.GetSessionVars().SetSystemVarWithoutValidation(variable.CharacterSetConnection, c.charset)
 		require.NoError(t, err)
-		f, err := newFunctionForTest(ctx, ast.PasswordFunc, primitiveValsToConstants(ctx, []any{c.args})...)
+		f, err := newFunctionForTest(ctx, ast.PasswordFunc, primitiveValsToConstants(ctx, []interface{}{c.args})...)
 		require.NoError(t, err)
-		d, err := f.Eval(ctx, chunk.Row{})
+		d, err := f.Eval(chunk.Row{})
 		if c.getErr {
 			require.Error(t, err)
 			continue
@@ -782,93 +737,4 @@ func TestPassword(t *testing.T) {
 
 	_, err := funcs[ast.PasswordFunc].getFunction(ctx, []Expression{NewZero()})
 	require.NoError(t, err)
-}
-
-func TestUncompressRejectsInflatedDataLargerThanDeclaredLength(t *testing.T) {
-	ctx := createContext(t)
-	declaredLength := uint32(32)
-	payload := makeCompressedPayload(t, declaredLength, bytes.Repeat([]byte{0}, 1<<20))
-	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
-
-	fc := funcs[ast.Uncompress]
-	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
-	require.NoError(t, err)
-	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-	require.NoError(t, err)
-	require.True(t, out.IsNull())
-	require.Equal(t, int64(0), tracker.BytesConsumed())
-	require.LessOrEqual(t, tracker.MaxConsumed(), int64(declaredLength))
-	requireLastZlibWarning(t, ctx, errZlibZBuf)
-}
-
-func TestUncompressRejectsHandcraftedPayloadLargerThanDeclaredLength(t *testing.T) {
-	ctx := createContext(t)
-	payload := decodeHex("20000000789c73741c05a360148c540000a4780410")
-	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
-
-	require.Equal(t, uint32(32), binary.LittleEndian.Uint32(payload[:4]))
-	reader, err := zlib.NewReader(bytes.NewReader(payload[4:]))
-	require.NoError(t, err)
-	raw, err := io.ReadAll(reader)
-	require.NoError(t, err)
-	require.NoError(t, reader.Close())
-	require.Equal(t, bytes.Repeat([]byte("A"), 1024), raw)
-
-	fc := funcs[ast.Uncompress]
-	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
-	require.NoError(t, err)
-	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-	require.NoError(t, err)
-	require.True(t, out.IsNull())
-	require.Equal(t, int64(0), tracker.BytesConsumed())
-	require.LessOrEqual(t, tracker.MaxConsumed(), int64(32))
-	requireLastZlibWarning(t, ctx, errZlibZBuf)
-}
-
-func TestUncompressTracksInflateMemory(t *testing.T) {
-	ctx := createContext(t)
-	data := bytes.Repeat([]byte{1}, 4096)
-	payload := makeCompressedPayload(t, uint32(len(data)), data)
-	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
-	action := &memory.LogOnExceed{}
-	exceedCount := 0
-	action.SetLogHook(func(uint64) {
-		exceedCount++
-	})
-	tracker.SetBytesLimit(32)
-	tracker.SetActionOnExceed(action)
-
-	fc := funcs[ast.Uncompress]
-	f, err := fc.getFunction(ctx, datumsToConstants([]types.Datum{types.NewBytesDatum(payload)}))
-	require.NoError(t, err)
-	out, err := evalBuiltinFunc(f, ctx, chunk.Row{})
-	require.NoError(t, err)
-	require.Equal(t, types.NewCollationStringDatum(string(data), charset.CollationBin), out)
-	require.Equal(t, int64(0), tracker.BytesConsumed())
-	require.GreaterOrEqual(t, tracker.MaxConsumed(), int64(len(data)))
-	require.Equal(t, 1, exceedCount)
-}
-
-func TestUncompressRejectsInflatedDataLargerThanDeclaredLengthVectorized(t *testing.T) {
-	ctx := createContext(t)
-	declaredLength := uint32(32)
-	payload := makeCompressedPayload(t, declaredLength, bytes.Repeat([]byte{0}, 1<<20))
-	argTp := types.NewFieldType(mysql.TypeBlob)
-	arg := &Column{Index: 0, RetType: argTp}
-	tracker := ctx.GetSessionVars().StmtCtx.MemTracker
-
-	fc := funcs[ast.Uncompress]
-	f, err := fc.getFunction(ctx, []Expression{arg})
-	require.NoError(t, err)
-	require.True(t, f.isChildrenVectorized())
-	input := chunk.New([]*types.FieldType{argTp}, 1, 1)
-	input.AppendBytes(0, payload)
-	result := chunk.NewColumn(f.getRetTp(), 1)
-
-	err = f.vecEvalString(ctx, input, result)
-	require.NoError(t, err)
-	require.True(t, result.IsNull(0))
-	require.Equal(t, int64(0), tracker.BytesConsumed())
-	require.LessOrEqual(t, tracker.MaxConsumed(), int64(declaredLength))
-	requireLastZlibWarning(t, ctx, errZlibZBuf)
 }

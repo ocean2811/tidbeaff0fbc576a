@@ -6,7 +6,7 @@ go_library(
         "bench.go",
         "wrapper.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/testkit/testmain",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testmain",
     visibility = ["//visibility:public"],
     deps = ["@org_uber_go_goleak//:goleak"],
 )

@@ -18,18 +18,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"sync/atomic"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror/exeerrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -56,33 +55,24 @@ const (
 	JobStatusRunning   = "running"
 	jogStatusCancelled = "cancelled"
 	jobStatusFailed    = "failed"
-	// JobStatusFinished exported since it's used in show import jobs
-	JobStatusFinished = "finished"
+	jobStatusFinished  = "finished"
 
 	// when the job is finished, step will be set to none.
 	jobStepNone = ""
-	// JobStepPreparing is used by prepare-enabled jobs before generating
-	// first business-step subtasks.
-	JobStepPreparing = "preparing"
 	// JobStepGlobalSorting is the first step when using global sort,
 	// step goes from none -> global-sorting -> importing -> validating -> none.
-	// for prepare-enabled global sort, step goes from none -> preparing ->
-	// global-sorting -> importing -> validating -> none.
 	JobStepGlobalSorting = "global-sorting"
 	// JobStepImporting is the first step when using local sort,
 	// step goes from none -> importing -> validating -> none.
 	// when used in global sort, it means importing the sorted data.
 	// when used in local sort, it means encode&sort data and then importing the data.
-	JobStepImporting = "importing"
-	// JobStepResolvingConflicts is the step after importing to resolve conflicts,
-	// it's used in global sort.
-	JobStepResolvingConflicts = "resolving-conflicts"
-	JobStepValidating         = "validating"
+	JobStepImporting  = "importing"
+	JobStepValidating = "validating"
 
 	baseQuerySQL = `SELECT
-					id, create_time, start_time, update_time, end_time,
+					id, create_time, start_time, end_time,
 					table_schema, table_name, table_id, created_by, parameters, source_file_size,
-					status, step, summary, error_message, group_key
+					status, step, summary, error_message
 				FROM mysql.tidb_import_jobs`
 )
 
@@ -96,7 +86,7 @@ type ImportParameters struct {
 	FileLocation string `json:"file-location"`
 	Format       string `json:"format"`
 	// only include what user specified, not include default value.
-	Options map[string]any `json:"options,omitempty"`
+	Options map[string]interface{} `json:"options,omitempty"`
 }
 
 var _ fmt.Stringer = &ImportParameters{}
@@ -107,12 +97,17 @@ func (ip *ImportParameters) String() string {
 	return string(b)
 }
 
+// JobSummary is the summary info of import into job.
+type JobSummary struct {
+	// ImportedRows is the number of rows imported into TiKV.
+	ImportedRows uint64 `json:"imported-rows,omitempty"`
+}
+
 // JobInfo is the information of import into job.
 type JobInfo struct {
 	ID             int64
 	CreateTime     types.Time
 	StartTime      types.Time
-	UpdateTime     types.Time
 	EndTime        types.Time
 	TableSchema    string
 	TableName      string
@@ -121,45 +116,18 @@ type JobInfo struct {
 	Parameters     ImportParameters
 	SourceFileSize int64
 	Status         string
-	// Step corresponds to the `phase` field in `SHOW IMPORT JOB`
-	// Here we just use the same name as in distributed framework.
+	// in SHOW IMPORT JOB, we name it as phase.
+	// here, we use the same name as in distributed framework.
 	Step string
-	// The summary of the job, it will store info for each step of the import and
-	// will be updated when switching to a new step.
-	// If the ingest step is finished, the number of ingested rows will also stored in it.
-	Summary      *Summary
+	// the summary info of the job, it's updated only when the job is finished.
+	// for running job, we should query the progress from the distributed framework.
+	Summary      *JobSummary
 	ErrorMessage string
-	GroupKey     string
 }
 
 // CanCancel returns whether the job can be cancelled.
 func (j *JobInfo) CanCancel() bool {
 	return j.Status == jobStatusPending || j.Status == JobStatusRunning
-}
-
-// IsCancelled returns whether the job has been cancelled.
-func (j *JobInfo) IsCancelled() bool {
-	return j.Status == jogStatusCancelled
-}
-
-// IsSuccess returns whether the job is successful.
-func (j *JobInfo) IsSuccess() bool {
-	return j.Status == JobStatusFinished
-}
-
-// IsSourceFileSizeUnknown returns whether source_file_size has not been
-// determined yet for async-prepare jobs.
-func (j *JobInfo) IsSourceFileSizeUnknown() bool {
-	// if the job is not using async prepare, source_file_size is determined
-	// when creating the job, and it will never be 0 since we check total file
-	// size > 0 in precheck.
-	if j.SourceFileSize > 0 {
-		return false
-	}
-	if j.Status == jobStatusPending {
-		return true
-	}
-	return j.Status == JobStatusRunning && j.Step == JobStepPreparing
 }
 
 // GetJob returns the job with the given id if the user has privilege.
@@ -188,22 +156,18 @@ func GetJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, user str
 		return nil, err
 	}
 	if !hasSuperPriv && info.CreatedBy != user {
-		return nil, plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
+		return nil, core.ErrSpecificAccessDenied.GenWithStackByArgs("SUPER")
 	}
 	return info, nil
 }
 
 // GetActiveJobCnt returns the count of active import jobs.
 // Active import jobs include pending and running jobs.
-func GetActiveJobCnt(ctx context.Context, conn sqlexec.SQLExecutor, tableSchema, tableName string) (int64, error) {
+func GetActiveJobCnt(ctx context.Context, conn sqlexec.SQLExecutor) (int64, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 
-	sql := `select count(1) from mysql.tidb_import_jobs
-			where status in (%?, %?)
-				and table_schema = %? and table_name = %?;
-			`
-	rs, err := conn.ExecuteInternal(ctx, sql, jobStatusPending, JobStatusRunning,
-		tableSchema, tableName)
+	sql := `select count(1) from mysql.tidb_import_jobs where status in (%?, %?)`
+	rs, err := conn.ExecuteInternal(ctx, sql, jobStatusPending, JobStatusRunning)
 	if err != nil {
 		return 0, err
 	}
@@ -224,7 +188,6 @@ func CreateJob(
 	db, table string,
 	tableID int64,
 	user string,
-	groupKey string,
 	parameters *ImportParameters,
 	sourceFileSize int64,
 ) (int64, error) {
@@ -234,10 +197,9 @@ func CreateJob(
 	}
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err = conn.ExecuteInternal(ctx, `INSERT INTO mysql.tidb_import_jobs
-		(table_schema, table_name, table_id, group_key, created_by, parameters, source_file_size, status, step)
-		VALUES (%?, %?, %?, %?, %?, %?, %?, %?, %?);`,
-		db, table, tableID, groupKey, user, bytes, sourceFileSize, jobStatusPending, jobStepNone)
-
+		(table_schema, table_name, table_id, created_by, parameters, source_file_size, status, step)
+		VALUES (%?, %?, %?, %?, %?, %?, %?, %?);`,
+		db, table, tableID, user, bytes, sourceFileSize, jobStatusPending, jobStepNone)
 	if err != nil {
 		return 0, err
 	}
@@ -278,159 +240,98 @@ func StartJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step s
 func Job2Step(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, step string) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-			SET update_time = CURRENT_TIMESTAMP(6), step = %?
-			WHERE id = %? AND status = %?;`,
+		SET update_time = CURRENT_TIMESTAMP(6), step = %?
+		WHERE id = %? AND status = %?;`,
 		step, jobID, JobStatusRunning)
 
 	return err
 }
 
-// UpdateJobPreparedInfo updates import job fields that are known only after
-// async prepare succeeds.
-func UpdateJobPreparedInfo(
-	ctx context.Context,
-	conn sqlexec.SQLExecutor,
-	jobID int64,
-	sourceFileSize int64,
-	format string,
-) error {
-	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	rs, err := conn.ExecuteInternal(ctx, `SELECT parameters FROM mysql.tidb_import_jobs
-		WHERE id = %? AND status = %?;`,
-		jobID, JobStatusRunning)
-	if err != nil {
-		return err
-	}
-	defer terror.Call(rs.Close)
-	rows, err := sqlexec.DrainRecordSet(ctx, rs, 1)
-	if err != nil {
-		return err
-	}
-	// no matched running job, keep historical behavior: no-op.
-	if len(rows) == 0 {
-		return nil
-	}
-
-	parameters := &ImportParameters{}
-	parametersStr := rows[0].GetString(0)
-	if len(parametersStr) > 0 {
-		if err = json.Unmarshal([]byte(parametersStr), parameters); err != nil {
-			return err
-		}
-	}
-	if format != "" {
-		parameters.Format = format
-	}
-
-	paramsBytes, err := json.Marshal(parameters)
-	if err != nil {
-		return err
-	}
-	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-				SET update_time = CURRENT_TIMESTAMP(6), source_file_size = %?, parameters = %?
-				WHERE id = %? AND status = %?;`,
-		sourceFileSize, paramsBytes, jobID, JobStatusRunning)
-	return err
-}
-
-// FinishJob tries to finish a running job with jobID, change its status to finished, clear its step and update summary.
+// FinishJob tries to finish a running job with jobID, change its status to finished, clear its step.
 // It will not return error when there's no matched job.
-func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *Summary) error {
-	summaryStr := "{}"
-	if summary != nil {
-		bytes, err := json.Marshal(summary)
-		if err != nil {
-			return err
-		}
-		summaryStr = string(bytes)
+func FinishJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, summary *JobSummary) error {
+	bytes, err := json.Marshal(summary)
+	if err != nil {
+		return err
 	}
-
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
+	_, err = conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
 		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, step = %?, summary = %?
 		WHERE id = %? AND status = %?;`,
-		JobStatusFinished, jobStepNone, summaryStr, jobID, JobStatusRunning)
+		jobStatusFinished, jobStepNone, bytes, jobID, JobStatusRunning)
 	return err
 }
 
 // FailJob fails import into job. A job can only be failed once.
 // It will not return error when there's no matched job.
-func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMsg string, summary *Summary) error {
-	summaryStr := "{}"
-	if summary != nil {
-		bytes, err := json.Marshal(summary)
-		if err != nil {
-			return err
-		}
-		summaryStr = string(bytes)
-	}
-
+func FailJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, errorMsg string) error {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
 	_, err := conn.ExecuteInternal(ctx, `UPDATE mysql.tidb_import_jobs
-			SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?, summary = %?
-			WHERE id = %? AND status IN (%?, %?);`,
-		jobStatusFailed, errorMsg, summaryStr, jobID, jobStatusPending, JobStatusRunning)
+		SET update_time = CURRENT_TIMESTAMP(6), end_time = CURRENT_TIMESTAMP(6), status = %?, error_message = %?
+		WHERE id = %? AND status = %?;`,
+		jobStatusFailed, errorMsg, jobID, JobStatusRunning)
 	return err
 }
 
 func convert2JobInfo(row chunk.Row) (*JobInfo, error) {
 	// start_time, end_time, summary, error_message can be NULL, need to use row.IsNull() to check.
-	startTime, updateTime, endTime := types.ZeroTime, types.ZeroTime, types.ZeroTime
+	startTime, endTime := types.ZeroTime, types.ZeroTime
 	if !row.IsNull(2) {
 		startTime = row.GetTime(2)
 	}
 	if !row.IsNull(3) {
-		updateTime = row.GetTime(3)
-	}
-	if !row.IsNull(4) {
-		endTime = row.GetTime(4)
+		endTime = row.GetTime(3)
 	}
 
 	parameters := ImportParameters{}
-	parametersStr := row.GetString(9)
+	parametersStr := row.GetString(8)
 	if err := json.Unmarshal([]byte(parametersStr), &parameters); err != nil {
 		return nil, errors.Trace(err)
 	}
 
-	var summary *Summary
+	var summary *JobSummary
 	var summaryStr string
-	if !row.IsNull(13) {
-		summaryStr = row.GetString(13)
+	if !row.IsNull(12) {
+		summaryStr = row.GetString(12)
 	}
 	if len(summaryStr) > 0 {
-		summary = &Summary{}
+		summary = &JobSummary{}
 		if err := json.Unmarshal([]byte(summaryStr), summary); err != nil {
 			return nil, errors.Trace(err)
 		}
 	}
 
 	var errMsg string
-	if !row.IsNull(14) {
-		errMsg = row.GetString(14)
+	if !row.IsNull(13) {
+		errMsg = row.GetString(13)
 	}
-
 	return &JobInfo{
 		ID:             row.GetInt64(0),
 		CreateTime:     row.GetTime(1),
 		StartTime:      startTime,
-		UpdateTime:     updateTime,
 		EndTime:        endTime,
-		TableSchema:    row.GetString(5),
-		TableName:      row.GetString(6),
-		TableID:        row.GetInt64(7),
-		CreatedBy:      row.GetString(8),
+		TableSchema:    row.GetString(4),
+		TableName:      row.GetString(5),
+		TableID:        row.GetInt64(6),
+		CreatedBy:      row.GetString(7),
 		Parameters:     parameters,
-		SourceFileSize: row.GetInt64(10),
-		Status:         row.GetString(11),
-		Step:           row.GetString(12),
+		SourceFileSize: row.GetInt64(9),
+		Status:         row.GetString(10),
+		Step:           row.GetString(11),
 		Summary:        summary,
 		ErrorMessage:   errMsg,
-		GroupKey:       row.GetString(15),
 	}, nil
 }
 
-func getJobInfoFromSQL(ctx context.Context, conn sqlexec.SQLExecutor, sql string, args ...any) ([]*JobInfo, error) {
+// GetAllViewableJobs gets all viewable jobs.
+func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
+	sql := baseQuerySQL
+	args := []interface{}{}
+	if !hasSuperPriv {
+		sql += " WHERE created_by = %?"
+		args = append(args, user)
+	}
 	rs, err := conn.ExecuteInternal(ctx, sql, args...)
 	if err != nil {
 		return nil, err
@@ -452,72 +353,14 @@ func getJobInfoFromSQL(ctx context.Context, conn sqlexec.SQLExecutor, sql string
 	return ret, nil
 }
 
-// GetJobsByGroupKey gets jobs with given group key.
-// If group key is not specified, it will return all jobs with group key set.
-func GetJobsByGroupKey(ctx context.Context, conn sqlexec.SQLExecutor, user, groupKey string, hasSuperPriv bool) ([]*JobInfo, error) {
-	sql := baseQuerySQL
-	args := []any{}
-	var whereClause []string
-	if !hasSuperPriv {
-		whereClause = append(whereClause, "created_by = %?")
-		args = append(args, user)
-	}
-
-	if groupKey != "" {
-		whereClause = append(whereClause, "GROUP_KEY = %?")
-		args = append(args, groupKey)
-	} else {
-		whereClause = append(whereClause, "GROUP_KEY != ''")
-	}
-
-	if len(whereClause) > 0 {
-		sql = fmt.Sprintf("%s WHERE %s", sql, strings.Join(whereClause, " AND "))
-	}
-
-	return getJobInfoFromSQL(ctx, conn, sql, args...)
-}
-
-// GetAllViewableJobs gets all viewable jobs.
-func GetAllViewableJobs(ctx context.Context, conn sqlexec.SQLExecutor, user string, hasSuperPriv bool) ([]*JobInfo, error) {
-	sql := baseQuerySQL
-	args := []any{}
-	if !hasSuperPriv {
-		sql += " WHERE created_by = %?"
-		args = append(args, user)
-	}
-
-	return getJobInfoFromSQL(ctx, conn, sql, args...)
-}
-
 // CancelJob cancels import into job. Only a running/paused job can be canceled.
 // check privileges using get before calling this method.
 func CancelJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err error) {
-	return cancelJobInState(ctx, conn, jobID, jobStatusPending, JobStatusRunning)
-}
-
-// CancelPendingJob cancels a job in pending state.
-func CancelPendingJob(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64) (err error) {
-	return cancelJobInState(ctx, conn, jobID, jobStatusPending)
-}
-
-func cancelJobInState(ctx context.Context, conn sqlexec.SQLExecutor, jobID int64, states ...string) (err error) {
-	var markerSB strings.Builder
-	for i := range states {
-		if i > 0 {
-			markerSB.WriteString(",")
-		}
-		markerSB.WriteString("%?")
-	}
 	ctx = util.WithInternalSourceType(ctx, kv.InternalImportInto)
-	sql := fmt.Sprintf(`UPDATE mysql.tidb_import_jobs
-			SET update_time = CURRENT_TIMESTAMP(6), status = %%?, error_message = 'cancelled by user'
-			WHERE id = %%? AND status IN (%s);`, markerSB.String())
-	args := make([]any, 0, len(states)+2)
-	args = append(args, jogStatusCancelled)
-	args = append(args, jobID)
-	for _, s := range states {
-		args = append(args, s)
-	}
+	sql := `UPDATE mysql.tidb_import_jobs
+			SET update_time = CURRENT_TIMESTAMP(6), status = %?, error_message = 'cancelled by user'
+			WHERE id = %? AND status IN (%?, %?);`
+	args := []interface{}{jogStatusCancelled, jobID, jobStatusPending, JobStatusRunning}
 	_, err = conn.ExecuteInternal(ctx, sql, args...)
 	return err
 }

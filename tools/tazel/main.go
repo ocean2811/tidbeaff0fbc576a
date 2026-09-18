@@ -23,6 +23,7 @@ import (
 
 	"github.com/bazelbuild/buildtools/build"
 	"github.com/pingcap/log"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -60,9 +61,9 @@ func main() {
 					return err
 				}
 				if cnt, ok := testMap[filepath.Dir(abspath)]; ok {
-					if cnt > 1 {
+					if cnt > 2 {
 						gotest[0].SetAttr("shard_count",
-							&build.LiteralExpr{Token: strconv.FormatUint(uint64(min(cnt, maxShardCount)), 10)})
+							&build.LiteralExpr{Token: strconv.FormatUint(uint64(mathutil.Min(cnt, maxShardCount)), 10)})
 					} else {
 						gotest[0].DelAttr("shard_count")
 					}

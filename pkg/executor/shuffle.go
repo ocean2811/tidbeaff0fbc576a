@@ -17,22 +17,19 @@ package executor
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/executor/aggregate"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/executor/internal/vecgroupchecker"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/channel"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggregate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/vecgroupchecker"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/channel"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/execdetails"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/twmb/murmur3"
 	"go.uber.org/zap"
 )
@@ -99,8 +96,6 @@ type ShuffleExec struct {
 
 	finishCh chan struct{}
 	outputCh chan *shuffleOutput
-
-	allSourceAndWorkerExitForTest atomic.Bool
 }
 
 type shuffleOutput struct {
@@ -112,7 +107,7 @@ type shuffleOutput struct {
 // Open implements the Executor Open interface.
 func (e *ShuffleExec) Open(ctx context.Context) error {
 	for _, s := range e.dataSources {
-		if err := exec.Open(ctx, s); err != nil {
+		if err := s.Open(ctx); err != nil {
 			return err
 		}
 	}
@@ -135,7 +130,7 @@ func (e *ShuffleExec) Open(ctx context.Context) error {
 		w.outputCh = e.outputCh
 		w.outputHolderCh = make(chan *chunk.Chunk, 1)
 
-		if err := exec.Open(ctx, w.childExec); err != nil {
+		if err := w.childExec.Open(ctx); err != nil {
 			return err
 		}
 
@@ -172,15 +167,6 @@ func (e *ShuffleExec) Close() error {
 	if e.finishCh != nil {
 		close(e.finishCh)
 	}
-
-	if e.outputCh != nil {
-		channel.Clear(e.outputCh)
-	}
-
-	if intest.InTest && !e.allSourceAndWorkerExitForTest.Load() && e.prepared {
-		panic("there are still some running sources or workers")
-	}
-
 	for _, w := range e.workers {
 		for _, r := range w.receivers {
 			if r.inputCh != nil {
@@ -188,11 +174,13 @@ func (e *ShuffleExec) Close() error {
 			}
 		}
 		// close child executor of each worker
-		if err := exec.Close(w.childExec); err != nil && firstErr == nil {
+		if err := w.childExec.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
-
+	if e.outputCh != nil {
+		channel.Clear(e.outputCh)
+	}
 	e.executed = false
 
 	if e.RuntimeStats() != nil {
@@ -203,7 +191,7 @@ func (e *ShuffleExec) Close() error {
 
 	// close dataSources
 	for _, dataSource := range e.dataSources {
-		if err := exec.Close(dataSource); err != nil && firstErr == nil {
+		if err := dataSource.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -216,9 +204,7 @@ func (e *ShuffleExec) Close() error {
 
 func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
 	waitGroup := &sync.WaitGroup{}
-	num := len(e.workers) + len(e.dataSources)
-	waitGroup.Add(num)
-	e.allSourceAndWorkerExitForTest.Store(false)
+	waitGroup.Add(len(e.workers) + len(e.dataSources))
 	// create a goroutine for each dataSource to fetch and split data
 	for i := range e.dataSources {
 		go e.fetchDataAndSplit(ctx, i, waitGroup)
@@ -233,7 +219,6 @@ func (e *ShuffleExec) prepare4ParallelExec(ctx context.Context) {
 
 func (e *ShuffleExec) waitWorkerAndCloseOutput(waitGroup *sync.WaitGroup) {
 	waitGroup.Wait()
-	e.allSourceAndWorkerExitForTest.Store(true)
 	close(e.outputCh)
 }
 
@@ -269,10 +254,10 @@ func (e *ShuffleExec) Next(ctx context.Context, req *chunk.Chunk) error {
 	return nil
 }
 
-func recoveryShuffleExec(output chan *shuffleOutput, r any) {
-	err := util.GetRecoverError(r)
-	output <- &shuffleOutput{err: util.GetRecoverError(r)}
-	logutil.BgLogger().Warn("shuffle panicked", zap.Error(err), zap.Stack("stack"))
+func recoveryShuffleExec(output chan *shuffleOutput, r interface{}) {
+	err := errors.Errorf("%v", r)
+	output <- &shuffleOutput{err: errors.Errorf("%v", r)}
+	logutil.BgLogger().Error("shuffle panicked", zap.Error(err), zap.Stack("stack"))
 }
 
 func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int, waitGroup *sync.WaitGroup) {
@@ -316,7 +301,7 @@ func (e *ShuffleExec) fetchDataAndSplit(ctx context.Context, dataSourceIndex int
 			return
 		}
 		numRows := chk.NumRows()
-		for i := range numRows {
+		for i := 0; i < numRows; i++ {
 			workerIdx := workerIndices[i]
 			w := e.workers[workerIdx]
 
@@ -455,7 +440,7 @@ func (s *partitionHashSplitter) split(ctx sessionctx.Context, input *chunk.Chunk
 	}
 	workerIndices = workerIndices[:0]
 	numRows := input.NumRows()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		workerIndices = append(workerIndices, int(murmur3.Sum32(s.hashKeys[i]))%s.numWorkers)
 	}
 	return workerIndices, nil
@@ -479,7 +464,7 @@ func buildPartitionRangeSplitter(ctx sessionctx.Context, concurrency int, byItem
 	return &partitionRangeSplitter{
 		byItems:      byItems,
 		numWorkers:   concurrency,
-		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx.GetExprCtx().GetEvalCtx(), ctx.GetSessionVars().EnableVectorizedExpression, byItems),
+		groupChecker: vecgroupchecker.NewVecGroupChecker(ctx, byItems),
 		idx:          0,
 	}
 }

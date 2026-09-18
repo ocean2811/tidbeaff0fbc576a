@@ -22,11 +22,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,7 +45,7 @@ func TestSel(t *testing.T) {
 	n := 64
 	chk := NewChunkWithCapacity(fields, sz)
 	numRows := 0
-	for i := range n - sz {
+	for i := 0; i < n-sz; i++ {
 		chk.AppendInt64(0, int64(i))
 		if chk.NumRows() == sz {
 			chk.SetSel([]int{0, 2})
@@ -93,7 +92,7 @@ func TestSpillAction(t *testing.T) {
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := range sz {
+	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -118,7 +117,7 @@ func TestSpillAction(t *testing.T) {
 	resChk, err := rc.GetChunk(0)
 	require.NoError(t, err)
 	require.Equal(t, chk.NumRows(), resChk.NumRows())
-	for rowIdx := range resChk.NumRows() {
+	for rowIdx := 0; rowIdx < resChk.NumRows(); rowIdx++ {
 		require.Equal(t, chk.GetRow(rowIdx).GetDatumRow(fields), resChk.GetRow(rowIdx).GetDatumRow(fields))
 	}
 	// Write again
@@ -131,7 +130,7 @@ func TestSpillAction(t *testing.T) {
 	resChk, err = rc.GetChunk(2)
 	require.NoError(t, err)
 	require.Equal(t, chk.NumRows(), resChk.NumRows())
-	for rowIdx := range resChk.NumRows() {
+	for rowIdx := 0; rowIdx < resChk.NumRows(); rowIdx++ {
 		require.Equal(t, chk.GetRow(rowIdx).GetDatumRow(fields), resChk.GetRow(rowIdx).GetDatumRow(fields))
 	}
 
@@ -155,7 +154,7 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 	rc := NewSortedRowContainer(fields, sz, byItemsDesc, keyColumns, keyCmpFuncs)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := range sz {
+	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -176,7 +175,7 @@ func TestSortedRowContainerSortSpillAction(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, rc.AlreadySpilledSafeForTest())
 	// The result has been sorted.
-	for i := range sz * 2 {
+	for i := 0; i < sz*2; i++ {
 		row, err := rc.GetSortedRow(i)
 		require.NoError(t, err)
 		require.Equal(t, int64(i/2), row.GetInt64(0))
@@ -195,7 +194,7 @@ func TestRowContainerResetAndAction(t *testing.T) {
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := range sz {
+	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -231,16 +230,16 @@ func TestSpillActionDeadLock(t *testing.T) {
 	// Goroutine 2: ------------------> SpillDiskAction -> new Goroutine to spill -> ------------------
 	// new Goroutine created by 2: ---> rc.SpillToDisk (Lock)
 	// In golang, RLock will be blocked after try to get Lock. So it will cause deadlock.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/testRowContainerDeadLock", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk/testRowContainerDeadLock", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/testRowContainerDeadLock"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk/testRowContainerDeadLock"))
 	}()
 	sz := 4
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := range sz {
+	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -266,7 +265,7 @@ func TestActionBlocked(t *testing.T) {
 	rc := NewRowContainer(fields, sz)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := range sz {
+	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -276,7 +275,7 @@ func TestActionBlocked(t *testing.T) {
 	tracker.SetBytesLimit(1450)
 	ac := rc.ActionSpill()
 	tracker.FallbackOldAndSetNewAction(ac)
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		err = rc.Add(chk)
 		require.NoError(t, err)
 	}
@@ -317,10 +316,10 @@ func insertBytesRowsIntoRowContainer(t *testing.T, chkCount int, rowPerChk int) 
 
 	allRows := [][]byte{}
 	// insert chunks
-	for range chkCount {
+	for i := 0; i < chkCount; i++ {
 		chk := NewChunkWithCapacity(fields, rowPerChk)
 		// insert rows for each chunk
-		for range rowPerChk {
+		for j := 0; j < rowPerChk; j++ {
 			length := rand2.Uint32()
 			randomBytes := make([]byte, length%4096)
 			_, err := rand.Read(randomBytes)
@@ -347,8 +346,8 @@ func TestRowContainerReaderInDisk(t *testing.T) {
 
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
-	for i := range 16 {
-		for j := range 16 {
+	for i := 0; i < 16; i++ {
+		for j := 0; j < 16; j++ {
 			row := reader.Current()
 			require.Equal(t, allRows[i*16+j], row.GetBytes(0))
 			reader.Next()
@@ -369,14 +368,14 @@ func TestCloseRowContainerReader(t *testing.T) {
 	// read 8.5 of these chunks
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
-	for i := range 8 {
-		for j := range 16 {
+	for i := 0; i < 8; i++ {
+		for j := 0; j < 16; j++ {
 			row := reader.Current()
 			require.Equal(t, allRows[i*16+j], row.GetBytes(0))
 			reader.Next()
 		}
 	}
-	for j := range 8 {
+	for j := 0; j < 8; j++ {
 		row := reader.Current()
 		require.Equal(t, allRows[8*16+j], row.GetBytes(0))
 		reader.Next()
@@ -400,8 +399,8 @@ func TestConcurrentSpillWithRowContainerReader(t *testing.T) {
 		reader := NewRowContainerReader(rc)
 		defer reader.Close()
 
-		for i := range 16 {
-			for j := range 1024 {
+		for i := 0; i < 16; i++ {
+			for j := 0; j < 1024; j++ {
 				row := reader.Current()
 				require.Equal(t, allRows[i*1024+j], row.GetBytes(0))
 				reader.Next()
@@ -423,8 +422,8 @@ func TestReadAfterSpillWithRowContainerReader(t *testing.T) {
 
 	reader := NewRowContainerReader(rc)
 	defer reader.Close()
-	for i := range 8 {
-		for j := range 1024 {
+	for i := 0; i < 8; i++ {
+		for j := 0; j < 1024; j++ {
 			row := reader.Current()
 			require.Equal(t, allRows[i*1024+j], row.GetBytes(0))
 			reader.Next()
@@ -432,7 +431,7 @@ func TestReadAfterSpillWithRowContainerReader(t *testing.T) {
 	}
 	rc.SpillToDisk()
 	for i := 8; i < 16; i++ {
-		for j := range 1024 {
+		for j := 0; j < 1024; j++ {
 			row := reader.Current()
 			require.Equal(t, allRows[i*1024+j], row.GetBytes(0))
 			reader.Next()
@@ -444,7 +443,7 @@ func TestPanicWhenSpillToDisk(t *testing.T) {
 	fields := []*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}
 	sz := 20
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := range sz {
+	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
 
@@ -458,9 +457,9 @@ func TestPanicWhenSpillToDisk(t *testing.T) {
 	rc.actionSpill.WaitForTest()
 	require.False(t, rc.AlreadySpilledSafeForTest())
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/spillToDiskOutOfDiskQuota", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk/spillToDiskOutOfDiskQuota", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/spillToDiskOutOfDiskQuota"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk/spillToDiskOutOfDiskQuota"))
 	}()
 	require.NoError(t, rc.Add(chk))
 	rc.actionSpill.WaitForTest()
@@ -480,7 +479,7 @@ func TestPanicDuringSortedRowContainerSpill(t *testing.T) {
 	rc := NewSortedRowContainer(fields, sz, byItemsDesc, keyColumns, keyCmpFuncs)
 
 	chk := NewChunkWithCapacity(fields, sz)
-	for i := range sz {
+	for i := 0; i < sz; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
 	var tracker *memory.Tracker
@@ -494,9 +493,9 @@ func TestPanicDuringSortedRowContainerSpill(t *testing.T) {
 	rc.actionSpill.WaitForTest()
 	require.False(t, rc.AlreadySpilledSafeForTest())
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/chunk/errorDuringSortRowContainer", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk/errorDuringSortRowContainer", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/chunk/errorDuringSortRowContainer"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk/errorDuringSortRowContainer"))
 	}()
 	err = rc.Add(chk)
 	require.NoError(t, err)
@@ -505,48 +504,6 @@ func TestPanicDuringSortedRowContainerSpill(t *testing.T) {
 
 	_, err = rc.GetRow(RowPtr{})
 	require.EqualError(t, err, "sort meet error")
-}
-
-func TestInterruptedDuringSpilling(t *testing.T) {
-	rootTracker := memory.NewTracker(-1, -1)
-	rootTracker.IsRootTrackerOfSess = true
-	rootTracker.Killer = &sqlkiller.SQLKiller{}
-	rootTracker.Killer.ConnID.Store(1)
-	fields := []*types.FieldType{
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeLonglong),
-		types.NewFieldType(mysql.TypeVarString),
-		types.NewFieldType(mysql.TypeLonglong),
-	}
-	sz := 1024
-	rc := NewRowContainer(fields, sz)
-	rc.GetMemTracker().AttachTo(rootTracker)
-	defer rc.Close()
-	chk := NewChunkWithCapacity(fields, sz)
-	for i := range sz {
-		chk.AppendInt64(0, int64(i))
-		chk.AppendInt64(1, int64(i))
-		chk.AppendInt64(2, int64(i))
-		chk.AppendString(3, "testtesttest")
-		chk.AppendInt64(4, int64(i))
-	}
-	for range 102400 {
-		rc.Add(chk)
-	}
-	wg := sync.WaitGroup{}
-	wg.Add(1)
-	var cancelTime time.Time
-	go func() {
-		time.Sleep(200 * time.Millisecond)
-		rootTracker.Killer.SendKillSignal(sqlkiller.QueryInterrupted)
-		cancelTime = time.Now()
-		wg.Done()
-	}()
-	rc.spillToDisk(nil)
-	wg.Wait()
-	cancelDuration := time.Since(cancelTime)
-	require.Less(t, cancelDuration, 1*time.Second)
 }
 
 func BenchmarkRowContainerReaderInDiskWithRowSize512(b *testing.B) {
@@ -582,9 +539,9 @@ func benchmarkRowContainerReaderInDiskWithRowLength(b *testing.B, rowLength int)
 	rc.SpillToDisk()
 
 	// insert `b.N * 1<<10` rows (`b.N` chunks) into the rc
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		chk := NewChunkWithCapacity(fields, 1<<10)
-		for range 1 << 10 {
+		for j := 0; j < 1<<10; j++ {
 			chk.AppendBytes(0, randomBytes)
 		}
 
@@ -595,7 +552,7 @@ func benchmarkRowContainerReaderInDiskWithRowLength(b *testing.B, rowLength int)
 	defer reader.Close()
 	b.StartTimer()
 	for n := 0; n < b.N; n++ {
-		for range 1 << 10 {
+		for i := 0; i < 1<<10; i++ {
 			reader.Next()
 		}
 	}

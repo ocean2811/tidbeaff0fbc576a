@@ -17,8 +17,8 @@ package chunk
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 

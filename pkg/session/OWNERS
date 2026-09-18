@@ -2,12 +2,7 @@
 options:
   no_parent_owners: true
 filters:
-  "(^|/)BUILD\\.bazel$":
-    approvers:
-      - sig-community-approvers
-  "(OWNERS|upgrade_def\\.go)$":
+  "(OWNERS|bootstrap\\.go)$":
     approvers:
       - sig-critical-approvers-tidb-server
-  "(bootstrap\\.go|upgrade_run\\.go)$":
-    approvers:
-      - sig-approvers-ddl
+

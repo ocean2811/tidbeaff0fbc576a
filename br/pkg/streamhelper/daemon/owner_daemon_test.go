@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/streamhelper/daemon"
-	"github.com/pingcap/tidb/pkg/owner"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/streamhelper/daemon"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/owner"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,6 +149,7 @@ func TestDaemon(t *testing.T) {
 	ow.RetireOwner()
 	req.False(ow.IsOwner())
 	app.AssertNotRunning(1 * time.Second)
+	ow.CampaignOwner()
 	req.Eventually(func() bool {
 		return ow.IsOwner()
 	}, 1*time.Second, 100*time.Millisecond)

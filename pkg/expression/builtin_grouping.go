@@ -19,10 +19,11 @@ import (
 
 	"github.com/gogo/protobuf/proto"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -38,7 +39,7 @@ type groupingImplFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *groupingImplFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *groupingImplFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, err
 	}
@@ -91,8 +92,7 @@ func (b *BuiltinGroupingImplSig) setMetaGroupingMarks(groupingMarks []map[uint64
 	b.groupingMarks = groupingMarks
 }
 
-// GetGroupingMode returns the grouping mode of the grouping function.
-func (b *BuiltinGroupingImplSig) GetGroupingMode() tipb.GroupingMode {
+func (b *BuiltinGroupingImplSig) getGroupingMode() tipb.GroupingMode {
 	return b.mode
 }
 
@@ -129,8 +129,7 @@ func (b *BuiltinGroupingImplSig) Clone() builtinFunc {
 	return newSig
 }
 
-// GetMetaGroupingMarks returns the grouping marks of the grouping function.
-func (b *BuiltinGroupingImplSig) GetMetaGroupingMarks() []map[uint64]struct{} {
+func (b *BuiltinGroupingImplSig) getMetaGroupingMarks() []map[uint64]struct{} {
 	return b.groupingMarks
 }
 
@@ -138,8 +137,8 @@ func (b *BuiltinGroupingImplSig) checkMetadata() error {
 	if !b.isMetaInited {
 		return errors.Errorf("Meta data hasn't been initialized")
 	}
-	mode := b.GetGroupingMode()
-	groupingMarks := b.GetMetaGroupingMarks()
+	mode := b.getGroupingMode()
+	groupingMarks := b.getMetaGroupingMarks()
 	if mode != tipb.GroupingMode_ModeBitAnd && mode != tipb.GroupingMode_ModeNumericCmp && mode != tipb.GroupingMode_ModeNumericSet {
 		return errors.Errorf("Mode of meta data in grouping function is invalid. input mode: %d", mode)
 	} else if mode == tipb.GroupingMode_ModeBitAnd || mode == tipb.GroupingMode_ModeNumericCmp {
@@ -153,7 +152,7 @@ func (b *BuiltinGroupingImplSig) checkMetadata() error {
 }
 
 func (b *BuiltinGroupingImplSig) groupingImplBitAnd(groupingID uint64) int64 {
-	groupingMarks := b.GetMetaGroupingMarks()
+	groupingMarks := b.getMetaGroupingMarks()
 	res := uint64(0)
 	for _, groupingMark := range groupingMarks {
 		// for Bit-And mode, there is only one element in groupingMark.
@@ -170,7 +169,7 @@ func (b *BuiltinGroupingImplSig) groupingImplBitAnd(groupingID uint64) int64 {
 }
 
 func (b *BuiltinGroupingImplSig) groupingImplNumericCmp(groupingID uint64) int64 {
-	groupingMarks := b.GetMetaGroupingMarks()
+	groupingMarks := b.getMetaGroupingMarks()
 	res := uint64(0)
 	for _, groupingMark := range groupingMarks {
 		// for Num-Cmp mode, there is only one element in groupingMark.
@@ -187,7 +186,7 @@ func (b *BuiltinGroupingImplSig) groupingImplNumericCmp(groupingID uint64) int64
 }
 
 func (b *BuiltinGroupingImplSig) groupingImplNumericSet(groupingID uint64) int64 {
-	groupingMarks := b.GetMetaGroupingMarks()
+	groupingMarks := b.getMetaGroupingMarks()
 	res := uint64(0)
 	for _, groupingMark := range groupingMarks {
 		res <<= 1
@@ -228,12 +227,12 @@ func (b *BuiltinGroupingImplSig) grouping(groupingID uint64) int64 {
 }
 
 // evalInt evals a builtinGroupingSig.
-func (b *BuiltinGroupingImplSig) evalInt(ctx EvalContext, row chunk.Row) (int64, bool, error) {
+func (b *BuiltinGroupingImplSig) evalInt(row chunk.Row) (int64, bool, error) {
 	if !b.isMetaInited {
 		return 0, false, errors.Errorf("Meta data is not initialized")
 	}
 	// grouping function should be rewritten from raw column ref to built gid column and groupingMarks meta.
-	groupingID, isNull, err := b.args[0].EvalInt(ctx, row)
+	groupingID, isNull, err := b.args[0].EvalInt(b.ctx, row)
 	if isNull || err != nil {
 		return 0, isNull, err
 	}
@@ -246,21 +245,21 @@ func (b *BuiltinGroupingImplSig) groupingVec(groupingIds *chunk.Column, rowNum i
 	resContainer := result.Int64s()
 	switch b.mode {
 	case tipb.GroupingMode_ModeBitAnd:
-		for i := range rowNum {
+		for i := 0; i < rowNum; i++ {
 			resContainer[i] = b.groupingImplBitAnd(groupingIds.GetUint64(i))
 		}
 	case tipb.GroupingMode_ModeNumericCmp:
-		for i := range rowNum {
+		for i := 0; i < rowNum; i++ {
 			resContainer[i] = b.groupingImplNumericCmp(groupingIds.GetUint64(i))
 		}
 	case tipb.GroupingMode_ModeNumericSet:
-		for i := range rowNum {
+		for i := 0; i < rowNum; i++ {
 			resContainer[i] = b.groupingImplNumericSet(groupingIds.GetUint64(i))
 		}
 	}
 }
 
-func (b *BuiltinGroupingImplSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *BuiltinGroupingImplSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	if !b.isMetaInited {
 		return errors.Errorf("Meta data is not initialized")
 	}
@@ -271,7 +270,7 @@ func (b *BuiltinGroupingImplSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 		return err
 	}
 	defer b.bufAllocator.put(bufVal)
-	if err = b.args[0].VecEvalInt(ctx, input, bufVal); err != nil {
+	if err = b.args[0].VecEvalInt(b.ctx, input, bufVal); err != nil {
 		return err
 	}
 

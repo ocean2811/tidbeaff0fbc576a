@@ -10,7 +10,7 @@ go_library(
         "plugin.go",
         "spi.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/plugin",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/plugin",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/domain",
@@ -21,7 +21,6 @@ go_library(
         "//pkg/util/logutil",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_log//:log",
-        "@com_github_stretchr_testify//require",
         "@io_etcd_go_etcd_client_v3//:client",
         "@org_uber_go_zap//:zap",
     ],

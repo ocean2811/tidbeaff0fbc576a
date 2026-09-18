@@ -1,7 +1,7 @@
 # Proposal: Distributed DDL Reorg
 
 - Author(s): [zimulala](https://github.com/zimulala), [Defined2014](https://github.com/Defined2014)
-- Tracking Issue: https://github.com/pingcap/tidb/issues/41208
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/41208
 
 ## Abstract
 

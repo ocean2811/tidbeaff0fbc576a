@@ -6,7 +6,7 @@ go_library(
         "rm.go",
         "schedule.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/resourcemanager",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/resourcemanager/scheduler",

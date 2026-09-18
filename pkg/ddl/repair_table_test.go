@@ -20,29 +20,26 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/domainutil"
-	"github.com/pingcap/tidb/pkg/util/mathutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util/callback"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/external"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/domainutil"
 	"github.com/stretchr/testify/require"
 )
 
 const repairTableLease = 600 * time.Millisecond
 
 func TestRepairTable(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/repairFetchCreateTable", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/repairFetchCreateTable"))
 	}()
 
-	store, domain := testkit.CreateMockStoreAndDomainWithSchemaLease(t, repairTableLease)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, repairTableLease)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -91,22 +88,6 @@ func TestRepairTable(t *testing.T) {
 	repairTable := external.GetTableByName(t, tk, "test", "otHeR_tAbLe") //nolint:typecheck
 	require.Equal(t, "otHeR_tAbLe", repairTable.Meta().Name.O)
 
-	// Test cannot repair table before fetch all schemas
-	tk.MustExec("CREATE TABLE otHer_tAblE2 (a int, b varchar(1));")
-	domainutil.RepairInfo.SetRepairMode(true)
-	domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table2"})
-	tk.MustGetErrMsg("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a int, b varchar(2))", "[ddl:8215]Failed to repair table: database test is not in repair")
-
-	// Test can repair table after fetch all schemas
-	domainutil.RepairInfo.SetRepairMode(true)
-	domainutil.RepairInfo.SetRepairTableList([]string{"test.other_table2"})
-	snapshot := store.GetSnapshot(kv.NewVersion(mathutil.MaxUint))
-	m := meta.NewReader(snapshot)
-	dbs, err := domain.FetchAllSchemasWithTables(m)
-	require.NoError(t, err)
-	require.Equal(t, len(dbs), 3)
-	tk.MustExec("admin repair table otHer_tAblE2 CREATE TABLE otHeR_tAbLe (a int, b varchar(2));")
-
 	// Test memory and system database is not for repair.
 	domainutil.RepairInfo.SetRepairMode(true)
 	domainutil.RepairInfo.SetRepairTableList([]string{"test.xxx"})
@@ -120,8 +101,9 @@ func TestRepairTable(t *testing.T) {
 	// Repaired tableInfo has been filtered by `domain.InfoSchema()`, so get it in repairInfo.
 	originTableInfo, _ := domainutil.RepairInfo.GetRepairedTableInfoByTableName("test", "origin")
 
+	hook := &callback.TestDDLCallback{Do: dom}
 	var repairErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type != model.ActionRepairTable {
 			return
 		}
@@ -141,7 +123,10 @@ func TestRepairTable(t *testing.T) {
 		if repairErr != nil && terror.ErrorEqual(repairErr, infoschema.ErrTableNotExists) {
 			repairErr = nil
 		}
-	})
+	}
+	originalHook := dom.DDL().GetHook()
+	defer dom.DDL().SetHook(originalHook)
+	dom.DDL().SetHook(hook)
 
 	// Exec the repair statement to override the tableInfo.
 	tk.MustExec("admin repair table origin CREATE TABLE origin (a int primary key nonclustered auto_increment, b varchar(5), c int);")
@@ -179,9 +164,9 @@ func turnRepairModeAndInit(on bool) {
 }
 
 func TestRepairTableWithPartition(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/repairFetchCreateTable", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/repairFetchCreateTable"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/repairFetchCreateTable"))
 	}()
 	store := testkit.CreateMockStoreWithSchemaLease(t, repairTableLease)
 	tk := testkit.NewTestKit(t, store)

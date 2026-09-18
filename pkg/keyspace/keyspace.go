@@ -16,21 +16,15 @@ package keyspace
 
 import (
 	"fmt"
-	"sync"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
 	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
 const (
-	// System is the keyspace name for SYSTEM keyspace.
-	// see doc.go for more detail.
-	System = "SYSTEM"
 	// tidbKeyspaceEtcdPathPrefix is the keyspace prefix for etcd namespace
 	tidbKeyspaceEtcdPathPrefix = "/keyspaces/tidb/"
 )
@@ -60,22 +54,6 @@ func GetKeyspaceNameBySettings() (keyspaceName string) {
 	return keyspaceName
 }
 
-var keyspaceNameBytes []byte
-var genKeyspaceNameOnce sync.Once
-
-// GetKeyspaceNameBytesBySettings is used to get keyspace name setting as a byte slice.
-func GetKeyspaceNameBytesBySettings() []byte {
-	genKeyspaceNameOnce.Do(func() {
-		if !kerneltype.IsNextGen() {
-			return
-		}
-
-		keyspaceName := config.GetGlobalKeyspaceName()
-		keyspaceNameBytes = []byte(keyspaceName)
-	})
-	return keyspaceNameBytes
-}
-
 // IsKeyspaceNameEmpty is used to determine whether keyspaceName is set.
 func IsKeyspaceNameEmpty(keyspaceName string) bool {
 	return keyspaceName == ""
@@ -90,13 +68,4 @@ func WrapZapcoreWithKeyspace() zap.Option {
 		}
 		return core
 	})
-}
-
-// BuildAPIContext returns a V1 API context for the default keyspace and a
-// V2 API context scoped to keyspaceName otherwise.
-func BuildAPIContext(keyspaceName string) pd.APIContext {
-	if len(keyspaceName) == 0 {
-		return pd.NewAPIContextV1()
-	}
-	return pd.NewAPIContextV2(keyspaceName)
 }

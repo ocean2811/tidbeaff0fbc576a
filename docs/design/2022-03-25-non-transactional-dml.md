@@ -1,7 +1,7 @@
 # Non-transactional statements
 
 - Author(s): [Ziqian Qin](http://github.com/ekexium)
-- Tracking issue: https://github.com/pingcap/tidb/issues/33485
+- Tracking issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/33485
 
 ## Table of Contents
 

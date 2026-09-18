@@ -27,10 +27,7 @@ import (
 	"net/http"
 	"net/http/pprof"
 	"net/url"
-	"os"
-	"path/filepath"
 	"runtime"
-	"runtime/coverage"
 	rpprof "runtime/pprof"
 	"strconv"
 	"strings"
@@ -42,33 +39,28 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
 	pb "github.com/pingcap/kvproto/pkg/autoid"
-	autoid "github.com/pingcap/tidb/pkg/autoid_service"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/server/handler"
-	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
-	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
-	"github.com/pingcap/tidb/pkg/server/handler/ttlhandler"
-	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/statistics/handle/initstats"
-	"github.com/pingcap/tidb/pkg/store"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/cpuprofile"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/printer"
-	"github.com/pingcap/tidb/pkg/util/traceevent"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	autoid "github.com/ocean2811/tidbeaff0fbc576a/pkg/autoid_service"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler/optimizor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler/tikvhandler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler/ttlhandler"
+	util2 "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/cpuprofile"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/printer"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/versioninfo"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/soheilhy/cmux"
 	"github.com/tiancaiamao/appdash/traceapp"
 	"go.uber.org/zap"
-	"google.golang.org/grpc"
 	"google.golang.org/grpc/channelz/service"
 	static "sourcegraph.com/sourcegraph/appdash-data"
 )
@@ -116,8 +108,6 @@ func (s *Server) listenStatusHTTPServer() error {
 	tlsConfig = s.SetCNChecker(tlsConfig)
 
 	if tlsConfig != nil {
-		// The protocols should be listed as the same order we dispatch the connection with cmux.
-		tlsConfig.NextProtos = []string{"http/1.1", "h2"}
 		// we need to manage TLS here for cmux to distinguish between HTTP and gRPC.
 		s.statusListener, err = tls.Listen("tcp", s.statusAddr, tlsConfig)
 	} else {
@@ -214,24 +204,6 @@ func (b *Ballast) GenHTTPHandler() func(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
-func withProfilingRequestLog(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		fields := []zap.Field{
-			zap.String("method", r.Method),
-			zap.String("path", r.URL.Path),
-			zap.String("remote-addr", r.RemoteAddr),
-		}
-		query := r.URL.Query()
-		for _, key := range []string{"seconds", "debug", "gc"} {
-			if value := query.Get(key); value != "" {
-				fields = append(fields, zap.String(key, value))
-			}
-		}
-		logutil.BgLogger().Info("profiling request received", fields...)
-		next(w, r)
-	}
-}
-
 func (s *Server) startHTTPServer() {
 	router := mux.NewRouter()
 
@@ -244,8 +216,6 @@ func (s *Server) startHTTPServer() {
 		Name("StatsDump")
 	router.Handle("/stats/dump/{db}/{table}/{snapshot}", s.newStatsHistoryHandler()).
 		Name("StatsHistoryDump")
-	router.Handle("/stats/priority-queue", s.newStatsPriorityQueueHandler()).
-		Name("StatsPriorityQueue")
 
 	router.Handle("/plan_replayer/dump/{filename}", s.newPlanReplayerHandler()).Name("PlanReplayerDump")
 	router.Handle("/extract_task/dump", s.newExtractServeHandler()).Name("ExtractTaskDump")
@@ -254,6 +224,7 @@ func (s *Server) startHTTPServer() {
 
 	tikvHandlerTool := s.NewTikvHandlerTool()
 	router.Handle("/settings", tikvhandler.NewSettingsHandler(tikvHandlerTool)).Name("Settings")
+	router.Handle("/binlog/recover", tikvhandler.BinlogRecover{}).Name("BinlogRecover")
 
 	router.Handle("/schema", tikvhandler.NewSchemaHandler(tikvHandlerTool)).Name("Schema")
 	router.Handle("/schema/{db}", tikvhandler.NewSchemaHandler(tikvHandlerTool))
@@ -267,29 +238,6 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/ddl/history", tikvhandler.NewDDLHistoryJobHandler(tikvHandlerTool)).Name("DDL_History")
 	router.Handle("/ddl/owner/resign", tikvhandler.NewDDLResignOwnerHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DDL_Owner_Resign")
 
-	if kv.IsSystemKS(tikvHandlerTool.Store) {
-		router.Handle("/dxf/schedule/status", tikvhandler.NewDXFScheduleStatusHandler()).Name("DXF_Schedule_Status")
-		router.Handle("/dxf/schedule", tikvhandler.NewDXFScheduleHandler()).Name("DXF_Schedule")
-		router.Handle("/dxf/schedule/tune", tikvhandler.NewDXFScheduleTuneHandler(tikvHandlerTool.Store.(kv.Storage))).Name("DXF_Schedule_Tune")
-		router.Handle("/dxf/task/active", tikvhandler.NewDXFActiveTaskHandler()).Name("DXF_Task_Active")
-		router.Handle("/dxf/nodes", tikvhandler.NewDXFNodesHandler()).Name("DXF_Nodes")
-		router.Handle("/dxf/task/history", tikvhandler.NewDXFTaskHistoryHandler()).Name("DXF_Task_History")
-		// These APIs update only the TiDB process that handles the request and are not persisted.
-		router.Handle("/dxf/schedule/max_concurrent_task", tikvhandler.NewDXFTaskMaxConcurrentHandler()).Name("DXF_Schedule_Max_Concurrent_Task")
-		router.Handle("/dxf/schedule/task_cleanup_batch_size", tikvhandler.NewDXFTaskCleanupBatchSizeHandler()).Name("DXF_Schedule_Task_Cleanup_Batch_Size")
-		router.Handle("/dxf/import-into/history/job/{keyspace}/{job_id}", tikvhandler.NewDXFImportIntoHistoryJobInfoHandler()).Name("DXF_Import_Into_History_Job_Info")
-		router.Handle("/dxf/task/{taskID}/max_runtime_slots", tikvhandler.NewDXFTaskMaxRuntimeSlotsHandler()).Name("DXF_Task_Max_Runtime_Slots")
-	}
-
-	if kerneltype.IsNextGen() {
-		router.Handle("/ddl/check/{db}/{table}/{index}", tikvhandler.NewDDLCheckHandler(tikvHandlerTool)).Name("DDL_Check")
-		router.Handle("/variables/global", tikvhandler.NewGlobalVariablesHandler(tikvHandlerTool)).
-			Methods(http.MethodGet).Name("GlobalVariables")
-	}
-
-	// HTTP path for transaction GC states.
-	router.Handle("/txn-gc-states", tikvhandler.NewTxnGCStatesHandler(tikvHandlerTool.Store))
-
 	// HTTP path for get the TiDB config
 	router.Handle("/config", fn.Wrap(func() (*config.Config, error) {
 		return config.GetGlobalConfig(), nil
@@ -301,29 +249,13 @@ func (s *Server) startHTTPServer() {
 	router.Handle("/info/all", tikvhandler.NewAllServerInfoHandler(tikvHandlerTool)).Name("InfoALL")
 	// HTTP path for get db and table info that is related to the tableID.
 	router.Handle("/db-table/{tableID}", tikvhandler.NewDBTableHandler(tikvHandlerTool))
-	// HTTP path for live TiFlash replica count (cluster operators). GET only.
-	router.Handle("/tiflash/replica", tikvhandler.NewFlashReplicaSummaryHandler(tikvHandlerTool)).
-		Methods(http.MethodGet).Name("TiFlashReplicaSummary")
-	// HTTP path for get table tiflash replica info. Only used by tiflash prior than v6.0. Deprecated.
-	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaDeprecatedHandler(tikvHandlerTool))
+	// HTTP path for get table tiflash replica info.
+	router.Handle("/tiflash/replica-deprecated", tikvhandler.NewFlashReplicaHandler(tikvHandlerTool))
 
 	// HTTP path for upgrade operations.
 	router.Handle("/upgrade/{op}", handler.NewClusterUpgradeHandler(tikvHandlerTool.Store.(kv.Storage))).Name("upgrade operations")
-	if deploymode.IsStarter() {
-		router.Handle("/owner_manager/auto_id_service", handler.NewAutoIDOwnerHandler(s)).Name("isAutoIDServiceOwner")
-	}
 
-	// HTTP path for ingest configurations
-	router.Handle("/ingest/max-batch-split-ranges", tikvhandler.NewIngestConcurrencyHandler(
-		tikvHandlerTool, tikvhandler.IngestParamMaxBatchSplitRanges)).Name("IngestMaxBatchSplitRanges")
-	router.Handle("/ingest/max-split-ranges-per-sec", tikvhandler.NewIngestConcurrencyHandler(
-		tikvHandlerTool, tikvhandler.IngestParamMaxSplitRangesPerSec)).Name("IngestMaxSplitRangesPerSec")
-	router.Handle("/ingest/max-ingest-inflight", tikvhandler.NewIngestConcurrencyHandler(
-		tikvHandlerTool, tikvhandler.IngestParamMaxInflight)).Name("IngestMaxInflight")
-	router.Handle("/ingest/max-ingest-per-sec", tikvhandler.NewIngestConcurrencyHandler(
-		tikvHandlerTool, tikvhandler.IngestParamMaxPerSecond)).Name("IngestMaxPerSec")
-
-	if s.cfg.Store == config.StoreTypeTiKV {
+	if s.cfg.Store == "tikv" {
 		// HTTP path for tikv.
 		router.Handle("/tables/{db}/{table}/regions", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRegions))
 		router.Handle("/tables/{db}/{table}/ranges", tikvhandler.NewTableHandler(tikvHandlerTool, tikvhandler.OpTableRanges))
@@ -352,7 +284,7 @@ func (s *Server) startHTTPServer() {
 		}
 		baseURL := &url.URL{
 			Scheme: util.InternalHTTPSchema(),
-			Host:   net.JoinHostPort(host, port),
+			Host:   fmt.Sprintf("%s:%s", host, port),
 		}
 		router.HandleFunc("/web/trace", traceapp.HandleTiDB).Name("Trace Viewer")
 		sr := router.PathPrefix("/web/trace/").Subrouter()
@@ -362,76 +294,14 @@ func (s *Server) startHTTPServer() {
 		router.PathPrefix("/static/").Handler(http.StripPrefix("/static", http.FileServer(static.Data)))
 	}
 
-	if s.StandbyController != nil {
-		path, handler := s.StandbyController.Handler(s)
-		router.PathPrefix(path).Handler(handler)
-	}
+	serverMux := http.NewServeMux()
+	serverMux.Handle("/", router)
 
-	router.HandleFunc("/debug/pprof/cmdline", withProfilingRequestLog(pprof.Cmdline))
-	router.HandleFunc("/debug/pprof/profile", withProfilingRequestLog(cpuprofile.ProfileHTTPHandler))
-	router.HandleFunc("/debug/pprof/symbol", withProfilingRequestLog(pprof.Symbol))
-	router.HandleFunc("/debug/pprof/trace", withProfilingRequestLog(pprof.Trace))
-	// Other /debug/pprof paths not covered above are redirected to pprof.Index.
-	router.PathPrefix("/debug/pprof/").HandlerFunc(withProfilingRequestLog(pprof.Index))
-	router.HandleFunc("/debug/traceevent", traceeventHandler)
-
-	router.HandleFunc("/covdata", func(writer http.ResponseWriter, _ *http.Request) {
-		writer.Header().Set("Content-Type", "application/zip")
-		writer.Header().Set("Content-Disposition", "attachment; filename=files.zip")
-
-		dir := os.Getenv("TIDB_GOCOVERDIR")
-		if dir == "" {
-			serveError(writer, http.StatusInternalServerError, "TIDB_GOCOVERDIR is not set")
-			return
-		}
-		err := coverage.WriteMetaDir(dir)
-		if err != nil {
-			logutil.BgLogger().Warn("write coverage meta failed", zap.Error(err))
-			serveError(writer, http.StatusInternalServerError, "write coverage meta failed")
-			return
-		}
-		err = coverage.WriteCountersDir(dir)
-		if err != nil {
-			logutil.BgLogger().Warn("write coverage counters failed", zap.Error(err))
-			serveError(writer, http.StatusInternalServerError, "write coverage counters failed")
-			return
-		}
-
-		zipWriter := zip.NewWriter(writer)
-
-		err = filepath.Walk(dir, func(file string, fi os.FileInfo, err error) error {
-			if err != nil {
-				return err
-			}
-			if fi.IsDir() {
-				return nil
-			}
-			relPath, err := filepath.Rel(dir, file)
-			if err != nil {
-				return err
-			}
-			writer, err := zipWriter.Create(relPath)
-			if err != nil {
-				return err
-			}
-			srcFile, err := os.Open(filepath.Clean(file))
-			if err != nil {
-				return err
-			}
-			defer func() {
-				_ = srcFile.Close()
-			}()
-			_, err = io.Copy(writer, srcFile)
-			return err
-		})
-		if err != nil {
-			logutil.BgLogger().Warn("zip coverage files failed", zap.Error(err))
-			serveError(writer, http.StatusInternalServerError, "zip coverage files failed")
-			return
-		}
-		err = zipWriter.Close()
-		terror.Log(err)
-	})
+	serverMux.HandleFunc("/debug/pprof/", pprof.Index)
+	serverMux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	serverMux.HandleFunc("/debug/pprof/profile", cpuprofile.ProfileHTTPHandler)
+	serverMux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	serverMux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 
 	ballast := newBallast(s.cfg.MaxBallastObjectSize)
 	{
@@ -440,9 +310,9 @@ func (s *Server) startHTTPServer() {
 			logutil.BgLogger().Error("set initial ballast object size failed", zap.Error(err))
 		}
 	}
-	router.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
+	serverMux.HandleFunc("/debug/ballast-object-sz", ballast.GenHTTPHandler())
 
-	router.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
+	serverMux.HandleFunc("/debug/gogc", func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodGet:
 			_, err := w.Write([]byte(strconv.Itoa(util.GetGOGC())))
@@ -467,8 +337,8 @@ func (s *Server) startHTTPServer() {
 		}
 	})
 
-	router.HandleFunc("/debug/zip", withProfilingRequestLog(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Disposition", `attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip")
+	serverMux.HandleFunc("/debug/zip", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Disposition", fmt.Sprintf(`attachment; filename="tidb_debug"`+time.Now().Format("20060102150405")+".zip"))
 
 		// dump goroutine/heap/mutex
 		items := []struct {
@@ -549,24 +419,20 @@ func (s *Server) startHTTPServer() {
 
 		err = zw.Close()
 		terror.Log(err)
-	}))
+	})
 
 	// failpoint is enabled only for tests so we can add some http APIs here for tests.
 	failpoint.Inject("enableTestAPI", func() {
-		router.PathPrefix("/fail/").HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		serverMux.HandleFunc("/fail/", func(w http.ResponseWriter, r *http.Request) {
 			r.URL.Path = strings.TrimPrefix(r.URL.Path, "/fail")
 			new(failpoint.HttpHandler).ServeHTTP(w, r)
 		})
 
 		router.Handle("/test/{mod}/{op}", tikvhandler.NewTestHandler(tikvHandlerTool, 0))
-		// used to delete so specific row or index KEY directly to mock the
-		// dangling index or dangling record for test.
-		router.Handle("/test/delete/rowkey/{db}/{table}", tikvhandler.NewDeleteKeyHandler(tikvHandlerTool)).Name("DeleteRowKey")
-		router.Handle("/test/delete/indexkey/{db}/{table}/{index}", tikvhandler.NewDeleteKeyHandler(tikvHandlerTool)).Name("DeleteIndexKey")
 	})
 
 	// ddlHook is enabled only for tests so we can substitute the callback in the DDL.
-	router.Handle("/test/ddl/hook", tikvhandler.DDLHookHandler{})
+	router.Handle("/test/ddl/hook", tikvhandler.NewDDLHookHandler(tikvHandlerTool.Store.(kv.Storage)))
 
 	// ttlJobTriggerHandler is enabled only for tests, so we can accelerate the schedule of TTL job
 	router.Handle("/test/ttl/trigger/{db}/{table}", ttlhandler.NewTTLJobTriggerHandler(tikvHandlerTool.Store.(kv.Storage)))
@@ -577,7 +443,7 @@ func (s *Server) startHTTPServer() {
 		err            error
 	)
 	httpRouterPage.WriteString("<html><head><title>TiDB Status and Metrics Report</title></head><body><h1>TiDB Status and Metrics Report</h1><table>")
-	err = router.Walk(func(route *mux.Route, _ *mux.Router, _ []*mux.Route) error {
+	err = router.Walk(func(route *mux.Route, router *mux.Router, ancestors []*mux.Route) error {
 		pathTemplate, err = route.GetPathTemplate()
 		if err != nil {
 			logutil.BgLogger().Error("get HTTP router path failed", zap.Error(err))
@@ -595,51 +461,13 @@ func (s *Server) startHTTPServer() {
 	}
 	httpRouterPage.WriteString("<tr><td><a href='/debug/pprof/'>Debug</a><td></tr>")
 	httpRouterPage.WriteString("</table></body></html>")
-	router.HandleFunc("/", func(responseWriter http.ResponseWriter, _ *http.Request) {
+	router.HandleFunc("/", func(responseWriter http.ResponseWriter, request *http.Request) {
 		_, err = responseWriter.Write(httpRouterPage.Bytes())
 		if err != nil {
 			logutil.BgLogger().Error("write HTTP index page failed", zap.Error(err))
 		}
 	})
-
-	serverMux := http.NewServeMux()
-	serverMux.Handle("/", router)
 	s.startStatusServerAndRPCServer(serverMux)
-}
-
-// setupAutoIDService initializes and registers the AutoID service for TiKV stores
-func (s *Server) setupAutoIDService(grpcServer *grpc.Server) {
-	keyspaceName := config.GetGlobalKeyspaceName()
-
-	var fullPath string
-	if keyspaceName == "" {
-		fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
-	} else {
-		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
-	}
-
-	store, err := store.New(fullPath)
-	if err != nil {
-		logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
-		return
-	}
-
-	ebd, ok := store.(kv.EtcdBackend)
-	if !ok {
-		return
-	}
-
-	etcdAddr, err := ebd.EtcdAddrs()
-	if err != nil {
-		logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
-		return
-	}
-
-	selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
-	service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
-	logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
-	pb.RegisterAutoIDAllocServer(grpcServer, service)
-	s.autoIDService = service
 }
 
 func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
@@ -652,26 +480,54 @@ func (s *Server) startStatusServerAndRPCServer(serverMux *http.ServeMux) {
 	statusServer := &http.Server{Addr: s.statusAddr, Handler: util2.NewCorsHandler(serverMux, s.cfg)}
 	grpcServer := NewRPCServer(s.cfg, s.dom, s)
 	service.RegisterChannelzServiceToServer(grpcServer)
-	if s.cfg.Store == config.StoreTypeTiKV {
-		s.setupAutoIDService(grpcServer)
+	if s.cfg.Store == "tikv" {
+		keyspaceName := config.GetGlobalKeyspaceName()
+		for {
+			var fullPath string
+			if keyspaceName == "" {
+				fullPath = fmt.Sprintf("%s://%s", s.cfg.Store, s.cfg.Path)
+			} else {
+				fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", s.cfg.Store, s.cfg.Path, keyspaceName)
+			}
+			store, err := store.New(fullPath)
+			if err != nil {
+				logutil.BgLogger().Error("new tikv store fail", zap.Error(err))
+				break
+			}
+			ebd, ok := store.(kv.EtcdBackend)
+			if !ok {
+				break
+			}
+			etcdAddr, err := ebd.EtcdAddrs()
+			if err != nil {
+				logutil.BgLogger().Error("tikv store not etcd background", zap.Error(err))
+				break
+			}
+			selfAddr := net.JoinHostPort(s.cfg.AdvertiseAddress, strconv.Itoa(int(s.cfg.Status.StatusPort)))
+			service := autoid.New(selfAddr, etcdAddr, store, ebd.TLSConfig())
+			logutil.BgLogger().Info("register auto service at", zap.String("addr", selfAddr))
+			pb.RegisterAutoIDAllocServer(grpcServer, service)
+			s.autoIDService = service
+			break
+		}
 	}
 
-	s.statusServer.Store(statusServer)
+	s.statusServer = statusServer
 	s.grpcServer = grpcServer
 
 	go util.WithRecovery(func() {
 		err := grpcServer.Serve(grpcL)
-		logutil.BgLogger().Warn("grpc server error", zap.Error(err))
+		logutil.BgLogger().Error("grpc server error", zap.Error(err))
 	}, nil)
 
 	go util.WithRecovery(func() {
 		err := statusServer.Serve(httpL)
-		logutil.BgLogger().Warn("http server error", zap.Error(err))
+		logutil.BgLogger().Error("http server error", zap.Error(err))
 	}, nil)
 
 	err := m.Serve()
 	if err != nil {
-		logutil.BgLogger().Warn("start status/rpc server error", zap.Error(err))
+		logutil.BgLogger().Error("start status/rpc server error", zap.Error(err))
 	}
 }
 
@@ -683,7 +539,7 @@ func (s *Server) SetCNChecker(tlsConfig *tls.Config) *tls.Config {
 			cn = strings.TrimSpace(cn)
 			checkCN[cn] = struct{}{}
 		}
-		tlsConfig.VerifyPeerCertificate = func(_ [][]byte, verifiedChains [][]*x509.Certificate) error {
+		tlsConfig.VerifyPeerCertificate = func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
 			for _, chain := range verifiedChains {
 				if len(chain) != 0 {
 					if _, match := checkCN[chain[0].Subject.CommonName]; match {
@@ -700,15 +556,9 @@ func (s *Server) SetCNChecker(tlsConfig *tls.Config) *tls.Config {
 
 // Status of TiDB.
 type Status struct {
-	Connections int          `json:"connections"`
-	Version     string       `json:"version"`
-	GitHash     string       `json:"git_hash"`
-	Status      DetailStatus `json:"status"`
-}
-
-// DetailStatus is to show the detail status of TiDB. for example the init stats percentage.
-type DetailStatus struct {
-	InitStatsPercentage float64 `json:"init_stats_percentage"`
+	Connections int    `json:"connections"`
+	Version     string `json:"version"`
+	GitHash     string `json:"git_hash"`
 }
 
 func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
@@ -720,14 +570,10 @@ func (s *Server) handleStatus(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 		return
 	}
-	initStatsPercentage := min(100, initstats.InitStatsPercentage.Load())
 	st := Status{
 		Connections: s.ConnectionCount(),
 		Version:     mysql.ServerVersion,
 		GitHash:     versioninfo.TiDBGitHash,
-		Status: DetailStatus{
-			InitStatsPercentage: initStatsPercentage,
-		},
 	}
 	js, err := json.Marshal(st)
 	if err != nil {
@@ -763,80 +609,4 @@ func (s *Server) newStatsHistoryHandler() *optimizor.StatsHistoryHandler {
 		panic("Failed to get domain")
 	}
 	return optimizor.NewStatsHistoryHandler(do)
-}
-
-func (s *Server) newStatsPriorityQueueHandler() *optimizor.StatsPriorityQueueHandler {
-	store, ok := s.driver.(*TiDBDriver)
-	if !ok {
-		panic("Illegal driver")
-	}
-
-	do, err := session.GetDomain(store.store)
-	if err != nil {
-		panic("Failed to get domain")
-	}
-
-	return optimizor.NewStatsPriorityQueueHandler(do)
-}
-
-var traceeventCounter = make(chan struct{}, 1)
-
-func traceeventHandler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		http.Error(w, "Streaming unsupported!", http.StatusInternalServerError)
-		return
-	}
-
-	select {
-	case traceeventCounter <- struct{}{}:
-	default:
-		http.Error(w, "http api /debug/traceevent only allow one request at a time", http.StatusTooManyRequests)
-		return
-	}
-	defer func() {
-		<-traceeventCounter
-	}()
-
-	var cfg traceevent.FlightRecorderConfig
-	cfg.Initialize()
-	body, _ := io.ReadAll(r.Body)
-	if len(body) > 0 {
-		if err := json.Unmarshal(body, &cfg); err != nil {
-			http.Error(w, fmt.Sprintf("decode json failed: %s", err.Error()), http.StatusBadRequest)
-			return
-		}
-	}
-
-	logutil.BgLogger().Info("http api /debug/traceevent called", zap.Any("config", cfg))
-	ch := make(chan []traceevent.Event, 256)
-	recorder, err := traceevent.StartHTTPFlightRecorder(ch, &cfg)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("validate config failed: %s", err.Error()), http.StatusBadRequest)
-		return
-	}
-	defer recorder.Close()
-
-	for {
-		select {
-		case events := <-ch:
-			res := traceevent.ConvertEventsForRendering(events)
-			fmt.Fprintf(w, "data: ")
-			enc := json.NewEncoder(w)
-			err := enc.Encode(res)
-			if err != nil {
-				logutil.BgLogger().Info("http api /debug/traceevent encode fail", zap.Error(err))
-			}
-			fmt.Fprintf(w, "\n\n")
-			flusher.Flush()
-
-		case <-r.Context().Done():
-			logutil.BgLogger().Info("http api /debug/traceevent client disconnected")
-			return
-		}
-	}
 }

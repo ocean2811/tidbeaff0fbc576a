@@ -1,8 +1,8 @@
 # TiDB Design Documents
 
 - Author(s): [morgo](http://github.com/morgo)
-- Discussion PR: https://github.com/pingcap/tidb/pull/30558
-- Tracking Issue: https://github.com/pingcap/tidb/issues/30366
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/pull/30558
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/30366
 
 ## Table of Contents
 
@@ -170,7 +170,7 @@ Because variables can be configured through either an "sysvar name" (under `[ins
 
 The use of a `GetGlobal()` and `SetGlobal()` func for each instance scoped system variable is not ideal. It is possible to refactor the system variable framework so that instance scope is stored in a map, and the values are updated automatically by `SET GLOBAL` on an instance scoped variable. On startup, as the configuration file is parsed it will update the values in the map. This seems like a better approach than the current use of Setters/Getters, and because there is a prescribed way of doing it we can correctly handle the data races that are common with our current incorrect usage of calling `config.GetGlobalConfig()`.
 
-Thus, the source of truth for instance scoped variables moves from the `config` package to another part of the server (likely `domain`). See [issue #30366](https://github.com/pingcap/tidb/issues/30366).
+Thus, the source of truth for instance scoped variables moves from the `config` package to another part of the server (likely `domain`). See [issue #30366](https://github.com/ocean2811/tidbeaff0fbc576a/issues/30366).
 
 Because at this stage the source of truth is now no longer the `config` package, we will also need to decide how to handle features like `INFORMATION_SCHEMA.CLUSTER_CONFIG`. If it refers to the config file, it will not necessarily reflect the current configuration of the cluster. Because every instance setting will now have a system variable name (which becomes the unified name), I recommend that we deprecate `CLUSTER_CONFIG` for TiDB. We can change `CLUSTER_CONFIG` to read from the new source of truth and maintain both for some versions to support upgrades.
 
@@ -185,7 +185,7 @@ import (
 	"fmt"
 
 	_ "github.com/go-sql-driver/mysql"
-	"github.com/pingcap/tidb/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/sessionctx/variable"
 )
 
 func main() {
@@ -212,7 +212,7 @@ tidb_stmt_summary_history_size
 
 Changes can be grouped into the following:
 
-1. `tidb_store_limit`: This has now been converted to global-only, see [issue #30515 (merged)](https://github.com/pingcap/tidb/issues/30515).
+1. `tidb_store_limit`: This has now been converted to global-only, see [issue #30515 (merged)](https://github.com/ocean2811/tidbeaff0fbc576a/issues/30515).
 2. `tidb_stmt_summary_XXX`, `tidb_enable_stmt_summary` and `tidb_capture_plan_baselines` (features work together): The recommendation discussed with the feature maintainers is to convert to global only.
 
 The change to `tidb_store_limit` is unlikely to affect users, since the feature was not working correctly. However, the change to statement summary and capture plan baselines is a behavior change which might affect some users.

@@ -16,87 +16,71 @@ package ingest
 
 import (
 	"context"
+	"math"
 	"net"
-	"runtime"
+	"path/filepath"
 	"strconv"
+	"sync/atomic"
 
-	tidb "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ingestor/ingestctrl"
-	"github.com/pingcap/tidb/pkg/lightning/backend"
-	"github.com/pingcap/tidb/pkg/lightning/common"
-	lightning "github.com/pingcap/tidb/pkg/lightning/config"
-	"github.com/pingcap/tidb/pkg/lightning/importdef"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/size"
-	kvutil "github.com/tikv/client-go/v2/util"
-	"go.uber.org/atomic"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/lightning/backend"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/lightning/checkpoints"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/lightning/common"
+	lightning "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/lightning/config"
+	tidb "github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/size"
 	"go.uber.org/zap"
 )
 
 // ImporterRangeConcurrencyForTest is only used for test.
 var ImporterRangeConcurrencyForTest *atomic.Int32
 
-func genConfig(
-	ctx context.Context,
-	jobSortPath string,
-	memRoot MemRoot,
-	checkDup bool,
-	resourceGroup string,
-	keyspace string,
-	concurrency int,
-	maxWriteSpeed int,
-	globalSort bool,
-) *ingestctrl.BackendConfig {
-	workerConcurrency := int32(concurrency * 2)
-	if ImporterRangeConcurrencyForTest != nil {
-		workerConcurrency = ImporterRangeConcurrencyForTest.Load() * 2
-	}
-
-	cfg := &ingestctrl.BackendConfig{
-		LocalStoreDir:     jobSortPath,
-		ResourceGroupName: resourceGroup,
-		MaxConnPerStore:   concurrency,
-		WorkerConcurrency: *atomic.NewInt32(workerConcurrency),
-		KeyspaceName:      keyspace,
-		// We disable the switch TiKV mode feature for now, because the impact is not
-		// fully tested.
-		ShouldCheckWriteStall: true,
-
-		// lighting default values
-		CheckpointEnabled:           true,
-		BlockSize:                   lightning.DefaultBlockSize,
-		KVWriteBatchSize:            lightning.KVWriteBatchSize,
-		RegionSplitBatchSize:        lightning.DefaultRegionSplitBatchSize,
-		RegionSplitConcurrency:      runtime.GOMAXPROCS(0),
-		MemTableSize:                lightning.DefaultEngineMemCacheSize,
-		LocalWriterMemCacheSize:     lightning.DefaultLocalWriterMemCacheSize,
-		ShouldCheckTiKV:             true,
-		MaxOpenFiles:                int(litRLimit),
-		PausePDSchedulerScope:       lightning.PausePDSchedulerScopeTable,
-		TaskType:                    kvutil.ExplicitTypeDDL,
-		DisableAutomaticCompactions: true,
-		StoreWriteBWLimit:           maxWriteSpeed,
-	}
-
-	adjustImportMemory(ctx, memRoot, cfg)
-	if checkDup && !globalSort {
-		cfg.DupeDetectEnabled = true
-		cfg.DuplicateDetectOpt = common.DupDetectOpt{ReportErrOnDup: true}
-	}
-	cfg.TiKVWorkerURL = tidb.GetGlobalConfig().TiKVWorkerURL
-
-	return cfg
+// Config is the configuration for the lightning local backend used in DDL.
+type Config struct {
+	Lightning    *lightning.Config
+	KeyspaceName string
+	IsRaftKV2    bool
 }
 
-// CopReadBatchSize is the batch size of coprocessor read.
-// It multiplies the tidb_ddl_reorg_batch_size by 10 to avoid
-// sending too many cop requests for the same handle range.
-func CopReadBatchSize(hintSize int) int {
-	if hintSize > 0 {
-		return hintSize
+func genConfig(ctx context.Context, memRoot MemRoot, jobID int64, unique bool) (*Config, error) {
+	tidbCfg := tidb.GetGlobalConfig()
+	cfg := lightning.NewConfig()
+	cfg.TikvImporter.Backend = lightning.BackendLocal
+	// Each backend will build a single dir in lightning dir.
+	cfg.TikvImporter.SortedKVDir = filepath.Join(LitSortPath, EncodeBackendTag(jobID))
+	if ImporterRangeConcurrencyForTest != nil {
+		cfg.TikvImporter.RangeConcurrency = int(ImporterRangeConcurrencyForTest.Load())
 	}
-	return 10 * int(vardef.GetDDLReorgBatchSize())
+	err := cfg.AdjustForDDL()
+	if err != nil {
+		logutil.Logger(ctx).Warn(LitWarnConfigError, zap.Error(err))
+		return nil, err
+	}
+	adjustImportMemory(ctx, memRoot, cfg)
+	cfg.Checkpoint.Enable = true
+	if unique {
+		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgErr
+		// TODO(lance6716): will introduce fail-fast for DDL usage later
+		cfg.Conflict.Threshold = math.MaxInt64
+	} else {
+		cfg.TikvImporter.DuplicateResolution = lightning.DupeResAlgNone
+	}
+	cfg.TiDB.Host = "127.0.0.1"
+	cfg.TiDB.StatusPort = int(tidbCfg.Status.StatusPort)
+	// Set TLS related information
+	cfg.Security.CAPath = tidbCfg.Security.ClusterSSLCA
+	cfg.Security.CertPath = tidbCfg.Security.ClusterSSLCert
+	cfg.Security.KeyPath = tidbCfg.Security.ClusterSSLKey
+	// in DDL scenario, we don't switch import mode
+	cfg.Cron.SwitchMode = lightning.Duration{Duration: 0}
+
+	c := &Config{
+		Lightning:    cfg,
+		KeyspaceName: tidb.GetGlobalKeyspaceName(),
+		IsRaftKV2:    false,
+	}
+
+	return c, err
 }
 
 // NewDDLTLS creates a common.TLS from the tidb config for DDL.
@@ -117,34 +101,36 @@ var (
 	compactConcurrency = 4
 )
 
-func generateLocalEngineConfig(ts uint64) *backend.EngineConfig {
+func generateLocalEngineConfig(id int64, dbName, tbName string) *backend.EngineConfig {
 	return &backend.EngineConfig{
 		Local: backend.LocalEngineConfig{
 			Compact:            true,
 			CompactThreshold:   int64(compactMemory),
 			CompactConcurrency: compactConcurrency,
-			BlockSize:          16 * 1024, // using default for DDL
 		},
-		TableInfo:   &importdef.TableInfo{},
+		TableInfo: &checkpoints.TidbTableInfo{
+			ID:   id,
+			DB:   dbName,
+			Name: tbName,
+		},
 		KeepSortDir: true,
-		TS:          ts,
 	}
 }
 
 // adjustImportMemory adjusts the lightning memory parameters according to the memory root's max limitation.
-func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *ingestctrl.BackendConfig) {
+func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *lightning.Config) {
 	var scale int64
 	// Try aggressive resource usage successful.
 	if tryAggressiveMemory(ctx, memRoot, cfg) {
 		return
 	}
 
-	defaultMemSize := int64(int(cfg.LocalWriterMemCacheSize) * cfg.GetWorkerConcurrency() / 2)
-	defaultMemSize += 4 * int64(cfg.MemTableSize)
+	defaultMemSize := int64(cfg.TikvImporter.LocalWriterMemCacheSize) * int64(cfg.TikvImporter.RangeConcurrency)
+	defaultMemSize += 4 * int64(cfg.TikvImporter.EngineMemCacheSize)
 	logutil.Logger(ctx).Info(LitInfoInitMemSetting,
-		zap.Int64("local writer memory cache size", cfg.LocalWriterMemCacheSize),
-		zap.Int("engine memory cache size", cfg.MemTableSize),
-		zap.Int("worker concurrency", cfg.GetWorkerConcurrency()))
+		zap.Int64("local writer memory cache size", int64(cfg.TikvImporter.LocalWriterMemCacheSize)),
+		zap.Int64("engine memory cache size", int64(cfg.TikvImporter.EngineMemCacheSize)),
+		zap.Int("range concurrency", cfg.TikvImporter.RangeConcurrency))
 
 	maxLimit := memRoot.MaxMemoryQuota()
 	scale = defaultMemSize / maxLimit
@@ -153,28 +139,28 @@ func adjustImportMemory(ctx context.Context, memRoot MemRoot, cfg *ingestctrl.Ba
 		return
 	}
 
-	cfg.LocalWriterMemCacheSize /= scale
-	cfg.MemTableSize /= int(scale)
-
+	cfg.TikvImporter.LocalWriterMemCacheSize /= lightning.ByteSize(scale)
+	cfg.TikvImporter.EngineMemCacheSize /= lightning.ByteSize(scale)
+	// TODO: adjust range concurrency number to control total concurrency in the future.
 	logutil.Logger(ctx).Info(LitInfoChgMemSetting,
-		zap.Int64("local writer memory cache size", cfg.LocalWriterMemCacheSize),
-		zap.Int("engine memory cache size", cfg.MemTableSize),
-		zap.Int("worker concurrency", cfg.GetWorkerConcurrency()))
+		zap.Int64("local writer memory cache size", int64(cfg.TikvImporter.LocalWriterMemCacheSize)),
+		zap.Int64("engine memory cache size", int64(cfg.TikvImporter.EngineMemCacheSize)),
+		zap.Int("range concurrency", cfg.TikvImporter.RangeConcurrency))
 }
 
 // tryAggressiveMemory lightning memory parameters according memory root's max limitation.
-func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *ingestctrl.BackendConfig) bool {
+func tryAggressiveMemory(ctx context.Context, memRoot MemRoot, cfg *lightning.Config) bool {
 	var defaultMemSize int64
-	defaultMemSize = int64(int(cfg.LocalWriterMemCacheSize) * cfg.GetWorkerConcurrency() / 2)
-	defaultMemSize += int64(cfg.MemTableSize)
+	defaultMemSize = int64(int(cfg.TikvImporter.LocalWriterMemCacheSize) * cfg.TikvImporter.RangeConcurrency)
+	defaultMemSize += int64(cfg.TikvImporter.EngineMemCacheSize)
 
 	if (defaultMemSize + memRoot.CurrentUsage()) > memRoot.MaxMemoryQuota() {
 		return false
 	}
 	logutil.Logger(ctx).Info(LitInfoChgMemSetting,
-		zap.Int64("local writer memory cache size", cfg.LocalWriterMemCacheSize),
-		zap.Int("engine memory cache size", cfg.MemTableSize),
-		zap.Int("worker concurrency", cfg.GetWorkerConcurrency()))
+		zap.Int64("local writer memory cache size", int64(cfg.TikvImporter.LocalWriterMemCacheSize)),
+		zap.Int64("engine memory cache size", int64(cfg.TikvImporter.EngineMemCacheSize)),
+		zap.Int("range concurrency", cfg.TikvImporter.RangeConcurrency))
 	return true
 }
 

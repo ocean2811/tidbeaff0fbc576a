@@ -2,8 +2,8 @@
 
 - Author: [dhysum](https://github.com/dhysum)
 - Tracking Issue:
-  - https://github.com/pingcap/tidb/issues/40041
-  - https://github.com/pingcap/tidb/issues/18015
+  - https://github.com/ocean2811/tidbeaff0fbc576a/issues/40041
+  - https://github.com/ocean2811/tidbeaff0fbc576a/issues/18015
 
 ## Background and Benefits
 

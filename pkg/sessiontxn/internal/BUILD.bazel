@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "internal",
     srcs = ["txn.go"],
-    importpath = "github.com/pingcap/tidb/pkg/sessiontxn/internal",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/internal",
     visibility = ["//pkg/sessiontxn:__subpackages__"],
     deps = [
         "//pkg/kv",

@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 

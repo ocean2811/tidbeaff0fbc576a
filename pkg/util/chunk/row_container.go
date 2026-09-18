@@ -15,27 +15,24 @@
 package chunk
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"sync"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/disk"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/disk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
 	"go.uber.org/zap"
 	"golang.org/x/sys/cpu"
 )
 
-// ErrCannotAddBecauseSorted indicate that the SortPartition is sorted and prohibit inserting data.
-var ErrCannotAddBecauseSorted = errors.New("can not add because sorted")
-
 type rowContainerRecord struct {
 	inMemory *List
-	inDisk   *DataInDiskByRows
+	inDisk   *ListInDisk
 	// spillError stores the error when spilling.
 	spillError error
 }
@@ -155,13 +152,13 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 	var err error
 	memory.QueryForceDisk.Add(1)
 	n := c.m.records.inMemory.NumChunks()
-	c.m.records.inDisk = NewDataInDiskByRows(c.m.records.inMemory.FieldTypes())
+	c.m.records.inDisk = NewListInDisk(c.m.records.inMemory.FieldTypes())
 	c.m.records.inDisk.diskTracker.AttachTo(c.diskTracker)
 	defer func() {
 		if r := recover(); r != nil {
 			err := fmt.Errorf("%v", r)
 			c.m.records.spillError = err
-			logutil.BgLogger().Warn("spill to disk failed", zap.Stack("stack"), zap.Error(err))
+			logutil.BgLogger().Error("spill to disk failed", zap.Stack("stack"), zap.Error(err))
 		}
 	}()
 	failpoint.Inject("spillToDiskOutOfDiskQuota", func(val failpoint.Value) {
@@ -173,14 +170,13 @@ func (c *RowContainer) spillToDisk(preSpillError error) {
 		c.m.records.spillError = preSpillError
 		return
 	}
-	for i := range n {
+	for i := 0; i < n; i++ {
 		chk := c.m.records.inMemory.GetChunk(i)
 		err = c.m.records.inDisk.Add(chk)
 		if err != nil {
 			c.m.records.spillError = err
 			return
 		}
-		c.m.records.inMemory.GetMemTracker().HandleKillSignal()
 	}
 	c.m.records.inMemory.Clear()
 }
@@ -225,7 +221,7 @@ func (c *RowContainer) NumRow() int {
 	return c.m.records.inMemory.Len()
 }
 
-// NumRowsOfChunk returns the number of rows of a chunk in the DataInDiskByRows.
+// NumRowsOfChunk returns the number of rows of a chunk in the ListInDisk.
 func (c *RowContainer) NumRowsOfChunk(chkID int) int {
 	c.m.RLock()
 	defer c.m.RUnlock()
@@ -267,7 +263,7 @@ func (c *RowContainer) Add(chk *Chunk) (err error) {
 
 // AllocChunk allocates a new chunk from RowContainer.
 func (c *RowContainer) AllocChunk() (chk *Chunk) {
-	return c.m.records.inMemory.AllocChunk()
+	return c.m.records.inMemory.allocChunk()
 }
 
 // GetChunk returns chkIdx th chunk of in memory records.
@@ -340,14 +336,11 @@ func (c *RowContainer) Close() (err error) {
 		c.actionSpill.cond.Broadcast()
 		c.actionSpill.SetFinished()
 	}
-	c.memTracker.Detach()
-	c.diskTracker.Detach()
 	if c.alreadySpilled() {
 		err = c.m.records.inDisk.Close()
 		c.m.records.inDisk = nil
 	}
 	c.m.records.inMemory.Clear()
-	c.m.records.inMemory = nil
 	return
 }
 
@@ -487,6 +480,9 @@ func (a *baseSpillDiskAction) WaitForTest() {
 	a.testWg.Wait()
 }
 
+// ErrCannotAddBecauseSorted indicate that the SortedRowContainer is sorted and prohibit inserting data.
+var ErrCannotAddBecauseSorted = errors.New("can not add because sorted")
+
 // SortedRowContainer provides a place for many rows, so many that we might want to sort and spill them into disk.
 type SortedRowContainer struct {
 	*RowContainer
@@ -577,24 +573,20 @@ func (c *SortedRowContainer) Sort() (ret error) {
 	ret = nil
 	defer func() {
 		if r := recover(); r != nil {
-			if err, ok := r.(error); ok {
-				ret = err
-			} else {
-				ret = fmt.Errorf("%v", r)
-			}
+			ret = fmt.Errorf("%v", r)
 		}
 	}()
 	if c.ptrM.rowPtrs != nil {
 		return
 	}
 	c.ptrM.rowPtrs = make([]RowPtr, 0, c.NumRow()) // The memory usage has been tracked in SortedRowContainer.Add() function
-	for chkIdx := range c.NumChunks() {
+	for chkIdx := 0; chkIdx < c.NumChunks(); chkIdx++ {
 		rowChk, err := c.GetChunk(chkIdx)
 		// err must be nil, because the chunk is in memory.
 		if err != nil {
 			panic(err)
 		}
-		for rowIdx := range rowChk.NumRows() {
+		for rowIdx := 0; rowIdx < rowChk.NumRows(); rowIdx++ {
 			c.ptrM.rowPtrs = append(c.ptrM.rowPtrs, RowPtr{ChkIdx: uint32(chkIdx), RowIdx: uint32(rowIdx)})
 		}
 	}

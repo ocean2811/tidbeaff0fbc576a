@@ -21,15 +21,14 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set"
 )
 
 const (
@@ -41,35 +40,26 @@ const (
 func init() {
 	// Initialize the metric schema database and register the driver to `drivers`.
 	dbID := autoid.MetricSchemaDBID
+	tableID := dbID + 1
 	metricTables := make([]*model.TableInfo, 0, len(MetricTableMap))
 	for name, def := range MetricTableMap {
 		cols := def.genColumnInfos()
 		tableInfo := buildTableMeta(name, cols)
+		tableInfo.ID = tableID
 		tableInfo.Comment = def.Comment
-		tableInfo.DBID = dbID
+		tableID++
 		metricTables = append(metricTables, tableInfo)
 		tableInfo.MaxColumnID = int64(len(tableInfo.Columns))
 		tableInfo.MaxIndexID = int64(len(tableInfo.Indices))
 	}
-
-	// assign table IDs, sort by table name first to make the id stable across different TiDB instances.
-	slices.SortFunc(metricTables, func(a, b *model.TableInfo) int {
-		return strings.Compare(a.Name.L, b.Name.L)
-	})
-	tableID := dbID + 1
-	for _, tableInfo := range metricTables {
-		tableInfo.ID = tableID
-		tableID++
-	}
-
 	dbInfo := &model.DBInfo{
 		ID:      dbID,
-		Name:    ast.NewCIStr(metadef.MetricSchemaName.O),
+		Name:    model.NewCIStr(util.MetricSchemaName.O),
 		Charset: mysql.DefaultCharset,
 		Collate: mysql.DefaultCollationName,
+		Tables:  metricTables,
 	}
-	dbInfo.Deprecated.Tables = metricTables
-	RegisterVirtualTable(dbInfo, tableFromMetaForMetricsTable)
+	RegisterVirtualTable(dbInfo, tableFromMeta)
 }
 
 // MetricTableDef is the metric table define.
@@ -111,11 +101,11 @@ func (def *MetricTableDef) genColumnInfos() []columnInfo {
 }
 
 // GenPromQL generates the promQL.
-func (def *MetricTableDef) GenPromQL(metricsSchemaRangeDuration int64, labels map[string]set.StringSet, quantile float64) string {
+func (def *MetricTableDef) GenPromQL(sctx sessionctx.Context, labels map[string]set.StringSet, quantile float64) string {
 	promQL := def.PromQL
 	promQL = strings.ReplaceAll(promQL, promQLQuantileKey, strconv.FormatFloat(quantile, 'f', -1, 64))
 	promQL = strings.ReplaceAll(promQL, promQLLabelConditionKey, def.genLabelCondition(labels))
-	promQL = strings.ReplaceAll(promQL, promQRangeDurationKey, strconv.FormatInt(metricsSchemaRangeDuration, 10)+"s")
+	promQL = strings.ReplaceAll(promQL, promQRangeDurationKey, strconv.FormatInt(sctx.GetSessionVars().MetricSchemaRangeDuration, 10)+"s")
 	return promQL
 }
 
@@ -132,9 +122,9 @@ func (def *MetricTableDef) genLabelCondition(labels map[string]set.StringSet) st
 		}
 		switch len(values) {
 		case 1:
-			fmt.Fprintf(&buf, "%s=\"%s\"", label, GenLabelConditionValues(values))
+			buf.WriteString(fmt.Sprintf("%s=\"%s\"", label, GenLabelConditionValues(values)))
 		default:
-			fmt.Fprintf(&buf, "%s=~\"%s\"", label, GenLabelConditionValues(values))
+			buf.WriteString(fmt.Sprintf("%s=~\"%s\"", label, GenLabelConditionValues(values)))
 		}
 		index++
 	}
@@ -156,7 +146,7 @@ type metricSchemaTable struct {
 	infoschemaTable
 }
 
-func tableFromMetaForMetricsTable(_ autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
+func tableFromMeta(alloc autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
 	columns := make([]*table.Column, 0, len(meta.Columns))
 	for _, colInfo := range meta.Columns {
 		col := table.ToColumn(colInfo)

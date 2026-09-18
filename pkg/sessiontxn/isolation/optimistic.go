@@ -17,15 +17,13 @@ package isolation
 import (
 	"math"
 
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -47,15 +45,9 @@ func (p *OptimisticTxnContextProvider) ResetForNewTxn(sctx sessionctx.Context, c
 	p.getStmtForUpdateTSFunc = p.getTxnStartTS
 }
 
-func (p *OptimisticTxnContextProvider) onTxnActive(
-	txn kv.Transaction,
-	tp sessiontxn.EnterNewTxnType,
-) {
+func (p *OptimisticTxnContextProvider) onTxnActive(_ kv.Transaction, tp sessiontxn.EnterNewTxnType) {
 	sessVars := p.sctx.GetSessionVars()
-	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp, txn.IsPipelined())
-	failpoint.Inject("injectOptimisticTxnRetryable", func(val failpoint.Value) {
-		sessVars.TxnCtx.CouldRetry = val.(bool)
-	})
+	sessVars.TxnCtx.CouldRetry = isOptimisticTxnRetryable(sessVars, tp)
 }
 
 // isOptimisticTxnRetryable (if returns true) means the transaction could retry.
@@ -63,16 +55,8 @@ func (p *OptimisticTxnContextProvider) onTxnActive(
 // If the session is already in transaction, enable retry or internal SQL could retry.
 // If not, the transaction could always retry, because it should be auto committed transaction.
 // Anyway the retry limit is 0, the transaction could not retry.
-func isOptimisticTxnRetryable(
-	sessVars *variable.SessionVars,
-	tp sessiontxn.EnterNewTxnType,
-	isPipelined bool,
-) bool {
+func isOptimisticTxnRetryable(sessVars *variable.SessionVars, tp sessiontxn.EnterNewTxnType) bool {
 	if tp == sessiontxn.EnterNewTxnDefault {
-		return false
-	}
-
-	if isPipelined {
 		return false
 	}
 
@@ -125,7 +109,7 @@ func (p *OptimisticTxnContextProvider) GetStmtForUpdateTS() (uint64, error) {
 
 // AdviseOptimizeWithPlan providers optimization according to the plan
 // It will use MaxTS as the startTS in autocommit txn for some plans.
-func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err error) {
+func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan interface{}) (err error) {
 	if p.optimizeWithMaxTS || p.isTidbSnapshotEnabled() || p.isBeginStmtWithStaleRead() {
 		return nil
 	}
@@ -136,7 +120,7 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err err
 		return nil
 	}
 
-	realPlan, ok := plan.(base.Plan)
+	realPlan, ok := plan.(plannercore.Plan)
 	if !ok {
 		return nil
 	}
@@ -145,7 +129,10 @@ func (p *OptimisticTxnContextProvider) AdviseOptimizeWithPlan(plan any) (err err
 		realPlan = execute.Plan
 	}
 
-	ok = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx.GetSessionVars(), realPlan)
+	ok, err = plannercore.IsPointGetWithPKOrUniqueKeyByAutoCommit(p.sctx, realPlan)
+	if err != nil {
+		return err
+	}
 
 	if ok {
 		sessVars := p.sctx.GetSessionVars()

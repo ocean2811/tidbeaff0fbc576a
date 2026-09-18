@@ -11,8 +11,6 @@ import (
 	"time"
 
 	"github.com/fatih/color"
-	"github.com/pingcap/log"
-	"go.uber.org/zap"
 	"golang.org/x/term"
 )
 
@@ -34,18 +32,13 @@ type ExtraField func() [2]string
 // WithTimeCost adds the task information of time costing for `ShowTask`.
 func WithTimeCost() ExtraField {
 	start := time.Now()
-	var cached time.Duration
-
 	return func() [2]string {
-		if cached == 0 {
-			cached = time.Since(start).Round(time.Millisecond)
-		}
-		return [2]string{"take", cached.String()}
+		return [2]string{"take", time.Since(start).Round(time.Millisecond).String()}
 	}
 }
 
 // WithConstExtraField adds an extra field with constant values.
-func WithConstExtraField(key string, value any) ExtraField {
+func WithConstExtraField(key string, value interface{}) ExtraField {
 	return func() [2]string {
 		return [2]string{key, fmt.Sprint(value)}
 	}
@@ -72,10 +65,14 @@ func printFinalMessage(extraFields []ExtraField) func() string {
 // ShowTask prints a task start information, and mark as finished when the returned function called.
 // This is for TUI presenting.
 func (ops ConsoleOperations) ShowTask(message string, extraFields ...ExtraField) func() {
-	bar := ops.StartProgressBar(message, OnlyOneTask, extraFields...)
+	ops.Print(message)
 	return func() {
-		bar.Inc()
-		bar.Close()
+		fields := make([]string, 0, len(extraFields))
+		for _, fieldFunc := range extraFields {
+			field := fieldFunc()
+			fields = append(fields, fmt.Sprintf("%s = %s", field[0], color.New(color.Bold).Sprint(field[1])))
+		}
+		ops.Printf("%s { %s }\n", color.HiGreenString("DONE"), strings.Join(fields, ", "))
 	}
 }
 
@@ -84,21 +81,6 @@ func (ops ConsoleOperations) RootFrame() Frame {
 		width:   ops.GetWidth(),
 		offset:  0,
 		console: ops,
-	}
-}
-
-func PrintList[T any](ops ConsoleOperations, title string, items []T, maxItemsDisplay int) {
-	log.Info("Print list: all items.", zap.String("title", title), zap.Any("items", items))
-	ops.Println(title)
-	toPrint := items
-	if maxItemsDisplay > 0 {
-		toPrint = items[:min(len(items), maxItemsDisplay)]
-	}
-	for _, item := range toPrint {
-		ops.Printf("- %v\n", item)
-	}
-	if len(items) > len(toPrint) {
-		ops.Printf("... and %d more ...", len(items)-len(toPrint))
 	}
 }
 
@@ -114,11 +96,11 @@ func (ops ConsoleOperations) PromptBool(p string) bool {
 			// EOF or reply nothing.
 			return false
 		}
-		trimmed := strings.TrimSpace(ans)
-		if strings.ToLower(trimmed) == "y" {
+		trimed := strings.TrimSpace(ans)
+		if strings.ToLower(trimed) == "y" {
 			return true
 		}
-		if trimmed == "" || strings.ToLower(trimmed) == "n" {
+		if trimed == "" || strings.ToLower(trimed) == "n" {
 			return false
 		}
 	}
@@ -132,7 +114,7 @@ func (ops ConsoleOperations) IsInteractive() bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
-func (ops ConsoleOperations) Scanln(args ...any) (int, error) {
+func (ops ConsoleOperations) Scanln(args ...interface{}) (int, error) {
 	return fmt.Fscanln(ops.In(), args...)
 }
 
@@ -154,15 +136,15 @@ func (ops ConsoleOperations) CreateTable() *Table {
 	}
 }
 
-func (ops ConsoleOperations) Print(args ...any) {
+func (ops ConsoleOperations) Print(args ...interface{}) {
 	_, _ = fmt.Fprint(ops.Out(), args...)
 }
 
-func (ops ConsoleOperations) Println(args ...any) {
+func (ops ConsoleOperations) Println(args ...interface{}) {
 	_, _ = fmt.Fprintln(ops.Out(), args...)
 }
 
-func (ops ConsoleOperations) Printf(format string, args ...any) {
+func (ops ConsoleOperations) Printf(format string, args ...interface{}) {
 	_, _ = fmt.Fprintf(ops.Out(), format, args...)
 }
 

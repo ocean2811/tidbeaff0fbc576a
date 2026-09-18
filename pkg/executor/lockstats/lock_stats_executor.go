@@ -19,13 +19,14 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/tables"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 var _ exec.Executor = &LockExec{}
@@ -64,7 +65,7 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 		if msg != "" {
-			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(msg))
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 		}
 	} else {
 		tableWithPartitions, err := populateTableAndPartitionIDs(e.Tables, is)
@@ -77,7 +78,7 @@ func (e *LockExec) Next(_ context.Context, _ *chunk.Chunk) error {
 			return err
 		}
 		if msg != "" {
-			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackError(msg))
+			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(errors.New(msg))
 		}
 	}
 
@@ -101,13 +102,13 @@ func (*LockExec) Open(context.Context) error {
 // populatePartitionIDAndNames returns the table ID and partition IDs for the given table name and partition names.
 func populatePartitionIDAndNames(
 	table *ast.TableName,
-	partitionNames []ast.CIStr,
+	partitionNames []model.CIStr,
 	is infoschema.InfoSchema,
 ) (int64, map[int64]string, error) {
 	if len(partitionNames) == 0 {
 		return 0, nil, errors.New("partition list should not be empty")
 	}
-	tbl, err := is.TableByName(context.Background(), table.Schema, table.Name)
+	tbl, err := is.TableByName(table.Schema, table.Name)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -134,19 +135,19 @@ func populatePartitionIDAndNames(
 func populateTableAndPartitionIDs(
 	tables []*ast.TableName,
 	is infoschema.InfoSchema,
-) (map[int64]*types.StatsLockTable, error) {
+) (map[int64]*util.StatsLockTable, error) {
 	if len(tables) == 0 {
 		return nil, errors.New("table list should not be empty")
 	}
-	tableWithPartitions := make(map[int64]*types.StatsLockTable, len(tables))
+	tableWithPartitions := make(map[int64]*util.StatsLockTable, len(tables))
 
 	for _, table := range tables {
-		tbl, err := is.TableByName(context.Background(), table.Schema, table.Name)
+		tbl, err := is.TableByName(table.Schema, table.Name)
 		if err != nil {
 			return nil, err
 		}
 		tid := tbl.Meta().ID
-		tableWithPartitions[tid] = &types.StatsLockTable{
+		tableWithPartitions[tid] = &util.StatsLockTable{
 			FullName: fmt.Sprintf("%s.%s", table.Schema.L, table.Name.L),
 		}
 

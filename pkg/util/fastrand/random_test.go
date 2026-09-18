@@ -29,12 +29,12 @@ func TestRand(t *testing.T) {
 
 	_ = Buf(20)
 	var arr [256]bool
-	for range 1024 {
+	for i := 0; i < 1024; i++ {
 		idx := Uint32N(256)
 		arr[idx] = true
 	}
 	sum := 0
-	for i := range 256 {
+	for i := 0; i < 256; i++ {
 		if !arr[i] {
 			sum++
 		}

@@ -18,8 +18,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/util/benchdaily"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/benchdaily"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 func BenchmarkSelectResponseChunk_BigResponse(b *testing.B) {

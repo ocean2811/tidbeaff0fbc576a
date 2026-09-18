@@ -15,21 +15,19 @@
 package lock
 
 import (
-	stdctx "context"
 	"errors"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
-	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/lock/context"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 )
 
 // Checker uses to check tables lock.
 type Checker struct {
-	ctx context.TableLockReadContext
+	ctx sessionctx.Context
 	is  infoschema.InfoSchema
 }
 
@@ -37,7 +35,7 @@ type Checker struct {
 var ErrLockedTableDropped = errors.New("other table can be accessed after locked table dropped")
 
 // NewChecker return new lock Checker.
-func NewChecker(ctx context.TableLockReadContext, is infoschema.InfoSchema) *Checker {
+func NewChecker(ctx sessionctx.Context, is infoschema.InfoSchema) *Checker {
 	return &Checker{ctx: ctx, is: is}
 }
 
@@ -47,7 +45,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 	// System DB and memory DB are not support table lock.
-	if metadef.IsMemOrSysDB(db) {
+	if util.IsMemOrSysDB(db) {
 		return nil
 	}
 	// check operation on database.
@@ -68,7 +66,7 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		return nil
 	}
 	// TODO: try to remove this get for speed up.
-	tb, err := c.is.TableByName(stdctx.Background(), ast.NewCIStr(db), ast.NewCIStr(table))
+	tb, err := c.is.TableByName(model.NewCIStr(db), model.NewCIStr(table))
 	// Ignore this error for "drop table if not exists t1" when t1 doesn't exists.
 	if infoschema.ErrTableNotExists.Equal(err) {
 		return nil
@@ -84,9 +82,9 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 		for _, lockT := range lockTables {
 			if lockT.TableID == tb.Meta().ID {
 				switch tb.Meta().Lock.Tp {
-				case ast.TableLockWrite:
+				case model.TableLockWrite:
 					return ErrLockedTableDropped
-				case ast.TableLockRead, ast.TableLockWriteLocal, ast.TableLockReadOnly:
+				case model.TableLockRead, model.TableLockWriteLocal, model.TableLockReadOnly:
 					return infoschema.ErrTableNotLockedForWrite.GenWithStackByArgs(tb.Meta().Name)
 				}
 			}
@@ -105,23 +103,23 @@ func (c *Checker) CheckTableLock(db, table string, privilege mysql.PrivilegeType
 
 	if privilege == mysql.SelectPriv {
 		switch tb.Meta().Lock.Tp {
-		case ast.TableLockRead, ast.TableLockWriteLocal, ast.TableLockReadOnly:
+		case model.TableLockRead, model.TableLockWriteLocal, model.TableLockReadOnly:
 			return nil
 		}
 	}
-	if alterWriteable && tb.Meta().Lock.Tp == ast.TableLockReadOnly {
+	if alterWriteable && tb.Meta().Lock.Tp == model.TableLockReadOnly {
 		return nil
 	}
 
 	return infoschema.ErrTableLocked.GenWithStackByArgs(tb.Meta().Name.L, tb.Meta().Lock.Tp, tb.Meta().Lock.Sessions[0])
 }
 
-func checkLockTpMeetPrivilege(tp ast.TableLockType, privilege mysql.PrivilegeType) bool {
+func checkLockTpMeetPrivilege(tp model.TableLockType, privilege mysql.PrivilegeType) bool {
 	// TableLockReadOnly doesn't need to check in this, because it is session unrelated.
 	switch tp {
-	case ast.TableLockWrite, ast.TableLockWriteLocal:
+	case model.TableLockWrite, model.TableLockWriteLocal:
 		return true
-	case ast.TableLockRead:
+	case model.TableLockRead:
 		// ShowDBPriv, AllPrivMask, CreatePriv, CreateViewPriv already checked before.
 		// The other privilege in read lock was not allowed.
 		if privilege == mysql.SelectPriv {
@@ -142,13 +140,11 @@ func (c *Checker) CheckLockInDB(db string, privilege mysql.PrivilegeType) error 
 	if privilege == mysql.CreatePriv {
 		return nil
 	}
-	rs := c.is.ListTablesWithSpecialAttribute(infoschemacontext.TableLockAttribute)
-	for _, schema := range rs {
-		for _, tbl := range schema.TableInfos {
-			err := c.CheckTableLock(db, tbl.Name.L, privilege, false)
-			if err != nil {
-				return err
-			}
+	tables := c.is.SchemaTables(model.NewCIStr(db))
+	for _, tbl := range tables {
+		err := c.CheckTableLock(db, tbl.Meta().Name.L, privilege, false)
+		if err != nil {
+			return err
 		}
 	}
 	return nil

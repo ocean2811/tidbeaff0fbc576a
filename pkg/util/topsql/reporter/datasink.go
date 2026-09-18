@@ -20,7 +20,7 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	topsqlstate "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/state"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -41,23 +41,17 @@ type DataSinkRegisterer interface {
 	Deregister(dataSink DataSink)
 }
 
-// ReportData contains the payload sent from reporter to agent.
-// DataRecords stores TopSQL CPU records, and RURecords stores TopRU records.
-// SQLMetas and PlanMetas are shared by both record types.
+// ReportData contains data that reporter sends to the agent.
 type ReportData struct {
 	// DataRecords contains the topN records of each second and the `others`
 	// record which aggregation all []tipb.TopSQLRecord that is out of Top N.
 	DataRecords []tipb.TopSQLRecord
-	// RURecords contains TopRU records aggregated by (user, sql_digest, plan_digest).
-	// Stored separately to avoid mixing with CPU-based TopSQLRecord.
-	// Populated by reporter after two-level TopN filtering.
-	RURecords []tipb.TopRURecord
-	SQLMetas  []tipb.SQLMeta
-	PlanMetas []tipb.PlanMeta
+	SQLMetas    []tipb.SQLMeta
+	PlanMetas   []tipb.PlanMeta
 }
 
 func (d *ReportData) hasData() bool {
-	return len(d.DataRecords) != 0 || len(d.RURecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
+	return len(d.DataRecords) != 0 || len(d.SQLMetas) != 0 || len(d.PlanMetas) != 0
 }
 
 var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}
@@ -66,8 +60,6 @@ var _ DataSinkRegisterer = &DefaultDataSinkRegisterer{}
 type DefaultDataSinkRegisterer struct {
 	ctx       context.Context
 	dataSinks map[DataSink]struct{}
-	// topSQLSinkCount tracks the number of sinks that require TopSQL enabled.
-	topSQLSinkCount int
 	sync.Mutex
 }
 
@@ -88,32 +80,13 @@ func (r *DefaultDataSinkRegisterer) Register(dataSink DataSink) error {
 	case <-r.ctx.Done():
 		return errors.New("DefaultDataSinkRegisterer closed")
 	default:
-		if _, ok := r.dataSinks[dataSink]; ok {
-			return nil
-		}
 		if len(r.dataSinks) >= 10 {
 			return errors.New("too many datasinks")
 		}
-
-		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopRU {
-			if err := topsqlstate.SetTopRUItemInterval(ds.itemInterval); err != nil {
-				return err
-			}
-			topsqlstate.EnableTopRU()
-		}
-
 		r.dataSinks[dataSink] = struct{}{}
-
-		// Non-pubsub sinks do not carry subscription collectors; keep TopSQL enabled by default.
-		enableTopSQL := true
-		if ds, ok := dataSink.(*pubSubDataSink); ok {
-			enableTopSQL = ds.enableTopSQL
-		}
-		if enableTopSQL {
+		if len(r.dataSinks) > 0 {
 			topsqlstate.EnableTopSQL()
-			r.topSQLSinkCount++
 		}
-
 		return nil
 	}
 }
@@ -126,27 +99,9 @@ func (r *DefaultDataSinkRegisterer) Deregister(dataSink DataSink) {
 	select {
 	case <-r.ctx.Done():
 	default:
-		if _, ok := r.dataSinks[dataSink]; !ok {
-			return
-		}
-
 		delete(r.dataSinks, dataSink)
-		// Non-pubsub sinks do not carry subscription collectors; keep TopSQL enabled by default.
-		enableTopSQL := true
-		if ds, ok := dataSink.(*pubSubDataSink); ok {
-			enableTopSQL = ds.enableTopSQL
-		}
-		if enableTopSQL {
-			if r.topSQLSinkCount > 0 {
-				r.topSQLSinkCount--
-			}
-			if r.topSQLSinkCount == 0 {
-				topsqlstate.DisableTopSQL()
-			}
-		}
-
-		if ds, ok := dataSink.(*pubSubDataSink); ok && ds.enableTopRU {
-			topsqlstate.DisableTopRU()
+		if len(r.dataSinks) == 0 {
+			topsqlstate.DisableTopSQL()
 		}
 	}
 }

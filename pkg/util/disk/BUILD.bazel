@@ -6,7 +6,7 @@ go_library(
         "tempDir.go",
         "tracker.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/disk",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/disk",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/config",

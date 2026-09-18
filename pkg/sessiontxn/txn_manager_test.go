@@ -19,18 +19,19 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/sessiontxn/internal"
-	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
-	"github.com/pingcap/tidb/pkg/table/temptable"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/internal"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/staleread"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/temptable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -443,11 +444,11 @@ func TestGetSnapshot(t *testing.T) {
 }
 
 func TestSnapshotInterceptor(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create temporary table test.tmp1 (id int primary key)")
-	tbl, err := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema).TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tmp1"))
+	tbl, err := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema).TableByName(model.NewCIStr("test"), model.NewCIStr("tmp1"))
 	require.NoError(t, err)
 	require.Equal(t, model.TempTableLocal, tbl.Meta().TempTableType)
 	tblID := tbl.Meta().ID
@@ -458,7 +459,7 @@ func TestSnapshotInterceptor(t *testing.T) {
 
 	initTxnFuncs := []func() error{
 		func() error {
-			err := tk.Session().PrepareTxnCtx(context.TODO(), nil)
+			err := tk.Session().PrepareTxnCtx(context.TODO())
 			if err == nil {
 				err = sessiontxn.GetTxnManager(tk.Session()).AdviseWarmup()
 			}
@@ -484,11 +485,11 @@ func TestSnapshotInterceptor(t *testing.T) {
 
 		val, err := txn.Get(context.Background(), k)
 		require.NoError(t, err)
-		require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
+		require.Equal(t, []byte("v1"), val)
 
 		val, err = txn.GetSnapshot().Get(context.Background(), k)
 		require.NoError(t, err)
-		require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
+		require.Equal(t, []byte("v1"), val)
 
 		tk.Session().RollbackTxn(context.Background())
 	}
@@ -497,7 +498,7 @@ func TestSnapshotInterceptor(t *testing.T) {
 	snap := internal.GetSnapshotWithTS(tk.Session(), 0, temptable.SessionSnapshotInterceptor(tk.Session(), sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()))
 	val, err := snap.Get(context.Background(), k)
 	require.NoError(t, err)
-	require.Equal(t, kv.NewValueEntry([]byte("v1"), 0), val)
+	require.Equal(t, []byte("v1"), val)
 }
 
 func checkBasicActiveTxn(t *testing.T, sctx sessionctx.Context) kv.Transaction {

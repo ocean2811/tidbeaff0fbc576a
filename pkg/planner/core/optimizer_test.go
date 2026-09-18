@@ -15,28 +15,17 @@
 package core
 
 import (
-	"math"
-	"math/bits"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/executor/join/joinversion"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/rule"
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/property"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/stretchr/testify/require"
 )
@@ -119,232 +108,48 @@ func TestMPPJoinKeyTypeConvert(t *testing.T) {
 	testJoinKeyTypeConvert(t, bigIntType, bigIntType, bigIntType, false, false)
 	testJoinKeyTypeConvert(t, unsignedBigIntType, bigIntType, decimalType, true, true)
 	testJoinKeyTypeConvert(t, bigIntType, unsignedBigIntType, decimalType, true, true)
-
-	t.Run("overlong type chunk reuse uses reusable chunk size", func(t *testing.T) {
-		sctx := coretestsdk.MockContext()
-		defer func() {
-			domain.GetDomain(sctx).StatsHandle().Close()
-		}()
-
-		originMaxMemoryLimitForOverlongType := MaxMemoryLimitForOverlongType
-		originMaxChunkSize := sctx.GetSessionVars().MaxChunkSize
-		defer func() {
-			MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
-			sctx.GetSessionVars().MaxChunkSize = originMaxChunkSize
-		}()
-
-		// Keep enough bounded overlong columns so that the same row count flips once MaxChunkSize grows.
-		columns := make([]*expression.Column, 0, 80)
-		for i := range 80 {
-			colType := types.NewFieldType(mysql.TypeVarchar)
-			colType.SetFlen(1001)
-			columns = append(columns, &expression.Column{RetType: colType, UniqueID: int64(i + 1)})
-		}
-		readerSchema := expression.NewSchema(columns...)
-		reader := physicalop.PhysicalTableReader{}.Init(sctx.GetPlanCtx(), 0)
-		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
-		buildTrustedHistColl := func(cols []*expression.Column, rowCount int64, avgColSize int64) *statistics.HistColl {
-			histColl := statistics.NewHistColl(1, rowCount, 0, len(cols), 0)
-			for _, col := range cols {
-				histColl.SetCol(col.UniqueID, &statistics.Column{
-					Histogram: *statistics.NewHistogram(col.UniqueID, rowCount, 0, 0, col.RetType, 0, avgColSize*rowCount),
-				})
-			}
-			return histColl
-		}
-
-		MaxMemoryLimitForOverlongType = math.MaxInt64
-		reader.SetStats(&property.StatsInfo{
-			RowCount: 2048,
-			HistColl: &statistics.HistColl{},
-		})
-		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
-
-		MaxMemoryLimitForOverlongType = 0
-		reader.SetStats(&property.StatsInfo{
-			RowCount: 2048,
-		})
-		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
-
-		reader.SetStats(&property.StatsInfo{
-			RowCount: 2048,
-			HistColl: &statistics.HistColl{Pseudo: true},
-		})
-		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
-
-		wideColumns := make([]*expression.Column, 0, 40)
-		for i := range 40 {
-			colType := types.NewFieldType(mysql.TypeVarchar)
-			colType.SetFlen(1000001)
-			wideColumns = append(wideColumns, &expression.Column{RetType: colType, UniqueID: int64(1000 + i + 1)})
-		}
-		reader.PhysicalSchemaProducer.SetSchema(expression.NewSchema(wideColumns...))
-		reader.SetStats(&property.StatsInfo{
-			RowCount: 2048,
-		})
-		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
-
-		reader.PhysicalSchemaProducer.SetSchema(readerSchema)
-		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
-		reader.SetStats(&property.StatsInfo{
-			RowCount: 2048,
-			HistColl: &statistics.HistColl{},
-		})
-		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
-
-		reader.SetStats(&property.StatsInfo{
-			RowCount: 2048,
-			HistColl: buildTrustedHistColl(columns, 2048, 500),
-		})
-		reader.SCtx().GetSessionVars().MaxChunkSize = 32
-		require.False(t, shouldSkipReuseChunkForPhysicalPlan(reader))
-
-		reader.SCtx().GetSessionVars().MaxChunkSize = 1024
-		require.True(t, shouldSkipReuseChunkForPhysicalPlan(reader))
-	})
-
-	t.Run("point get uses exact row bound for overlong type estimation", func(t *testing.T) {
-		sctx := coretestsdk.MockContext()
-		defer func() {
-			domain.GetDomain(sctx).StatsHandle().Close()
-		}()
-
-		pointGet := newPointGetPlan(
-			sctx.GetPlanCtx(),
-			"test",
-			expression.NewSchema(),
-			&model.TableInfo{Name: ast.NewCIStr("t")},
-			nil,
-		)
-
-		estimatedRows, hasTrustedStats := estimateReusableChunkRowsForOverlongType(pointGet)
-		require.Equal(t, float64(1), estimatedRows)
-		require.True(t, hasTrustedStats)
-	})
-
-	t.Run("batch point get participates in overlong type chunk reuse gating", func(t *testing.T) {
-		sctx := coretestsdk.MockContext()
-		defer func() {
-			domain.GetDomain(sctx).StatsHandle().Close()
-		}()
-
-		originMaxMemoryLimitForOverlongType := MaxMemoryLimitForOverlongType
-		originMaxChunkSize := sctx.GetSessionVars().MaxChunkSize
-		defer func() {
-			MaxMemoryLimitForOverlongType = originMaxMemoryLimitForOverlongType
-			sctx.GetSessionVars().MaxChunkSize = originMaxChunkSize
-		}()
-
-		MaxMemoryLimitForOverlongType = 0
-
-		columns := make([]*expression.Column, 0, 80)
-		for i := range 80 {
-			colType := types.NewFieldType(mysql.TypeVarchar)
-			colType.SetFlen(1001)
-			columns = append(columns, &expression.Column{RetType: colType, UniqueID: int64(2000 + i + 1)})
-		}
-		batchPointGet := (&physicalop.BatchPointGetPlan{TblInfo: &model.TableInfo{}}).Init(
-			sctx.GetPlanCtx(),
-			&property.StatsInfo{RowCount: 2048},
-			expression.NewSchema(columns...),
-			nil,
-			0,
-		)
-
-		sctx.GetSessionVars().MaxChunkSize = 32
-		require.False(t, shouldSkipReuseChunkForPhysicalPlan(batchPointGet))
-
-		sctx.GetSessionVars().MaxChunkSize = 1024
-		require.True(t, shouldSkipReuseChunkForPhysicalPlan(batchPointGet))
-
-		jsonBatchPointGet := (&physicalop.BatchPointGetPlan{TblInfo: &model.TableInfo{}}).Init(
-			sctx.GetPlanCtx(),
-			&property.StatsInfo{RowCount: 1},
-			expression.NewSchema(&expression.Column{
-				RetType:  types.NewFieldType(mysql.TypeJSON),
-				UniqueID: int64(3001),
-			}),
-			nil,
-			0,
-		)
-		skipReuseChunk, continueIterating := checkSkipReuseChunkForOverlongType(sctx.GetPlanCtx(), jsonBatchPointGet)
-		require.True(t, skipReuseChunk)
-		require.False(t, continueIterating)
-	})
 }
 
 // Test for core.handleFineGrainedShuffle()
 func TestHandleFineGrainedShuffle(t *testing.T) {
-	t.Run("refresh cached logical cores when tiflash restarts", func(t *testing.T) {
-		const staleAddr = "127.0.0.1:3933"
-		const validAddr = "127.0.0.2:3933"
-		copr.GlobalMPPServerInfoManager.Delete(staleAddr)
-		copr.GlobalMPPServerInfoManager.Delete(validAddr)
-		t.Cleanup(func() {
-			copr.GlobalMPPServerInfoManager.Delete(staleAddr)
-			copr.GlobalMPPServerInfoManager.Delete(validAddr)
-		})
-
-		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
-			Address:         staleAddr,
-			LogicalCPUCount: 8,
-			StartTimestamp:  100,
-		})
-		copr.GlobalMPPServerInfoManager.Add(&copr.MPPServerInfo{
-			Address:         validAddr,
-			LogicalCPUCount: 16,
-			StartTimestamp:  200,
-		})
-
-		serversNeedingRefresh, minLogicalCores := splitTiFlashLogicalCoreCache([]infoschema.ServerInfo{
-			{Address: staleAddr, StartTimestamp: 101},
-			{Address: validAddr, StartTimestamp: 200},
-		})
-
-		require.Equal(t, uint64(16), minLogicalCores)
-		require.Len(t, serversNeedingRefresh, 1)
-		require.Equal(t, staleAddr, serversNeedingRefresh[0].Address)
-		require.Equal(t, int64(101), serversNeedingRefresh[0].StartTimestamp)
-	})
-
 	sortItem := property.SortItem{
 		Col:  nil,
 		Desc: true,
 	}
-	var plans []*physicalop.BasePhysicalPlan
-	tableReader := &physicalop.PhysicalTableReader{}
-	partWindow := &physicalop.PhysicalWindow{
+	var plans []*basePhysicalPlan
+	tableReader := &PhysicalTableReader{}
+	partWindow := &PhysicalWindow{
 		// Meaningless sort item, just for test.
 		PartitionBy: []property.SortItem{sortItem},
 	}
-	partialSort := &physicalop.PhysicalSort{
+	partialSort := &PhysicalSort{
 		IsPartialSort: true,
 	}
-	sort := &physicalop.PhysicalSort{}
-	recv := &physicalop.PhysicalExchangeReceiver{}
-	passSender := &physicalop.PhysicalExchangeSender{
+	sort := &PhysicalSort{}
+	recv := &PhysicalExchangeReceiver{}
+	passSender := &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_PassThrough,
 	}
-	hashSender := &physicalop.PhysicalExchangeSender{
+	hashSender := &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
-	tableScan := &physicalop.PhysicalTableScan{}
-	plans = append(plans, &partWindow.BasePhysicalPlan)
-	plans = append(plans, &partialSort.BasePhysicalPlan)
-	plans = append(plans, &sort.BasePhysicalPlan)
-	plans = append(plans, &recv.BasePhysicalPlan)
-	plans = append(plans, &hashSender.BasePhysicalPlan)
-	clearFunc := func(plans []*physicalop.BasePhysicalPlan) {
+	tableScan := &PhysicalTableScan{}
+	plans = append(plans, &partWindow.basePhysicalPlan)
+	plans = append(plans, &partialSort.basePhysicalPlan)
+	plans = append(plans, &sort.basePhysicalPlan)
+	plans = append(plans, &recv.basePhysicalPlan)
+	plans = append(plans, &hashSender.basePhysicalPlan)
+	clear := func(plans []*basePhysicalPlan) {
 		for _, p := range plans {
-			p.SetChildren(nil)
+			p.children = nil
 			p.TiFlashFineGrainedShuffleStreamCount = 0
 		}
 	}
-	var check func(p base.PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int)
-	check = func(p base.PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
+	var check func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int)
+	check = func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
 		if len(p.Children()) == 0 {
 			require.Equal(t, expChildCount, curChildCount)
-			_, isTableScan := p.(*physicalop.PhysicalTableScan)
+			_, isTableScan := p.(*PhysicalTableScan)
 			require.True(t, isTableScan)
 			return
 		}
@@ -357,150 +162,149 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	}
 
 	const expStreamCount int64 = 8
-	sctx := coretestsdk.MockContext()
+	sctx := MockContext()
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = expStreamCount
-	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionLegacy
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
-	start := func(p base.PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
-		handleFineGrainedShuffle(nil, sctx.GetPlanCtx(), tableReader)
+	start := func(p PhysicalPlan, expStreamCount int64, expChildCount int, curChildCount int) {
+		handleFineGrainedShuffle(nil, sctx, tableReader)
 		check(p, expStreamCount, expChildCount, curChildCount)
-		clearFunc(plans)
+		clear(plans)
 	}
 
 	// Window <- Sort <- ExchangeReceiver <- ExchangeSender
-	tableReader.TablePlan = passSender
-	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	partWindow.SetChildren([]base.PhysicalPlan{partialSort}...)
-	partialSort.SetChildren([]base.PhysicalPlan{recv}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	partWindow.children = []PhysicalPlan{partialSort}
+	partialSort.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
 	start(partWindow, expStreamCount, 4, 0)
 
 	// Window <- ExchangeReceiver <- ExchangeSender
-	tableReader.TablePlan = passSender
-	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	partWindow.SetChildren([]base.PhysicalPlan{recv}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	partWindow.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
 	start(partWindow, expStreamCount, 3, 0)
 
 	// Window <- Sort(x) <- ExchangeReceiver <- ExchangeSender
 	// Fine-grained shuffle is disabled because sort is not partial.
-	tableReader.TablePlan = passSender
-	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	partWindow.SetChildren([]base.PhysicalPlan{sort}...)
-	sort.SetChildren([]base.PhysicalPlan{recv}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	partWindow.children = []PhysicalPlan{sort}
+	sort.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
 	start(partWindow, 0, 4, 0)
 
 	// Window <- Sort <- Window <- Sort <- ExchangeReceiver <- ExchangeSender
-	partWindow1 := &physicalop.PhysicalWindow{
+	partWindow1 := &PhysicalWindow{
 		// Meaningless sort item, just for test.
 		PartitionBy: []property.SortItem{sortItem},
 	}
-	partialSort1 := &physicalop.PhysicalSort{
+	partialSort1 := &PhysicalSort{
 		IsPartialSort: true,
 	}
-	tableReader.TablePlan = passSender
-	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	partWindow.SetChildren([]base.PhysicalPlan{partialSort}...)
-	partialSort.SetChildren([]base.PhysicalPlan{partWindow1}...)
-	partWindow1.SetChildren([]base.PhysicalPlan{partialSort1}...)
-	partialSort1.SetChildren([]base.PhysicalPlan{recv}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	partWindow.children = []PhysicalPlan{partialSort}
+	partialSort.children = []PhysicalPlan{partWindow1}
+	partWindow1.children = []PhysicalPlan{partialSort1}
+	partialSort1.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
 	start(partWindow, expStreamCount, 6, 0)
 
 	// Window <- Sort <- Window(x) <- Sort <- ExchangeReceiver <- ExchangeSender(x)
 	// Fine-grained shuffle is disabled because Window is not hash partition.
-	nonPartWindow := &physicalop.PhysicalWindow{}
-	partialSort1 = &physicalop.PhysicalSort{
+	nonPartWindow := &PhysicalWindow{}
+	partialSort1 = &PhysicalSort{
 		IsPartialSort: true,
 	}
-	tableReader.TablePlan = passSender
-	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	partWindow.SetChildren([]base.PhysicalPlan{partialSort}...)
-	partialSort.SetChildren([]base.PhysicalPlan{nonPartWindow}...)
-	nonPartWindow.SetChildren([]base.PhysicalPlan{partialSort1}...)
-	partialSort1.SetChildren([]base.PhysicalPlan{recv}...)
-	recv.SetChildren([]base.PhysicalPlan{passSender}...)
-	passSender.SetChildren([]base.PhysicalPlan{tableScan}...)
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	partWindow.children = []PhysicalPlan{partialSort}
+	partialSort.children = []PhysicalPlan{nonPartWindow}
+	nonPartWindow.children = []PhysicalPlan{partialSort1}
+	partialSort1.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{passSender}
+	passSender.children = []PhysicalPlan{tableScan}
 	start(partWindow, 0, 6, 0)
 
 	// HashAgg <- Window <- ExchangeReceiver <- ExchangeSender
-	hashAgg := &physicalop.PhysicalHashAgg{}
-	tableReader.TablePlan = passSender
-	passSender.SetChildren([]base.PhysicalPlan{hashAgg}...)
-	hashAgg.SetChildren([]base.PhysicalPlan{partWindow}...)
-	partWindow.SetChildren([]base.PhysicalPlan{recv}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
+	hashAgg := &PhysicalHashAgg{}
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{hashAgg}
+	hashAgg.children = []PhysicalPlan{partWindow}
+	partWindow.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
 	require.Equal(t, uint64(0), hashAgg.TiFlashFineGrainedShuffleStreamCount)
 	start(partWindow, expStreamCount, 3, 0)
 
 	// Window <- HashAgg(x) <- ExchangeReceiver <- ExchangeSender
-	tableReader.TablePlan = passSender
-	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	hashAgg = &physicalop.PhysicalHashAgg{}
-	partWindow.SetChildren([]base.PhysicalPlan{hashAgg}...)
-	hashAgg.SetChildren([]base.PhysicalPlan{recv}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	hashAgg = &PhysicalHashAgg{}
+	partWindow.children = []PhysicalPlan{hashAgg}
+	hashAgg.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
 	start(partWindow, 0, 4, 0)
 
 	// Window <- Join(x) <- ExchangeReceiver <- ExchangeSender
 	//                   <- ExchangeReceiver <- ExchangeSender
-	tableReader.TablePlan = passSender
-	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	hashJoin := &physicalop.PhysicalHashJoin{}
-	recv1 := &physicalop.PhysicalExchangeReceiver{}
-	tableScan1 := &physicalop.PhysicalTableScan{}
-	partWindow.SetChildren([]base.PhysicalPlan{hashJoin}...)
-	hashSender1 := &physicalop.PhysicalExchangeSender{
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	hashJoin := &PhysicalHashJoin{}
+	recv1 := &PhysicalExchangeReceiver{}
+	tableScan1 := &PhysicalTableScan{}
+	partWindow.children = []PhysicalPlan{hashJoin}
+	hashSender1 := &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
-	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	recv1.SetChildren([]base.PhysicalPlan{hashSender1}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
-	hashSender1.SetChildren([]base.PhysicalPlan{tableScan1}...)
+	hashJoin.children = []PhysicalPlan{recv, recv1}
+	recv.children = []PhysicalPlan{hashSender}
+	recv1.children = []PhysicalPlan{hashSender1}
+	hashSender.children = []PhysicalPlan{tableScan}
+	hashSender1.children = []PhysicalPlan{tableScan1}
 	start(partWindow, 0, 4, 0)
 
 	// Join <- ExchangeReceiver <- ExchangeSender <- Window <- ExchangeReceiver(2) <- ExchangeSender(2)
 	//      <- ExchangeReceiver(1) <- ExchangeSender(1)
-	tableReader.TablePlan = passSender
-	passSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	hashJoin = &physicalop.PhysicalHashJoin{}
-	recv1 = &physicalop.PhysicalExchangeReceiver{}
-	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	hashSender.SetChildren([]base.PhysicalPlan{partWindow}...)
-	recv2 := &physicalop.PhysicalExchangeReceiver{}
-	hashSender2 := &physicalop.PhysicalExchangeSender{
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{partWindow}
+	hashJoin = &PhysicalHashJoin{}
+	recv1 = &PhysicalExchangeReceiver{}
+	hashJoin.children = []PhysicalPlan{recv, recv1}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{partWindow}
+	recv2 := &PhysicalExchangeReceiver{}
+	hashSender2 := &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
-	tableScan2 := &physicalop.PhysicalTableScan{}
-	partWindow.SetChildren([]base.PhysicalPlan{recv2}...)
-	recv2.SetChildren([]base.PhysicalPlan{hashSender2}...)
-	hashSender2.SetChildren([]base.PhysicalPlan{tableScan2}...)
-	recv1.SetChildren([]base.PhysicalPlan{hashSender1}...)
-	tableScan1 = &physicalop.PhysicalTableScan{}
-	hashSender1.SetChildren([]base.PhysicalPlan{tableScan1}...)
+	tableScan2 := &PhysicalTableScan{}
+	partWindow.children = []PhysicalPlan{recv2}
+	recv2.children = []PhysicalPlan{hashSender2}
+	hashSender2.children = []PhysicalPlan{tableScan2}
+	recv1.children = []PhysicalPlan{hashSender1}
+	tableScan1 = &PhysicalTableScan{}
+	hashSender1.children = []PhysicalPlan{tableScan1}
 	start(partWindow, expStreamCount, 3, 0)
 
 	instances := []string{
 		"tiflash,127.0.0.1:3933,127.0.0.1:7777,,",
 		"tikv,127.0.0.1:11080,127.0.0.1:10080,,",
 	}
-	fpName := "github.com/pingcap/tidb/pkg/infoschema/mockStoreServerInfo"
+	fpName := "github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockStoreServerInfo"
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
 	require.NoError(t, failpoint.Enable(fpName, fpExpr))
 	defer func() { require.NoError(t, failpoint.Disable(fpName)) }()
-	fpName2 := "github.com/pingcap/tidb/pkg/planner/core/mockTiFlashStreamCountUsingMinLogicalCores"
-	require.NoError(t, failpoint.Enable(fpName2, `return("16")`))
+	fpName2 := "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/mockTiFlashStreamCountUsingMinLogicalCores"
+	require.NoError(t, failpoint.Enable(fpName2, `return("8")`))
 	sctx.GetSessionVars().TiFlashFineGrainedShuffleStreamCount = 0
 
 	col0 := &expression.Column{
@@ -514,91 +318,92 @@ func TestHandleFineGrainedShuffle(t *testing.T) {
 	var partitionCols = make([]*property.MPPPartitionColumn, 0, 1)
 	partitionCols = append(partitionCols, &property.MPPPartitionColumn{
 		Col:       col0,
-		CollateID: property.GetCollateIDByNameForPartition(col0.GetType(sctx).GetCollate()),
+		CollateID: property.GetCollateIDByNameForPartition(col0.GetType().GetCollate()),
 	})
 
 	// HashAgg(x) <- ExchangeReceiver <- ExchangeSender
-	tableReader.TablePlan = passSender
-	hashAgg = &physicalop.PhysicalHashAgg{}
-	passSender.SetChildren([]base.PhysicalPlan{hashAgg}...)
-	hashAgg.SetChildren([]base.PhysicalPlan{recv}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
+	tableReader.tablePlan = passSender
+	hashAgg = &PhysicalHashAgg{}
+	passSender.children = []PhysicalPlan{hashAgg}
+	hashAgg.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
 	tableScan.Schema().Columns = append(tableScan.Schema().Columns, col0)
-	start(hashAgg, 16, 3, 0)
+	start(hashAgg, 8, 3, 0)
 
 	// Join(x) <- ExchangeReceiver <- ExchangeSender
 	//                   <- ExchangeReceiver <- ExchangeSender
-	tableReader.TablePlan = passSender
-	hashJoin = &physicalop.PhysicalHashJoin{}
+	tableReader.tablePlan = passSender
+	hashJoin = &PhysicalHashJoin{}
 	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
 	hashJoin.RightJoinKeys = append(hashJoin.RightJoinKeys, col0)
 	hashJoin.InnerChildIdx = 1
-	passSender.SetChildren([]base.PhysicalPlan{hashJoin}...)
-	recv = &physicalop.PhysicalExchangeReceiver{}
-	recv1 = &physicalop.PhysicalExchangeReceiver{}
-	tableScan = &physicalop.PhysicalTableScan{}
-	tableScan1 = &physicalop.PhysicalTableScan{}
-	hashSender = &physicalop.PhysicalExchangeSender{
+	passSender.children = []PhysicalPlan{hashJoin}
+	recv = &PhysicalExchangeReceiver{}
+	recv1 = &PhysicalExchangeReceiver{}
+	tableScan = &PhysicalTableScan{}
+	tableScan1 = &PhysicalTableScan{}
+	hashSender = &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
-	hashSender1 = &physicalop.PhysicalExchangeSender{
+	hashSender1 = &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
-	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	recv1.SetChildren([]base.PhysicalPlan{hashSender1}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
-	hashSender1.SetChildren([]base.PhysicalPlan{tableScan1}...)
+	hashJoin.children = []PhysicalPlan{recv, recv1}
+	recv.children = []PhysicalPlan{hashSender}
+	recv1.children = []PhysicalPlan{hashSender1}
+	hashSender.children = []PhysicalPlan{tableScan}
+	hashSender1.children = []PhysicalPlan{tableScan1}
 	hashSender1.HashCols = partitionCols
 	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col0)
-	handleFineGrainedShuffle(nil, sctx.GetPlanCtx(), tableReader)
-	require.Equal(t, uint64(16), hashJoin.TiFlashFineGrainedShuffleStreamCount)
-	require.Equal(t, uint64(16), recv1.TiFlashFineGrainedShuffleStreamCount)
-	require.Equal(t, uint64(16), hashSender1.TiFlashFineGrainedShuffleStreamCount)
+	handleFineGrainedShuffle(nil, sctx, tableReader)
+	require.Equal(t, uint64(8), hashJoin.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(8), recv1.TiFlashFineGrainedShuffleStreamCount)
+	require.Equal(t, uint64(8), hashSender1.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(0), recv.TiFlashFineGrainedShuffleStreamCount)
 	require.Equal(t, uint64(0), hashSender.TiFlashFineGrainedShuffleStreamCount)
-	clearFunc(plans)
+	clear(plans)
 
 	require.NoError(t, failpoint.Disable(fpName2))
 	require.NoError(t, failpoint.Enable(fpName2, `return("8000")`))
 	// HashAgg(x) <- ExchangeReceiver <- ExchangeSender， exceed splitLimit
-	tableReader.TablePlan = passSender
-	hashAgg = &physicalop.PhysicalHashAgg{}
-	passSender.SetChildren([]base.PhysicalPlan{hashAgg}...)
-	hashAgg.SetChildren([]base.PhysicalPlan{recv}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
+	tableReader.tablePlan = passSender
+	hashAgg = &PhysicalHashAgg{}
+	passSender.children = []PhysicalPlan{hashAgg}
+	hashAgg.children = []PhysicalPlan{recv}
+	recv.children = []PhysicalPlan{hashSender}
+	hashSender.children = []PhysicalPlan{tableScan}
 	tableScan.Schema().Columns = append(tableScan.Schema().Columns, col0)
 	start(hashAgg, 0, 3, 0)
 
 	// exceed splitLimit
 	// Join(x) <- ExchangeReceiver <- ExchangeSender
 	//                   <- ExchangeReceiver <- ExchangeSender
-	tableReader.TablePlan = passSender
-	hashJoin = &physicalop.PhysicalHashJoin{}
+	tableReader.tablePlan = passSender
+	hashJoin = &PhysicalHashJoin{}
 	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
 	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
 	hashJoin.InnerChildIdx = 1
-	passSender.SetChildren([]base.PhysicalPlan{hashJoin}...)
-	recv1 = &physicalop.PhysicalExchangeReceiver{}
-	tableScan1 = &physicalop.PhysicalTableScan{}
-	hashSender1 = &physicalop.PhysicalExchangeSender{
+	passSender.children = []PhysicalPlan{hashJoin}
+	recv1 = &PhysicalExchangeReceiver{}
+	tableScan1 = &PhysicalTableScan{}
+	hashSender1 = &PhysicalExchangeSender{
 		ExchangeType: tipb.ExchangeType_Hash,
 	}
-	hashJoin.SetChildren([]base.PhysicalPlan{recv, recv1}...)
-	recv.SetChildren([]base.PhysicalPlan{hashSender}...)
-	recv1.SetChildren([]base.PhysicalPlan{hashSender1}...)
-	hashSender.SetChildren([]base.PhysicalPlan{tableScan}...)
-	hashSender1.SetChildren([]base.PhysicalPlan{tableScan1}...)
+	hashJoin.children = []PhysicalPlan{recv, recv1}
+	recv.children = []PhysicalPlan{hashSender}
+	recv1.children = []PhysicalPlan{hashSender1}
+	hashSender.children = []PhysicalPlan{tableScan}
+	hashSender1.children = []PhysicalPlan{tableScan1}
 	hashSender1.HashCols = partitionCols
 	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col0)
 	start(hashJoin, 0, 3, 0)
 	require.NoError(t, failpoint.Disable(fpName2))
 }
 
-func TestCanTiFlashUseHashJoinV2(t *testing.T) {
-	sctx := coretestsdk.MockContext()
+// Test for core.prunePhysicalColumns()
+func TestPrunePhysicalColumns(t *testing.T) {
+	sctx := MockContext()
 	defer func() {
 		domain.GetDomain(sctx).StatsHandle().Close()
 	}()
@@ -606,68 +411,96 @@ func TestCanTiFlashUseHashJoinV2(t *testing.T) {
 		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
 		RetType:  types.NewFieldType(mysql.TypeLonglong),
 	}
-	cond, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col0, col0)
+	col1 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	col2 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+	col3 := &expression.Column{
+		UniqueID: sctx.GetSessionVars().AllocPlanColumnID(),
+		RetType:  types.NewFieldType(mysql.TypeLonglong),
+	}
+
+	// Join[col2, col3; col2==col3] <- ExchangeReceiver[col0, col1, col2] <- ExchangeSender[col0, col1, col2] <- Selection[col0, col1, col2; col0 < col1] <- TableScan[col0, col1, col2]
+	//      <- ExchangeReceiver1[col3] <- ExchangeSender1[col3] <- TableScan1[col3]
+	tableReader := &PhysicalTableReader{}
+	passSender := &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_PassThrough,
+	}
+	hashJoin := &PhysicalHashJoin{}
+	recv := &PhysicalExchangeReceiver{}
+	recv1 := &PhysicalExchangeReceiver{}
+	hashSender := &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_Hash,
+	}
+	hashSender1 := &PhysicalExchangeSender{
+		ExchangeType: tipb.ExchangeType_Hash,
+	}
+	tableScan := &PhysicalTableScan{}
+	tableScan1 := &PhysicalTableScan{}
+
+	tableReader.tablePlan = passSender
+	passSender.children = []PhysicalPlan{hashJoin}
+	hashJoin.children = []PhysicalPlan{recv, recv1}
+	selection := &PhysicalSelection{}
+
+	cond, err := expression.NewFunction(sctx, ast.EQ, types.NewFieldType(mysql.TypeTiny), col2, col3)
 	require.True(t, err == nil)
 	sf, isSF := cond.(*expression.ScalarFunction)
 	require.True(t, isSF)
-	hashJoin := &physicalop.PhysicalHashJoin{}
 	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
-	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
+	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col2)
+	hashJoin.RightJoinKeys = append(hashJoin.RightJoinKeys, col3)
+	hashJoinSchema := make([]*expression.Column, 0)
+	hashJoinSchema = append(hashJoinSchema, col3)
+	hashJoin.SetSchema(expression.NewSchema(hashJoinSchema...))
 
-	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionLegacy
-	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 0
-	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 0
-	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0
-	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
-	// can use hash join v2
-	sctx.GetSessionVars().TiFlashHashJoinVersion = joinversion.HashJoinVersionOptimized
-	require.True(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
-	// can not use hash join v2 due to enabling join spill
-	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 1
-	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
-	// can use hash join v2 due to TiFlashMaxQueryMemoryPerNode * TiFlashQuerySpillRatio = 0
-	sctx.GetSessionVars().TiFlashMaxBytesBeforeExternalJoin = 0
-	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 1
-	require.True(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
-	// can not use hash join v2 due to enabling join spill
-	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0.7
-	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	selection.SetChildren(tableScan)
+	hashSender.SetChildren(selection)
+	var partitionCols = make([]*property.MPPPartitionColumn, 0, 1)
+	partitionCols = append(partitionCols, &property.MPPPartitionColumn{
+		Col:       col2,
+		CollateID: property.GetCollateIDByNameForPartition(col2.GetType().GetCollate()),
+	})
+	hashSender.HashCols = partitionCols
+	recv.SetChildren(hashSender)
+	tableScan.Schema().Columns = append(tableScan.Schema().Columns, col0, col1, col2)
 
-	sctx.GetSessionVars().TiFlashMaxQueryMemoryPerNode = 0
-	sctx.GetSessionVars().TiFlashQuerySpillRatio = 0
-	hashJoin = &physicalop.PhysicalHashJoin{}
-	// can not use hash join v2 due to cross join
-	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
+	hashSender1.SetChildren(tableScan1)
+	recv1.SetChildren(hashSender1)
+	tableScan1.Schema().Columns = append(tableScan1.Schema().Columns, col3)
 
-	hashJoin = &physicalop.PhysicalHashJoin{}
-	hashJoin.EqualConditions = append(hashJoin.EqualConditions, sf)
-	hashJoin.LeftJoinKeys = append(hashJoin.LeftJoinKeys, col0)
-	hashJoin.IsNullEQ = append(hashJoin.IsNullEQ, true)
-	// can not use hash join v2 due to null eq
-	require.False(t, hashJoin.CanTiFlashUseHashJoinV2(sctx))
-}
+	prunePhysicalColumns(sctx, tableReader)
 
-func TestOptRuleListFlagAlignment(t *testing.T) {
-	// Each position in optRuleList is gated by the corresponding entry in
-	// optRuleFlags. Flag values are stable bitmasks, so a rule can be inserted
-	// into the execution order without changing existing flag values.
-	require.Equalf(t, len(optRuleList), len(optRuleFlags),
-		"optRuleList length (%d) does not match optRuleFlags length (%d); "+
-			"did you add a rule without a flag or vice versa?",
-		len(optRuleList), len(optRuleFlags))
-
-	seenFlags := make(map[uint64]struct{}, len(optRuleFlags))
-	for i, flag := range optRuleFlags {
-		require.NotZerof(t, flag, "optRuleFlags[%d] must not be zero", i)
-		require.Zerof(t, flag&(flag-1), "optRuleFlags[%d] must contain exactly one bit", i)
-		_, ok := seenFlags[flag]
-		require.Falsef(t, ok, "optRuleFlags[%d] duplicates flag %d", i, flag)
-		seenFlags[flag] = struct{}{}
+	// Optimized Plan：
+	// Join[col2, col3; col2==col3] <- ExchangeReceiver[col2] <- ExchangeSender[col2;col2] <- Projection[col2] <- Selection[col0, col1, col2; col0 < col1] <- TableScan[col0, col1, col2]
+	//      <- ExchangeReceiver1[col3] <- ExchangeSender1[col3] <- TableScan1[col3]
+	require.True(t, len(recv.Schema().Columns) == 1)
+	require.True(t, recv.Schema().Contains(col2))
+	require.False(t, recv.Schema().Contains(col0))
+	require.False(t, recv.Schema().Contains(col1))
+	require.True(t, len(recv.children[0].Children()) == 1)
+	physicalProj := recv.children[0].Children()[0]
+	switch x := physicalProj.(type) {
+	case *PhysicalProjection:
+		require.True(t, x.Schema().Contains(col2))
+		require.False(t, recv.Schema().Contains(col0))
+		require.False(t, recv.Schema().Contains(col1))
+		// Check PhysicalProj resolved index
+		require.True(t, len(x.Exprs) == 1)
+		require.True(t, x.Exprs[0].(*expression.Column).Index == 2)
+	default:
+		require.True(t, false)
 	}
 
-	numFlags := bits.Len64(rule.FlagFullTextIndexResolveReject)
-	require.Equalf(t, numFlags, len(seenFlags),
-		"unique optRuleFlags count (%d) does not match Flag* count (%d); "+
-			"did you add a flag without mapping it to a rule or vice versa?",
-		len(seenFlags), numFlags)
+	// Check resolved indices
+	require.True(t, hashJoin.LeftJoinKeys[0].Index == 0)
+	require.True(t, hashSender.HashCols[0].Col.Index == 0)
+
+	// Check recv1，no changes
+	require.True(t, len(recv1.Schema().Columns) == 1)
+	require.True(t, recv1.Schema().Contains(col3))
 }

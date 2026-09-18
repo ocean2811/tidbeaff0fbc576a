@@ -18,7 +18,7 @@ import (
 	"github.com/pingcap/badger/y"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 )
 
 // WriteType defines a write type.
@@ -127,3 +127,5 @@ const (
 	LockTypeLock        LockType = 'L'
 	LockTypePessimistic LockType = 'S'
 )
+
+var errInvalidLockCFValue = errors.New("invalid lock CF value")

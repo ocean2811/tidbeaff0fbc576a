@@ -4,108 +4,61 @@ package iter
 
 import (
 	"context"
-	"sync"
 
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"golang.org/x/sync/errgroup"
 )
 
-type bufferedMappingCfg struct {
-	bufferSize uint
-	quota      *util.WorkerPool
+type chunkMappingCfg struct {
+	chunkSize uint
+	quota     *utils.WorkerPool
 }
 
-type bufferedMapping[T, R any] struct {
-	bufferedMappingCfg
+type chunkMapping[T, R any] struct {
+	chunkMappingCfg
 	inner  TryNextor[T]
 	mapper func(context.Context, T) (R, error)
 
-	started     bool
-	finished    bool
-	cancel      context.CancelFunc
-	outstanding chan struct{}
-	results     chan IterResult[R]
+	buffer fromSlice[R]
 }
 
-func (m *bufferedMapping[T, R]) TryNext(ctx context.Context) IterResult[R] {
-	if !m.started {
-		m.start(ctx)
+func (m *chunkMapping[T, R]) fillChunk(ctx context.Context) IterResult[fromSlice[R]] {
+	eg, cx := errgroup.WithContext(ctx)
+	s := CollectMany(ctx, m.inner, m.chunkSize)
+	if s.FinishedOrError() {
+		return DoneBy[fromSlice[R]](s)
 	}
-	for {
-		if m.finished {
-			return Done[R]()
-		}
-
-		select {
-		case <-ctx.Done():
-			m.cancel()
-			m.finished = true
-			return Throw[R](ctx.Err())
-		case r, ok := <-m.results:
-			if !ok {
-				m.finished = true
-				return Done[R]()
-			}
-			<-m.outstanding
-			if r.Err != nil {
-				m.cancel()
-				m.finished = true
-			}
-			return r
-		}
+	r := make([]R, len(s.Item))
+	for i := 0; i < len(s.Item); i++ {
+		i := i
+		m.quota.ApplyOnErrorGroup(eg, func() error {
+			var err error
+			r[i], err = m.mapper(cx, s.Item[i])
+			return err
+		})
 	}
+	if err := eg.Wait(); err != nil {
+		return Throw[fromSlice[R]](err)
+	}
+	if len(r) > 0 {
+		return Emit(fromSlice[R](r))
+	}
+	return Done[fromSlice[R]]()
 }
 
-func (m *bufferedMapping[T, R]) start(ctx context.Context) {
-	m.started = true
-	m.outstanding = make(chan struct{}, m.bufferSize)
-	m.results = make(chan IterResult[R], m.bufferSize)
-	ctx, m.cancel = context.WithCancel(ctx)
+func (m *chunkMapping[T, R]) TryNext(ctx context.Context) IterResult[R] {
+	r := m.buffer.TryNext(ctx)
+	if !r.FinishedOrError() {
+		return Emit(r.Item)
+	}
 
-	go func() {
-		var wg sync.WaitGroup
-		defer func() {
-			wg.Wait()
-			close(m.results)
-		}()
+	r2 := m.fillChunk(ctx)
+	if !r2.FinishedOrError() {
+		m.buffer = r2.Item
+		return m.TryNext(ctx)
+	}
 
-		for {
-			select {
-			case m.outstanding <- struct{}{}:
-			case <-ctx.Done():
-				return
-			}
-
-			r := m.inner.TryNext(ctx)
-			if r.FinishedOrError() {
-				if r.Err != nil {
-					m.results <- DoneBy[R](r)
-					m.cancel()
-				} else {
-					<-m.outstanding
-				}
-				return
-			}
-
-			item := r.Item
-			wg.Add(1)
-			m.quota.Apply(func() {
-				defer wg.Done()
-
-				result, err := m.mapper(ctx, item)
-				r := Emit(result)
-				if err != nil {
-					r = Throw[R](err)
-				}
-				select {
-				case m.results <- r:
-				case <-ctx.Done():
-				}
-				if err != nil {
-					m.cancel()
-				}
-			})
-		}
-	}()
+	return DoneBy[R](r2)
 }
 
 type filter[T any] struct {
@@ -136,6 +89,12 @@ func (t *take[T]) TryNext(ctx context.Context) IterResult[T] {
 	return t.inner.TryNext(ctx)
 }
 
+type join[T any] struct {
+	inner TryNextor[TryNextor[T]]
+
+	current TryNextor[T]
+}
+
 type pureMap[T, R any] struct {
 	inner TryNextor[T]
 
@@ -149,53 +108,6 @@ func (p pureMap[T, R]) TryNext(ctx context.Context) IterResult[R] {
 		return DoneBy[R](r)
 	}
 	return Emit(p.mapper(r.Item))
-}
-
-type filterMap[T, R any] struct {
-	inner TryNextor[T]
-
-	mapper func(T) (R, bool)
-}
-
-func (f filterMap[T, R]) TryNext(ctx context.Context) IterResult[R] {
-	for {
-		r := f.inner.TryNext(ctx)
-
-		if r.FinishedOrError() {
-			return DoneBy[R](r)
-		}
-
-		res, skip := f.mapper(r.Item)
-		if !skip {
-			return Emit(res)
-		}
-	}
-}
-
-type tryMap[T, R any] struct {
-	inner TryNextor[T]
-
-	mapper func(T) (R, error)
-}
-
-func (t tryMap[T, R]) TryNext(ctx context.Context) IterResult[R] {
-	r := t.inner.TryNext(ctx)
-
-	if r.FinishedOrError() {
-		return DoneBy[R](r)
-	}
-
-	res, err := t.mapper(r.Item)
-	if err != nil {
-		return Throw[R](err)
-	}
-	return Emit(res)
-}
-
-type join[T any] struct {
-	inner TryNextor[TryNextor[T]]
-
-	current TryNextor[T]
 }
 
 func (j *join[T]) TryNext(ctx context.Context) IterResult[T] {

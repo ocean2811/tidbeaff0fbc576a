@@ -18,10 +18,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggfuncs"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 func TestMergePartialResult4JsonArrayagg(t *testing.T) {
@@ -30,14 +31,14 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 	tests := make([]aggTest, 0, len(typeList))
 	numRows := 5
 	for _, argType := range typeList {
-		entries1 := make([]any, 0)
-		entries2 := make([]any, 0)
-		entries3 := make([]any, 0)
+		entries1 := make([]interface{}, 0)
+		entries2 := make([]interface{}, 0)
+		entries3 := make([]interface{}, 0)
 
 		argFieldType := types.NewFieldType(argType)
 		genFunc := getDataGenFunc(argFieldType)
 
-		for m := range numRows {
+		for m := 0; m < numRows; m++ {
 			arg := genFunc(m)
 			entries1 = append(entries1, getJSONValue(arg, argFieldType))
 		}
@@ -54,7 +55,7 @@ func TestMergePartialResult4JsonArrayagg(t *testing.T) {
 		entries3 = append(entries3, entries1...)
 		entries3 = append(entries3, entries2...)
 
-		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, 0, numRows, types.CreateBinaryJSON(entries1), types.CreateBinaryJSON(entries2), types.CreateBinaryJSON(entries3)))
+		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, types.CreateBinaryJSON(entries1), types.CreateBinaryJSON(entries2), types.CreateBinaryJSON(entries3)))
 	}
 
 	for _, test := range tests {
@@ -69,19 +70,19 @@ func TestJsonArrayagg(t *testing.T) {
 	numRows := 5
 
 	for _, argType := range typeList {
-		entries := make([]any, 0)
+		entries := make([]interface{}, 0)
 
 		argFieldType := types.NewFieldType(argType)
 		genFunc := getDataGenFunc(argFieldType)
 
-		for m := range numRows {
+		for m := 0; m < numRows; m++ {
 			arg := genFunc(m)
 			entries = append(entries, getJSONValue(arg, argFieldType))
 		}
 		// to adapt the `genSrcChk` Chunk format
 		entries = append(entries, nil)
 
-		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, 0, numRows, nil, types.CreateBinaryJSON(entries)))
+		tests = append(tests, buildAggTester(ast.AggFuncJsonArrayagg, argType, numRows, nil, types.CreateBinaryJSON(entries)))
 	}
 
 	for _, test := range tests {
@@ -89,10 +90,10 @@ func TestJsonArrayagg(t *testing.T) {
 	}
 }
 
-func jsonArrayaggMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
+func jsonArrayaggMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
-	for i := range param.srcChk.NumRows() {
-		row := param.srcChk.GetRow(i)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			memDeltas = append(memDeltas, aggfuncs.DefInterfaceSize)
 			continue
@@ -100,7 +101,7 @@ func jsonArrayaggMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64
 
 		memDelta := int64(0)
 		memDelta += aggfuncs.DefInterfaceSize
-		switch param.keyType.GetType() {
+		switch dataType.GetType() {
 		case mysql.TypeLonglong:
 			memDelta += aggfuncs.DefUint64Size
 		case mysql.TypeFloat:
@@ -121,7 +122,7 @@ func jsonArrayaggMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64
 		case mysql.TypeNewDecimal:
 			memDelta += aggfuncs.DefFloat64Size
 		default:
-			return memDeltas, errors.Errorf("unsupported type - %v", param.keyType.GetType())
+			return memDeltas, errors.Errorf("unsupported type - %v", dataType.GetType())
 		}
 		memDeltas = append(memDeltas, memDelta)
 	}
@@ -134,7 +135,7 @@ func TestMemJsonArrayagg(t *testing.T) {
 	tests := make([]aggMemTest, 0, len(typeList))
 	numRows := 5
 	for _, argType := range typeList {
-		tests = append(tests, buildAggMemTester(ast.AggFuncJsonArrayagg, argType, 0, numRows, aggfuncs.DefPartialResult4JsonArrayagg+aggfuncs.DefSliceSize, jsonArrayaggMemDeltaGens, false))
+		tests = append(tests, buildAggMemTester(ast.AggFuncJsonArrayagg, argType, numRows, aggfuncs.DefPartialResult4JsonArrayagg+aggfuncs.DefSliceSize, jsonArrayaggMemDeltaGens, false))
 	}
 
 	for _, test := range tests {

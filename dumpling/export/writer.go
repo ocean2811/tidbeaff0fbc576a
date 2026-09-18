@@ -9,21 +9,11 @@ import (
 	"strings"
 	"text/template"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/objstore/compressedio"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
 	"go.uber.org/zap"
-)
-
-const (
-	// uploadConcurrency and uploadPartSize configure the concurrent multipart
-	// upload of data files. 5 MiB is the object store's minimum part size
-	// (S3/GCS).
-	uploadConcurrency = 4
-	uploadPartSize    = 5 * units.MiB
 )
 
 // Writer is the abstraction that keep pulling data from database and write to files.
@@ -33,7 +23,7 @@ type Writer struct {
 	tctx       *tcontext.Context
 	conf       *Config
 	conn       *sql.Conn
-	extStorage storeapi.Storage
+	extStorage storage.ExternalStorage
 	fileFmt    FileFormat
 	metrics    *metrics
 
@@ -50,7 +40,7 @@ func NewWriter(
 	id int64,
 	config *Config,
 	conn *sql.Conn,
-	externalStore storeapi.Storage,
+	externalStore storage.ExternalStorage,
 	metrics *metrics,
 ) *Writer {
 	sw := &Writer{
@@ -68,8 +58,6 @@ func NewWriter(
 		sw.fileFmt = FileFormatSQLText
 	case FileFormatCSVString:
 		sw.fileFmt = FileFormatCSV
-	case FileFormatParquetString:
-		sw.fileFmt = FileFormatParquet
 	}
 	return sw
 }
@@ -244,24 +232,14 @@ func (w *Writer) WriteTableData(meta TableMeta, ir TableDataIR, currentChunk int
 func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir TableDataIR, curChkIdx int) error {
 	conf, format := w.conf, w.fileFmt
 	namer := newOutputFileNamer(meta, curChkIdx, conf.Rows != UnspecifiedSize, conf.FileSize != UnspecifiedSize)
-	fileFmtExtension := format.Extension()
-	if format == FileFormatParquet && conf.ParquetCompressType != compressedio.NoCompression {
-		compressSuffix := strings.TrimPrefix(conf.ParquetCompressType.FileSuffix(), ".")
-		fileFmtExtension = fmt.Sprintf("%s.%s", compressSuffix, fileFmtExtension)
-	}
-	fileName, err := namer.NextName(conf.OutputFileTemplate, fileFmtExtension)
+	fileName, err := namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
 	if err != nil {
 		return err
 	}
 
-	var wo *storeapi.WriterOption
-	if format == FileFormatCSV || format == FileFormatSQLText {
-		wo = &storeapi.WriterOption{Concurrency: uploadConcurrency, PartSize: uploadPartSize}
-	}
-
 	somethingIsWritten := false
 	for {
-		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType, wo)
+		fileWriter, tearDown := buildInterceptFileWriter(tctx, w.extStorage, fileName, conf.CompressType)
 		n, err := format.WriteInsert(tctx, conf, meta, ir, fileWriter, w.metrics)
 		tearDownErr := tearDown(tctx)
 		if err != nil {
@@ -285,7 +263,7 @@ func (w *Writer) tryToWriteTableData(tctx *tcontext.Context, meta TableMeta, ir 
 		if conf.FileSize == UnspecifiedSize {
 			break
 		}
-		fileName, err = namer.NextName(conf.OutputFileTemplate, fileFmtExtension)
+		fileName, err = namer.NextName(conf.OutputFileTemplate, w.fileFmt.Extension())
 		if err != nil {
 			return err
 		}
@@ -323,6 +301,13 @@ type outputFileNamer struct {
 	DB         string
 	Table      string
 	format     string
+}
+
+type csvOption struct {
+	nullValue      string
+	separator      []byte
+	delimiter      []byte
+	lineTerminator []byte
 }
 
 func newOutputFileNamer(meta TableMeta, chunkIdx int, rows, fileSize bool) *outputFileNamer {

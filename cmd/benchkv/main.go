@@ -27,9 +27,9 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/store/driver"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"go.uber.org/zap"
@@ -91,10 +91,10 @@ func batchRW(value []byte) {
 	wg := sync.WaitGroup{}
 	base := *dataCnt / *workerCnt
 	wg.Add(*workerCnt)
-	for i := range *workerCnt {
+	for i := 0; i < *workerCnt; i++ {
 		go func(i int) {
 			defer wg.Done()
-			for j := range base {
+			for j := 0; j < base; j++ {
 				txnCounter.WithLabelValues("txn").Inc()
 				start := time.Now()
 				k := base*i + j

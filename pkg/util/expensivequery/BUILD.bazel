@@ -3,13 +3,11 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "expensivequery",
     srcs = ["expensivequery.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/expensivequery",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/expensivequery",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/metrics",
-        "//pkg/session/sessmgr",
-        "//pkg/sessionctx/vardef",
-        "//pkg/statistics/handle/util",
+        "//pkg/sessionctx/variable",
         "//pkg/util",
         "//pkg/util/logutil",
         "@com_github_pingcap_log//:log",
@@ -21,7 +19,7 @@ go_library(
 go_test(
     name = "expensivequery_test",
     timeout = "short",
-    srcs = ["expensivequery_test.go"],
+    srcs = ["expensivequerey_test.go"],
     embed = [":expensivequery"],
     flaky = True,
     deps = [

@@ -8,16 +8,16 @@ import (
 	// #nosec
 	// register HTTP handler for /debug/pprof
 	"net/http"
-	"net/http/pprof"
+	// For pprof
+	_ "net/http/pprof" // #nosec G108
 	"os"
 	"sync"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/log"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	tidbutils "github.com/pingcap/tidb/pkg/util"
-	"github.com/prometheus/client_golang/prometheus/promhttp"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	tidbutils "github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 	"go.uber.org/zap"
 )
 
@@ -49,25 +49,15 @@ func listen(statusAddr string) (net.Listener, error) {
 	return listener, nil
 }
 
-// RegisterDefaultStatusHandlers registers the default metrics and pprof endpoints on the provided mux.
-func RegisterDefaultStatusHandlers(mux *http.ServeMux) {
-	mux.Handle("/metrics", promhttp.Handler())
-	mux.HandleFunc("/debug/pprof/", pprof.Index)
-	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
-	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
-	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
-	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
-}
-
-// StartStatusListenerWithHandler forks a new goroutine listening on specified port and serves the provided handler.
-func StartStatusListenerWithHandler(statusAddr string, wrapper *tidbutils.TLS, handler http.Handler) error {
+// StartPProfListener forks a new goroutine listening on specified port and provide pprof info.
+func StartPProfListener(statusAddr string, wrapper *tidbutils.TLS) error {
 	listener, err := listen(statusAddr)
 	if err != nil {
 		return err
 	}
 
 	go func() {
-		if e := http.Serve(wrapper.WrapListener(listener), handler); e != nil {
+		if e := http.Serve(wrapper.WrapListener(listener), nil); e != nil {
 			log.Warn("failed to serve pprof", zap.String("addr", startedPProf), zap.Error(e))
 			mu.Lock()
 			startedPProf = ""
@@ -76,11 +66,4 @@ func StartStatusListenerWithHandler(statusAddr string, wrapper *tidbutils.TLS, h
 		}
 	}()
 	return nil
-}
-
-// StartStatusListener forks a new goroutine listening on specified port and provide metrics and pprof info.
-func StartStatusListener(statusAddr string, wrapper *tidbutils.TLS) error {
-	mux := http.NewServeMux()
-	RegisterDefaultStatusHandlers(mux)
-	return StartStatusListenerWithHandler(statusAddr, wrapper, mux)
 }

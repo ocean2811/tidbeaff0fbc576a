@@ -1,6 +1,6 @@
 // Copyright 2020 PingCAP, Inc. Licensed under Apache-2.0.
 
-package conn_test
+package conn
 
 import (
 	"context"
@@ -14,11 +14,9 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	kvconfig "github.com/pingcap/tidb/br/pkg/config"
-	"github.com/pingcap/tidb/br/pkg/conn"
-	"github.com/pingcap/tidb/br/pkg/conn/util"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/restore/split"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/pdutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/multierr"
 	"google.golang.org/grpc/codes"
@@ -26,15 +24,9 @@ import (
 )
 
 func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-grpc-cancel", "1*return(true)")
-	require.NoError(t, err)
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-ctx-cancel", "1*return(true)")
-	require.NoError(t, err)
+	_ = failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn/hint-GetAllTiKVStores-cancel", "1*return(true)->1*return(false)")
 	defer func() {
-		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-grpc-cancel")
-		require.NoError(t, err)
-		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-ctx-cancel")
-		require.NoError(t, err)
+		_ = failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn/hint-GetAllTiKVStores-cancel")
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -62,25 +54,21 @@ func TestGetAllTiKVStoresWithRetryCancel(t *testing.T) {
 		},
 	}
 
-	fpdc := split.NewFakePDClient(stores, false, nil)
+	fpdc := utils.FakePDClient{
+		Stores: stores,
+	}
 
-	_, err = conn.GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
+	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
 	errs := multierr.Errors(err)
-	require.Equal(t, 1, len(errs))
+	require.Equal(t, 2, len(errs))
 	require.Equal(t, codes.Canceled, status.Code(errors.Cause(errs[0])))
 }
 
 func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
-	err := failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error", "1*return(true)")
-	require.NoError(t, err)
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-ctx-cancel", "1*return(true)")
-	require.NoError(t, err)
+	_ = failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn/hint-GetAllTiKVStores-error", "1*return(true)->1*return(false)")
 	defer func() {
-		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-error")
-		require.NoError(t, err)
-		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/conn/hint-GetAllTiKVStores-ctx-cancel")
-		require.NoError(t, err)
+		_ = failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn/hint-GetAllTiKVStores-error")
 	}()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -108,12 +96,14 @@ func TestGetAllTiKVStoresWithUnknown(t *testing.T) {
 		},
 	}
 
-	fpdc := split.NewFakePDClient(stores, false, nil)
+	fpdc := utils.FakePDClient{
+		Stores: stores,
+	}
 
-	_, err = conn.GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
+	_, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.Error(t, err)
 	errs := multierr.Errors(err)
-	require.Equal(t, 1, len(errs))
+	require.Equal(t, 2, len(errs))
 	require.Equal(t, codes.Unknown, status.Code(errors.Cause(errs[0])))
 }
 
@@ -164,14 +154,16 @@ func TestCheckStoresAlive(t *testing.T) {
 		},
 	}
 
-	fpdc := split.NewFakePDClient(stores, false, nil)
+	fpdc := utils.FakePDClient{
+		Stores: stores,
+	}
 
-	kvStores, err := conn.GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
+	kvStores, err := GetAllTiKVStoresWithRetry(ctx, fpdc, util.SkipTiFlash)
 	require.NoError(t, err)
 	require.Len(t, kvStores, 2)
 	require.Equal(t, stores[2:], kvStores)
 
-	err = conn.CheckStoresAlive(ctx, fpdc, util.SkipTiFlash)
+	err = checkStoresAlive(ctx, fpdc, util.SkipTiFlash)
 	require.NoError(t, err)
 }
 
@@ -251,7 +243,7 @@ func TestGetAllTiKVStores(t *testing.T) {
 	}
 
 	for _, testCase := range testCases {
-		pdClient := split.NewFakePDClient(testCase.stores, false, nil)
+		pdClient := utils.FakePDClient{Stores: testCase.stores}
 		stores, err := util.GetAllTiKVStores(context.Background(), pdClient, testCase.storeBehavior)
 		if len(testCase.expectedError) != 0 {
 			require.Error(t, err)
@@ -270,7 +262,7 @@ func TestGetConnOnCanceledContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 
-	mgr := &conn.Mgr{PdController: &pdutil.PdController{}}
+	mgr := &Mgr{PdController: &pdutil.PdController{}}
 
 	_, err := mgr.GetBackupClient(ctx, 42)
 	require.Error(t, err)
@@ -283,11 +275,10 @@ func TestGetConnOnCanceledContext(t *testing.T) {
 
 func TestGetMergeRegionSizeAndCount(t *testing.T) {
 	cases := []struct {
-		stores              []*metapb.Store
-		content             []string
-		importNumGoroutines uint
-		regionSplitSize     uint64
-		regionSplitKeys     uint64
+		stores          []*metapb.Store
+		content         []string
+		regionSplitSize uint64
+		regionSplitKeys uint64
 	}{
 		{
 			stores: []*metapb.Store{
@@ -304,9 +295,8 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 			},
 			content: []string{""},
 			// no tikv detected in this case
-			importNumGoroutines: conn.DefaultImportNumGoroutines,
-			regionSplitSize:     conn.DefaultMergeRegionSizeBytes,
-			regionSplitKeys:     conn.DefaultMergeRegionKeyCount,
+			regionSplitSize: DefaultMergeRegionSizeBytes,
+			regionSplitKeys: DefaultMergeRegionKeyCount,
 		},
 		{
 			stores: []*metapb.Store{
@@ -337,9 +327,8 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				"",
 			},
 			// no tikv detected in this case
-			importNumGoroutines: conn.DefaultImportNumGoroutines,
-			regionSplitSize:     conn.DefaultMergeRegionSizeBytes,
-			regionSplitKeys:     conn.DefaultMergeRegionKeyCount,
+			regionSplitSize: DefaultMergeRegionSizeBytes,
+			regionSplitKeys: DefaultMergeRegionKeyCount,
 		},
 		{
 			stores: []*metapb.Store{
@@ -355,10 +344,8 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				},
 			},
 			content: []string{
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 1, \"region-split-size\": \"1MiB\"}, \"import\": {\"num-threads\": 6}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 1, \"region-split-size\": \"1MiB\"}}",
 			},
-			// the default value already satisfies import.num-threads + 4.
-			importNumGoroutines: conn.DefaultImportNumGoroutines,
 			// one tikv detected in this case we are not update default size and keys because they are too small.
 			regionSplitSize: 1 * units.MiB,
 			regionSplitKeys: 1,
@@ -377,9 +364,8 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				},
 			},
 			content: []string{
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, \"import\": {\"num-threads\": 128}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}}",
 			},
-			importNumGoroutines: 132,
 			// one tikv detected in this case and we update with new size and keys.
 			regionSplitSize: 1 * units.GiB,
 			regionSplitKeys: 10000000,
@@ -408,19 +394,19 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 				},
 			},
 			content: []string{
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}, \"import\": {\"num-threads\": 128}}",
-				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 12000000, \"region-split-size\": \"900MiB\"}, \"import\": {\"num-threads\": 12}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 10000000, \"region-split-size\": \"1GiB\"}}",
+				"{\"log-level\": \"debug\", \"coprocessor\": {\"region-split-keys\": 12000000, \"region-split-size\": \"900MiB\"}}",
 			},
-			importNumGoroutines: 132,
-			regionSplitSize:     1 * units.GiB,
-			regionSplitKeys:     10000000,
+			// two tikv detected in this case and we choose the small one.
+			regionSplitSize: 900 * units.MiB,
+			regionSplitKeys: 12000000,
 		},
 	}
 
 	pctx := context.Background()
 	for _, ca := range cases {
 		ctx, cancel := context.WithCancel(pctx)
-		pdCli := split.NewFakePDClient(ca.stores, false, nil)
+		pdCli := utils.FakePDClient{Stores: ca.stores}
 		require.Equal(t, len(ca.content), len(ca.stores))
 		count := 0
 		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -442,180 +428,11 @@ func TestGetMergeRegionSizeAndCount(t *testing.T) {
 		}
 
 		httpCli := mockServer.Client()
-		mgr := &conn.Mgr{PdController: &pdutil.PdController{}}
+		mgr := &Mgr{PdController: &pdutil.PdController{}}
 		mgr.PdController.SetPDClient(pdCli)
-		kvConfigs := &kvconfig.KVConfig{
-			ImportGoroutines:    kvconfig.ConfigTerm[uint]{Value: conn.DefaultImportNumGoroutines, Modified: false},
-			MergeRegionSize:     kvconfig.ConfigTerm[uint64]{Value: conn.DefaultMergeRegionSizeBytes, Modified: false},
-			MergeRegionKeyCount: kvconfig.ConfigTerm[uint64]{Value: conn.DefaultMergeRegionKeyCount, Modified: false},
-		}
-		mgr.ProcessTiKVConfigs(ctx, kvConfigs, httpCli)
-		require.EqualValues(t, ca.regionSplitSize, kvConfigs.MergeRegionSize.Value)
-		require.EqualValues(t, ca.regionSplitKeys, kvConfigs.MergeRegionKeyCount.Value)
-		require.EqualValues(t, ca.importNumGoroutines, kvConfigs.ImportGoroutines.Value)
-		mockServer.Close()
-	}
-}
-
-func TestIsLogBackupEnabled(t *testing.T) {
-	cases := []struct {
-		stores  []*metapb.Store
-		content []string
-		enable  bool
-		err     bool
-	}{
-		{
-			stores: []*metapb.Store{
-				{
-					Id:    1,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tiflash",
-						},
-					},
-				},
-			},
-			content: []string{""},
-			enable:  true,
-			err:     false,
-		},
-		{
-			stores: []*metapb.Store{
-				{
-					Id:    1,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tiflash",
-						},
-					},
-				},
-				{
-					Id:    2,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tikv",
-						},
-					},
-				},
-			},
-			content: []string{
-				"",
-				// Assuming the TiKV has failed due to some reason.
-				"",
-			},
-			enable: false,
-			err:    true,
-		},
-		{
-			stores: []*metapb.Store{
-				{
-					Id:    1,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tikv",
-						},
-					},
-				},
-			},
-			content: []string{
-				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": true}}",
-			},
-			enable: true,
-			err:    false,
-		},
-		{
-			stores: []*metapb.Store{
-				{
-					Id:    1,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tikv",
-						},
-					},
-				},
-			},
-			content: []string{
-				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": false}}",
-			},
-			enable: false,
-			err:    false,
-		},
-		{
-			stores: []*metapb.Store{
-				{
-					Id:    1,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tikv",
-						},
-					},
-				},
-				{
-					Id:    2,
-					State: metapb.StoreState_Up,
-					Labels: []*metapb.StoreLabel{
-						{
-							Key:   "engine",
-							Value: "tikv",
-						},
-					},
-				},
-			},
-			content: []string{
-				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": true}}",
-				"{\"log-level\": \"debug\", \"log-backup\": {\"enable\": false}}",
-			},
-			enable: false,
-			err:    false,
-		},
-	}
-
-	pctx := context.Background()
-	for _, ca := range cases {
-		ctx, cancel := context.WithCancel(pctx)
-		pdCli := split.NewFakePDClient(ca.stores, false, nil)
-		require.Equal(t, len(ca.content), len(ca.stores))
-		count := 0
-		mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch strings.TrimSpace(r.URL.Path) {
-			case "/config":
-				if len(ca.content[count]) == 0 {
-					cancel()
-				}
-				_, _ = fmt.Fprint(w, ca.content[count])
-			default:
-				http.NotFoundHandler().ServeHTTP(w, r)
-			}
-			count++
-		}))
-
-		for _, s := range ca.stores {
-			s.Address = mockServer.URL
-			s.StatusAddress = mockServer.URL
-		}
-
-		httpCli := mockServer.Client()
-		mgr := &conn.Mgr{PdController: &pdutil.PdController{}}
-		mgr.PdController.SetPDClient(pdCli)
-		enable, err := mgr.IsLogBackupEnabled(ctx, httpCli)
-		if ca.err {
-			require.Error(t, err)
-		} else {
-			require.NoError(t, err)
-			require.Equal(t, ca.enable, enable)
-		}
+		rs, rk := mgr.GetMergeRegionSizeAndCount(ctx, httpCli)
+		require.Equal(t, ca.regionSplitSize, rs)
+		require.Equal(t, ca.regionSplitKeys, rk)
 		mockServer.Close()
 	}
 }
@@ -640,16 +457,6 @@ func TestHandleTiKVAddress(t *testing.T) {
 			store: &metapb.Store{
 				Id:            1,
 				State:         metapb.StoreState_Up,
-				Address:       "[::1]:20160",
-				StatusAddress: "[::1]:20180",
-			},
-			httpPrefix: "http://",
-			result:     "http://[::1]:20180",
-		},
-		{
-			store: &metapb.Store{
-				Id:            1,
-				State:         metapb.StoreState_Up,
 				Address:       "192.168.1.5:20160",
 				StatusAddress: "0.0.0.0:20180",
 			},
@@ -657,20 +464,9 @@ func TestHandleTiKVAddress(t *testing.T) {
 			// if status address and node address not match, we use node address as default host name.
 			result: "https://192.168.1.5:20180",
 		},
-		{
-			store: &metapb.Store{
-				Id:            1,
-				State:         metapb.StoreState_Up,
-				Address:       "[fd00::1:5]:20160",
-				StatusAddress: "[::]:20180",
-			},
-			httpPrefix: "https://",
-			// if status address and node address not match, we use node address as default host name.
-			result: "https://[fd00::1:5]:20180",
-		},
 	}
 	for _, ca := range cases {
-		addr, err := conn.HandleTiKVAddress(ca.store, ca.httpPrefix)
+		addr, err := handleTiKVAddress(ca.store, ca.httpPrefix)
 		require.Nil(t, err)
 		require.Equal(t, ca.result, addr.String())
 	}

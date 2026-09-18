@@ -6,7 +6,7 @@ go_library(
         "buffered_read_conn.go",
         "util.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/server/internal/util",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/util",
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
         "//pkg/config",
@@ -20,6 +20,6 @@ go_test(
     srcs = ["util_test.go"],
     embed = [":util"],
     flaky = True,
-    shard_count = 3,
+    shard_count = 4,
     deps = ["@com_github_stretchr_testify//require"],
 )

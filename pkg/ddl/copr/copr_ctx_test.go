@@ -18,25 +18,22 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprstatic"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
 func TestNewCopContextSingleIndex(t *testing.T) {
+	var mockColInfos []*model.ColumnInfo
 	colCnt := 6
-	mockColInfos := make([]*model.ColumnInfo, 0, colCnt)
-	for i := range colCnt {
+	for i := 0; i < colCnt; i++ {
 		mockColInfos = append(mockColInfos, &model.ColumnInfo{
 			ID:        int64(i),
 			Offset:    i,
-			Name:      ast.NewCIStr(fmt.Sprintf("c%d", i)),
+			Name:      model.NewCIStr(fmt.Sprintf("c%d", i)),
 			FieldType: *types.NewFieldType(1),
 			State:     model.StatePublic,
 		})
@@ -70,18 +67,18 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 		var idxCols []*model.IndexColumn
 		for _, cn := range tt.cols {
 			idxCols = append(idxCols, &model.IndexColumn{
-				Name:   ast.NewCIStr(cn),
+				Name:   model.NewCIStr(cn),
 				Offset: findColByName(cn).Offset,
 			})
 		}
 		mockIdxInfo := &model.IndexInfo{
 			ID:      int64(i),
-			Name:    ast.NewCIStr(fmt.Sprintf("i%d", i)),
+			Name:    model.NewCIStr(fmt.Sprintf("i%d", i)),
 			Columns: idxCols,
 			State:   model.StatePublic,
 		}
 		mockTableInfo := &model.TableInfo{
-			Name:           ast.NewCIStr("t"),
+			Name:           model.NewCIStr("t"),
 			Columns:        mockColInfos,
 			Indices:        []*model.IndexInfo{mockIdxInfo},
 			PKIsHandle:     tt.pkType == pkTypePKHandle,
@@ -94,11 +91,11 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 			mockTableInfo.Indices = append(mockTableInfo.Indices, &model.IndexInfo{
 				Columns: []*model.IndexColumn{
 					{
-						Name:   ast.NewCIStr("c2"),
+						Name:   model.NewCIStr("c2"),
 						Offset: 2,
 					},
 					{
-						Name:   ast.NewCIStr("c4"),
+						Name:   model.NewCIStr("c4"),
 						Offset: 4,
 					},
 				},
@@ -107,14 +104,7 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 			})
 		}
 
-		sctx := mock.NewContext()
-		copCtx, err := NewCopContextSingleIndex(
-			sctx.GetExprCtx(),
-			sctx.GetSessionVars().StmtCtx.PushDownFlags(),
-			mockTableInfo,
-			mockIdxInfo,
-			"",
-		)
+		copCtx, err := NewCopContextSingleIndex(mockTableInfo, mockIdxInfo, mock.NewContext(), "")
 		require.NoError(t, err)
 		base := copCtx.GetBase()
 		require.Equal(t, "t", base.TableInfo.Name.L)
@@ -128,71 +118,6 @@ func TestNewCopContextSingleIndex(t *testing.T) {
 		for i, col := range base.ColumnInfos {
 			require.Equal(t, tt.expectedCols[i], col.Name.L)
 		}
-	}
-}
-
-func TestCopContextConditionUsesFixedCollation(t *testing.T) {
-	origin := collate.NewCollationEnabled()
-	collate.SetNewCollationEnabledForTest(true)
-	defer collate.SetNewCollationEnabledForTest(origin)
-
-	colTp := types.NewFieldTypeWithCollation(mysql.TypeVarchar, "utf8mb4_general_ci", 16)
-	colInfo := &model.ColumnInfo{
-		ID:        1,
-		Offset:    0,
-		Name:      ast.NewCIStr("c0"),
-		FieldType: *colTp,
-		State:     model.StatePublic,
-	}
-	generatedColInfo := &model.ColumnInfo{
-		ID:                  2,
-		Offset:              1,
-		Name:                ast.NewCIStr("g0"),
-		FieldType:           *colTp,
-		State:               model.StatePublic,
-		GeneratedExprString: "lower(c0)",
-		GeneratedStored:     false,
-		Dependences:         map[string]struct{}{"c0": {}},
-	}
-
-	originBuildSimpleExpr := expression.BuildSimpleExpr
-	defer func() {
-		expression.BuildSimpleExpr = originBuildSimpleExpr
-	}()
-	var seenUseNewCollates []bool
-	expression.BuildSimpleExpr = func(ctx expression.BuildContext, expr ast.ExprNode, _ ...expression.BuildOption) (expression.Expression, error) {
-		seenUseNewCollates = append(seenUseNewCollates, ctx.NewCollationEnabled())
-		return expression.NewOne(), nil
-	}
-	idxInfo := &model.IndexInfo{
-		ID:                  1,
-		Name:                ast.NewCIStr("idx"),
-		Columns:             []*model.IndexColumn{{Name: generatedColInfo.Name, Offset: generatedColInfo.Offset}},
-		State:               model.StatePublic,
-		ConditionExprString: "1",
-	}
-	tblInfo := &model.TableInfo{
-		Name:    ast.NewCIStr("t"),
-		Columns: []*model.ColumnInfo{colInfo, generatedColInfo},
-		Indices: []*model.IndexInfo{idxInfo},
-	}
-
-	sctx := mock.NewContext()
-	exprCtx := sctx.ExprContext.IntoStatic().Apply(exprstatic.WithNewCollationEnabled(false))
-	copCtx, err := NewCopContextSingleIndex(
-		exprCtx,
-		sctx.GetSessionVars().StmtCtx.PushDownFlags(),
-		tblInfo,
-		idxInfo,
-		"",
-	)
-	require.NoError(t, err)
-	condition, err := copCtx.GetCondition()
-	require.NoError(t, err)
-	require.NotNil(t, condition)
-	require.NotEmpty(t, seenUseNewCollates)
-	for _, useNewCollate := range seenUseNewCollates {
-		require.False(t, useNewCollate)
 	}
 }
 
@@ -269,8 +194,7 @@ func TestCollectVirtualColumnOffsetsAndTypes(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			ctx := exprstatic.NewEvalContext()
-			gotOffsets, gotFt := collectVirtualColumnOffsetsAndTypes(ctx, tt.cols)
+			gotOffsets, gotFt := collectVirtualColumnOffsetsAndTypes(tt.cols)
 			require.Equal(t, gotOffsets, tt.offsets)
 			require.Equal(t, len(gotFt), len(tt.fieldTp))
 			for i, ft := range gotFt {

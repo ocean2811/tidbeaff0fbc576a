@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package driver_test
+package driver
 
 import (
 	"context"
@@ -20,14 +20,13 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 	"github.com/stretchr/testify/require"
 )
 
 func TestFailBusyServerCop(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, _ := createTestStore(t)
 
 	se, err := session.CreateSession4Test(store)
 	require.NoError(t, err)

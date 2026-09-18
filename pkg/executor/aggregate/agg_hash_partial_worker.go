@@ -15,268 +15,115 @@
 package aggregate
 
 import (
-	"math/rand"
 	"sync"
-	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 	"github.com/twmb/murmur3"
 )
 
-// SpillChunkSizeThreshold describes the threshold that a chunk needs to be spilled.
-const SpillChunkSizeThreshold = 1 * 1024 * 1024 // 1 MiB
+// HashAggIntermData indicates the intermediate data of aggregation execution.
+type HashAggIntermData struct {
+	groupKeys        []string
+	cursor           int
+	partialResultMap AggPartialResultMapper
+}
 
 // HashAggPartialWorker indicates the partial workers of parallel hash agg execution,
 // the number of the worker can be set by `tidb_hashagg_partial_concurrency`.
 type HashAggPartialWorker struct {
 	baseHashAggWorker
-	idForTest int
-	ctx       sessionctx.Context
 
-	inputCh        chan *chunk.Chunk
-	outputChs      []chan aggfuncs.AggPartialResultMapper
-	globalOutputCh chan *AfFinalResult
-
-	// Partial worker transmit the HashAggInput by this channel,
-	// so that the data fetcher could get the partial worker's HashAggInput
-	giveBackCh chan<- *HashAggInput
-
-	partialResultsBuffer  [][]aggfuncs.PartialResult
-	partialResultNumInRow int
-
-	// Length of this map is equal to the number of final workers
-	// All data in one AggPartialResultMapper are specifically sent to a target final worker.
-	// e.g. all data in partialResultsMap[3] should be sent to final worker 3.
-	partialResultsMap    []aggfuncs.AggPartialResultMapper
-	partialResultsMapMem atomic.Int64
-
-	groupByItems []expression.Expression
-	groupKeyBuf  [][]byte
+	inputCh           chan *chunk.Chunk
+	outputChs         []chan *HashAggIntermData
+	globalOutputCh    chan *AfFinalResult
+	giveBackCh        chan<- *HashAggInput
+	partialResultsMap AggPartialResultMapper
+	groupByItems      []expression.Expression
+	groupKey          [][]byte
 	// chk stores the input data from child,
 	// and is reused by childExec and partial worker.
 	chk *chunk.Chunk
-
-	isSpillPrepared    bool
-	spillHelper        *parallelHashAggSpillHelper
-	tmpChkForSpill     *chunk.Chunk
-	partitionedKeysBuf [][]string
-	serializeHelpers   *aggfuncs.SerializeHelper
-	spilledChunksIO    []*chunk.DataInDiskByChunks
-
-	// It's useful when spill is triggered and the fetcher could know when partial workers finish their works.
-	inflightChunkSync *sync.WaitGroup
-
-	fileNamePrefixForTest string
 }
 
-func (w *HashAggPartialWorker) getChildInput() (*chunk.Chunk, bool) {
+func (w *HashAggPartialWorker) getChildInput() bool {
 	select {
 	case <-w.finishCh:
-		return nil, false
+		return false
 	case chk, ok := <-w.inputCh:
 		if !ok {
-			return nil, false
+			return false
 		}
-		return chk, true
+		w.chk.SwapColumns(chk)
+		w.giveBackCh <- &HashAggInput{
+			chk:        chk,
+			giveBackCh: w.inputCh,
+		}
 	}
-}
-
-func (w *HashAggPartialWorker) fetchChunkAndProcess(ctx sessionctx.Context, hasError *bool, needShuffle *bool) bool {
-	if w.spillHelper.checkError() {
-		*hasError = true
-		return false
-	}
-
-	waitStart := time.Now()
-	chk, ok := w.getChildInput()
-	if !ok {
-		return false
-	}
-
-	defer w.inflightChunkSync.Done()
-	updateWaitTime(w.stats, waitStart)
-
-	w.intestDuringPartialWorkerRun()
-
-	w.chk.SwapColumns(chk)
-	w.giveBackCh <- &HashAggInput{
-		chk:        chk,
-		giveBackCh: w.inputCh,
-	}
-
-	execStart := time.Now()
-	if err := w.updatePartialResult(ctx, w.chk, len(w.partialResultsMap)); err != nil {
-		*hasError = true
-		w.processError(err)
-		return false
-	}
-	updateExecTime(w.stats, execStart)
-
-	// The intermData can be promised to be not empty if reaching here,
-	// so we set needShuffle to be true.
-	*needShuffle = true
-
-	w.intestDuringPartialWorkerRun()
 	return true
-}
-
-func (w *HashAggPartialWorker) intestDuringPartialWorkerRun() {
-	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
-		if val.(bool) {
-			num := rand.Intn(10000)
-			if num < 3 {
-				panic("Intest panic: partial worker is panicked when running")
-			} else if num < 6 {
-				w.processError(errors.Errorf("Random fail is triggered in partial worker"))
-			} else if num < 9 {
-				consumedMem := int64(500000)
-				w.memTracker.Consume(consumedMem)
-				w.partialResultsMapMem.Add(consumedMem)
-			}
-
-			// Slow some partial workers
-			if w.idForTest%2 == 0 && num < 15 {
-				time.Sleep(1 * time.Millisecond)
-			}
-		}
-	})
-
-	failpoint.Inject("slowSomePartialWorkers", func(val failpoint.Value) {
-		if val.(bool) {
-			num := rand.Intn(10000)
-			// Slow some partial workers
-			if w.idForTest%2 == 0 && num < 10 {
-				time.Sleep(1 * time.Millisecond)
-			}
-		}
-	})
-}
-
-func intestBeforePartialWorkerRun() {
-	failpoint.Inject("enableAggSpillIntest", func(val failpoint.Value) {
-		if val.(bool) {
-			num := rand.Intn(100)
-			if num < 2 {
-				panic("Intest panic: partial worker is panicked before start")
-			} else if num >= 2 && num < 4 {
-				time.Sleep(1 * time.Millisecond)
-			}
-		}
-	})
-}
-
-func (w *HashAggPartialWorker) finalizeWorkerProcess(needShuffle bool, finalConcurrency int, hasError bool) {
-	// Consume all chunks to avoid hang of fetcher
-	for range w.inputCh {
-		w.inflightChunkSync.Done()
-	}
-
-	if w.checkFinishChClosed() {
-		return
-	}
-
-	if hasError {
-		return
-	}
-
-	if needShuffle && w.spillHelper.isSpilledChunksIOEmpty() {
-		w.shuffleIntermData(finalConcurrency)
-	}
 }
 
 func (w *HashAggPartialWorker) run(ctx sessionctx.Context, waitGroup *sync.WaitGroup, finalConcurrency int) {
 	start := time.Now()
-	hasError := false
-	needShuffle := false
-
+	needShuffle, sc := false, ctx.GetSessionVars().StmtCtx
 	defer func() {
 		if r := recover(); r != nil {
 			recoveryHashAgg(w.globalOutputCh, r)
 		}
-
-		w.finalizeWorkerProcess(needShuffle, finalConcurrency, hasError)
-
+		if needShuffle {
+			w.shuffleIntermData(sc, finalConcurrency)
+		}
 		w.memTracker.Consume(-w.chk.MemoryUsage())
-		updateWorkerTime(w.stats, start)
-
-		// We must ensure that there is no panic before `waitGroup.Done()` or there will be hang
+		if w.stats != nil {
+			w.stats.WorkerTime += int64(time.Since(start))
+		}
 		waitGroup.Done()
-
-		tryRecycleBuffer(&w.partialResultsBuffer, &w.groupKeyBuf)
 	}()
-
-	intestBeforePartialWorkerRun()
-
-	for w.fetchChunkAndProcess(ctx, &hasError, &needShuffle) {
+	for {
+		waitStart := time.Now()
+		ok := w.getChildInput()
+		if w.stats != nil {
+			w.stats.WaitTime += int64(time.Since(waitStart))
+		}
+		if !ok {
+			return
+		}
+		execStart := time.Now()
+		if err := w.updatePartialResult(ctx, sc, w.chk, len(w.partialResultsMap)); err != nil {
+			w.globalOutputCh <- &AfFinalResult{err: err}
+			return
+		}
+		if w.stats != nil {
+			w.stats.ExecTime += int64(time.Since(execStart))
+			w.stats.TaskNum++
+		}
+		// The intermData can be promised to be not empty if reaching here,
+		// so we set needShuffle to be true.
+		needShuffle = true
 	}
 }
 
-// If the group key has appeared before, reuse the partial result.
-// If the group key has not appeared before, create empty partial results.
-func (w *HashAggPartialWorker) getPartialResultsOfEachRow(groupKey [][]byte, finalConcurrency int) [][]aggfuncs.PartialResult {
-	mapper := w.partialResultsMap
-	numRows := len(groupKey)
-	allMemDelta := int64(0)
-	w.partialResultsBuffer = w.partialResultsBuffer[0:0]
-
-	for i := range numRows {
-		finalWorkerIdx := int(murmur3.Sum32(groupKey[i])) % finalConcurrency
-		tmp, ok := mapper[finalWorkerIdx].M[string(hack.String(groupKey[i]))]
-
-		// This group by key has appeared before, reuse the partial result.
-		if ok {
-			w.partialResultsBuffer = append(w.partialResultsBuffer, tmp)
-			continue
-		}
-
-		// It's the first time that this group by key appeared, create it
-		w.partialResultsBuffer = append(w.partialResultsBuffer, make([]aggfuncs.PartialResult, w.partialResultNumInRow))
-		lastIdx := len(w.partialResultsBuffer) - 1
-		for j, af := range w.aggFuncs {
-			partialResult, memDelta := af.AllocPartialResult()
-			w.partialResultsBuffer[lastIdx][j] = partialResult
-			allMemDelta += memDelta // the memory usage of PartialResult
-		}
-		allMemDelta += int64(w.partialResultNumInRow * 8)
-		delta := mapper[finalWorkerIdx].Set(string(groupKey[i]), w.partialResultsBuffer[lastIdx])
-		allMemDelta += int64(len(groupKey[i]))
-		if delta > 0 {
-			w.partialResultsMapMem.Add(delta)
-			w.memTracker.Consume(delta)
-		}
-	}
-	w.partialResultsMapMem.Add(allMemDelta)
-	w.memTracker.Consume(allMemDelta)
-	return w.partialResultsBuffer
-}
-
-func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *chunk.Chunk, finalConcurrency int) (err error) {
-	memSize := getGroupKeyMemUsage(w.groupKeyBuf)
-	w.groupKeyBuf, err = GetGroupKey(w.ctx, chk, w.groupKeyBuf, w.groupByItems)
+func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, sc *stmtctx.StatementContext, chk *chunk.Chunk, _ int) (err error) {
+	memSize := getGroupKeyMemUsage(w.groupKey)
+	w.groupKey, err = GetGroupKey(w.ctx, chk, w.groupKey, w.groupByItems)
 	failpoint.Inject("ConsumeRandomPanic", nil)
-	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKeyBuf) - memSize)
+	w.memTracker.Consume(getGroupKeyMemUsage(w.groupKey) - memSize)
 	if err != nil {
 		return err
 	}
 
-	partialResultOfEachRow := w.getPartialResultsOfEachRow(w.groupKeyBuf, finalConcurrency)
-
+	partialResults := w.getPartialResult(sc, w.groupKey, w.partialResultsMap)
 	numRows := chk.NumRows()
 	rows := make([]chunk.Row, 1)
 	allMemDelta := int64(0)
-	exprCtx := ctx.GetExprCtx()
-	for i := range numRows {
-		partialResult := partialResultOfEachRow[i]
-		rows[0] = chk.GetRow(i)
+	for i := 0; i < numRows; i++ {
 		for j, af := range w.aggFuncs {
-			memDelta, err := af.UpdatePartialResult(exprCtx.GetEvalCtx(), rows, partialResult[j])
+			rows[0] = chk.GetRow(i)
+			memDelta, err := af.UpdatePartialResult(ctx, rows, partialResults[i][j])
 			if err != nil {
 				return err
 			}
@@ -284,119 +131,28 @@ func (w *HashAggPartialWorker) updatePartialResult(ctx sessionctx.Context, chk *
 		}
 	}
 	w.memTracker.Consume(allMemDelta)
-	w.partialResultsMapMem.Add(allMemDelta)
 	return nil
 }
 
-func (w *HashAggPartialWorker) shuffleIntermData(finalConcurrency int) {
-	for i := range finalConcurrency {
-		w.outputChs[i] <- w.partialResultsMap[i]
-	}
-}
-
-func (w *HashAggPartialWorker) prepareForSpill() {
-	if !w.isSpillPrepared {
-		w.tmpChkForSpill = w.spillHelper.getNewSpillChunkFunc()
-		w.partitionedKeysBuf = make([][]string, spilledPartitionNum)
-		w.spilledChunksIO = make([]*chunk.DataInDiskByChunks, spilledPartitionNum)
-		for i := range spilledPartitionNum {
-			w.spilledChunksIO[i] = chunk.NewDataInDiskByChunks(w.spillHelper.spillChunkFieldTypes, w.fileNamePrefixForTest)
-			if w.spillHelper.diskTracker != nil {
-				w.spilledChunksIO[i].GetDiskTracker().AttachTo(w.spillHelper.diskTracker)
-			}
+// shuffleIntermData shuffles the intermediate data of partial workers to corresponded final workers.
+// We only support parallel execution for single-machine, so process of encode and decode can be skipped.
+func (w *HashAggPartialWorker) shuffleIntermData(_ *stmtctx.StatementContext, finalConcurrency int) {
+	groupKeysSlice := make([][]string, finalConcurrency)
+	for groupKey := range w.partialResultsMap {
+		finalWorkerIdx := int(murmur3.Sum32([]byte(groupKey))) % finalConcurrency
+		if groupKeysSlice[finalWorkerIdx] == nil {
+			groupKeysSlice[finalWorkerIdx] = make([]string, 0, len(w.partialResultsMap)/finalConcurrency)
 		}
-		w.isSpillPrepared = true
-	}
-}
-
-func (w *HashAggPartialWorker) spillDataToDisk() error {
-	err := w.spillDataToDiskImpl()
-	if err == nil {
-		err = failpointError()
-	}
-	return err
-}
-
-func (w *HashAggPartialWorker) spillDataToDiskImpl() error {
-	if len(w.partialResultsMap) == 0 {
-		return nil
+		groupKeysSlice[finalWorkerIdx] = append(groupKeysSlice[finalWorkerIdx], groupKey)
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			recoveryHashAgg(w.globalOutputCh, r)
+	for i := range groupKeysSlice {
+		if groupKeysSlice[i] == nil {
+			continue
 		}
-		for i := range w.partitionedKeysBuf {
-			clear(w.partitionedKeysBuf[i])
-			w.partitionedKeysBuf[i] = w.partitionedKeysBuf[i][:0]
-		}
-
-		// Clear the partialResultsMap
-		w.partialResultsMap = make([]aggfuncs.AggPartialResultMapper, len(w.partialResultsMap))
-		for i := range w.partialResultsMap {
-			w.partialResultsMap[i] = aggfuncs.NewAggPartialResultMapper()
-		}
-
-		w.memTracker.Consume(-w.partialResultsMapMem.Load())
-		w.partialResultsMapMem.Store(0)
-	}()
-
-	w.prepareForSpill()
-	for _, partialResultsMap := range w.partialResultsMap {
-		for key := range partialResultsMap.M {
-			partitionNum := int(murmur3.Sum32(hack.Slice(key))) % spilledPartitionNum
-			w.partitionedKeysBuf[partitionNum] = append(w.partitionedKeysBuf[partitionNum], key)
-		}
-
-		for partitionNum, keys := range w.partitionedKeysBuf {
-			for _, key := range keys {
-				partialResults := partialResultsMap.M[key]
-
-				// Serialize agg meta data to the tmp chunk
-				for i, aggFunc := range w.aggFuncs {
-					aggFunc.SerializePartialResult(partialResults[i], w.tmpChkForSpill, w.serializeHelpers)
-				}
-
-				// Append key
-				w.tmpChkForSpill.AppendString(len(w.aggFuncs), key)
-
-				// Spill data when the tmp chunk is full or its memory usage exceeds the threshold.
-				if CheckChunkSpill(w.tmpChkForSpill) {
-					if err := w.spilledChunksIO[partitionNum].Add(w.tmpChkForSpill); err != nil {
-						return err
-					}
-					w.tmpChkForSpill.Reset()
-				}
-			}
-
-			// Flush before reusing the tmp chunk for another partition.
-			if err := w.spillRemainingDataToDisk(partitionNum); err != nil {
-				return err
-			}
-			clear(keys)
-			w.partitionedKeysBuf[partitionNum] = w.partitionedKeysBuf[partitionNum][:0]
+		w.outputChs[i] <- &HashAggIntermData{
+			groupKeys:        groupKeysSlice[i],
+			partialResultMap: w.partialResultsMap,
 		}
 	}
-	return nil
-}
-
-// The tmp chunk may not be full, so we need to manually trigger the spill action.
-func (w *HashAggPartialWorker) spillRemainingDataToDisk(partitionNum int) error {
-	if w.tmpChkForSpill.NumRows() > 0 {
-		if err := w.spilledChunksIO[partitionNum].Add(w.tmpChkForSpill); err != nil {
-			return err
-		}
-		w.tmpChkForSpill.Reset()
-	}
-	return nil
-}
-
-func (w *HashAggPartialWorker) processError(err error) {
-	w.globalOutputCh <- &AfFinalResult{err: err}
-	w.spillHelper.setError()
-}
-
-// CheckChunkSpill checks if this spill chunk need to be spilled
-func CheckChunkSpill(chk *chunk.Chunk) bool {
-	return chk.NumRows() > 0 && (chk.UsedMemoryUsage() >= SpillChunkSizeThreshold || chk.IsFull())
 }

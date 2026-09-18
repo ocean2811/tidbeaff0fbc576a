@@ -18,20 +18,19 @@ import (
 	"testing"
 	"time"
 
-	mysql "github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
+	mysql "github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/tables"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/external"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCreateSequence(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	vardef.SetSchemaLease(600 * time.Millisecond)
+	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
@@ -94,7 +93,7 @@ func TestCreateSequence(t *testing.T) {
 
 func TestSequenceFunction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
-	vardef.SetSchemaLease(600 * time.Millisecond)
+	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
@@ -526,7 +525,7 @@ func TestSequenceFunction(t *testing.T) {
 // single insert consume: 33.213615ms
 func BenchmarkInsertCacheDefaultExpr(b *testing.B) {
 	store := testkit.CreateMockStore(b)
-	vardef.SetSchemaLease(600 * time.Millisecond)
+	session.SetSchemaLease(600 * time.Millisecond)
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop sequence if exists seq")
@@ -534,7 +533,7 @@ func BenchmarkInsertCacheDefaultExpr(b *testing.B) {
 	tk.MustExec("create sequence seq")
 	tk.MustExec("create table t(a int default next value for seq)")
 	sql := "insert into t values "
-	for i := range 1000 {
+	for i := 0; i < 1000; i++ {
 		if i == 0 {
 			sql += "()"
 		} else {

@@ -19,14 +19,15 @@ import (
 	"sort"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/selection"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/selection"
 )
 
 const (
 	// DefSliceSize represents size of an empty Slice
-	DefSliceSize = int64(unsafe.Sizeof([]any{}))
+	DefSliceSize = int64(unsafe.Sizeof([]interface{}{}))
 )
 
 var (
@@ -39,7 +40,10 @@ var (
 
 func percentile(data sort.Interface, percent int) int {
 	// Ordinal rank k = Ceil(P / 100 * N)
-	k := min(int(math.Ceil(float64(data.Len())*(float64(percent)/100))), data.Len())
+	k := int(math.Ceil(float64(data.Len()) * (float64(percent) / 100)))
+	if k > data.Len() {
+		k = data.Len()
+	}
 	return selection.Select(data, k)
 }
 
@@ -55,25 +59,11 @@ func (*basePercentile) AllocPartialResult() (pr PartialResult, memDelta int64) {
 
 func (*basePercentile) ResetPartialResult(PartialResult) {}
 
-func (*basePercentile) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (memDelta int64, err error) {
+func (*basePercentile) UpdatePartialResult(sessionctx.Context, []chunk.Row, PartialResult) (memDelta int64, err error) {
 	return
 }
 
-func (*basePercentile) MergePartialResult(AggFuncUpdateContext, PartialResult, PartialResult) (memDelta int64, err error) {
-	return
-}
-
-func (e *basePercentile) SerializePartialResult(_ PartialResult, chk *chunk.Chunk, _ *SerializeHelper) {
-	// Unsupported input types always produce NULL and have no partial state.
-	// A NULL cell preserves the row count needed by spill restoration.
-	chk.AppendNull(e.ordinal)
-}
-
-func (*basePercentile) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return make([]PartialResult, src.NumRows()), 0
-}
-
-func (e *basePercentile) AppendFinalResult2Chunk(_ AggFuncUpdateContext, _ PartialResult, chk *chunk.Chunk) error {
+func (e *basePercentile) AppendFinalResult2Chunk(_ sessionctx.Context, _ PartialResult, chk *chunk.Chunk) error {
 	chk.AppendNull(e.ordinal)
 	return nil
 }
@@ -150,7 +140,7 @@ func (*percentileOriginal4Int) ResetPartialResult(pr PartialResult) {
 	*p = partialResult4PercentileInt{}
 }
 
-func (e *percentileOriginal4Int) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Int) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4PercentileInt)(pr)
 	startMem := p.MemSize()
 	for _, row := range rowsInGroup {
@@ -167,7 +157,7 @@ func (e *percentileOriginal4Int) UpdatePartialResult(sctx AggFuncUpdateContext, 
 	return endMem - startMem, nil
 }
 
-func (*percentileOriginal4Int) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (*percentileOriginal4Int) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileInt)(src), (*partialResult4PercentileInt)(dst)
 	mergeBuff := make([]int64, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -177,7 +167,7 @@ func (*percentileOriginal4Int) MergePartialResult(_ AggFuncUpdateContext, src, d
 	return 0, nil
 }
 
-func (e *percentileOriginal4Int) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *percentileOriginal4Int) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileInt)(pr)
 	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -186,24 +176,6 @@ func (e *percentileOriginal4Int) AppendFinalResult2Chunk(_ AggFuncUpdateContext,
 	index := percentile(p, e.percent)
 	chk.AppendInt64(e.ordinal, (*p)[index])
 	return nil
-}
-
-func (e *percentileOriginal4Int) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4PercentileInt)(partialResult)
-	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4PercentileInt(*pr))
-}
-
-func (e *percentileOriginal4Int) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *percentileOriginal4Int) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	success, dataMemDelta := helper.deserializePartialResult4PercentileInt((*partialResult4PercentileInt)(pr))
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta + dataMemDelta
 }
 
 type percentileOriginal4Real struct {
@@ -221,7 +193,7 @@ func (*percentileOriginal4Real) ResetPartialResult(pr PartialResult) {
 	*p = partialResult4PercentileReal{}
 }
 
-func (e *percentileOriginal4Real) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Real) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4PercentileReal)(pr)
 	startMem := p.MemSize()
 	for _, row := range rowsInGroup {
@@ -238,7 +210,7 @@ func (e *percentileOriginal4Real) UpdatePartialResult(sctx AggFuncUpdateContext,
 	return endMem - startMem, nil
 }
 
-func (*percentileOriginal4Real) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (*percentileOriginal4Real) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileReal)(src), (*partialResult4PercentileReal)(dst)
 	mergeBuff := make([]float64, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -248,7 +220,7 @@ func (*percentileOriginal4Real) MergePartialResult(_ AggFuncUpdateContext, src, 
 	return 0, nil
 }
 
-func (e *percentileOriginal4Real) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *percentileOriginal4Real) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileReal)(pr)
 	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -257,24 +229,6 @@ func (e *percentileOriginal4Real) AppendFinalResult2Chunk(_ AggFuncUpdateContext
 	index := percentile(*p, e.percent)
 	chk.AppendFloat64(e.ordinal, (*p)[index])
 	return nil
-}
-
-func (e *percentileOriginal4Real) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4PercentileReal)(partialResult)
-	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4PercentileReal(*pr))
-}
-
-func (e *percentileOriginal4Real) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *percentileOriginal4Real) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	success, dataMemDelta := helper.deserializePartialResult4PercentileReal((*partialResult4PercentileReal)(pr))
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta + dataMemDelta
 }
 
 type percentileOriginal4Decimal struct {
@@ -292,7 +246,7 @@ func (*percentileOriginal4Decimal) ResetPartialResult(pr PartialResult) {
 	*p = partialResult4PercentileDecimal{}
 }
 
-func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4PercentileDecimal)(pr)
 	startMem := p.MemSize()
 	for _, row := range rowsInGroup {
@@ -309,7 +263,7 @@ func (e *percentileOriginal4Decimal) UpdatePartialResult(sctx AggFuncUpdateConte
 	return endMem - startMem, nil
 }
 
-func (*percentileOriginal4Decimal) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (*percentileOriginal4Decimal) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileDecimal)(src), (*partialResult4PercentileDecimal)(dst)
 	mergeBuff := make([]types.MyDecimal, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -319,7 +273,7 @@ func (*percentileOriginal4Decimal) MergePartialResult(_ AggFuncUpdateContext, sr
 	return 0, nil
 }
 
-func (e *percentileOriginal4Decimal) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *percentileOriginal4Decimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileDecimal)(pr)
 	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -328,24 +282,6 @@ func (e *percentileOriginal4Decimal) AppendFinalResult2Chunk(_ AggFuncUpdateCont
 	index := percentile(*p, e.percent)
 	chk.AppendMyDecimal(e.ordinal, &(*p)[index])
 	return nil
-}
-
-func (e *percentileOriginal4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4PercentileDecimal)(partialResult)
-	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4PercentileDecimal(*pr))
-}
-
-func (e *percentileOriginal4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *percentileOriginal4Decimal) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	success, dataMemDelta := helper.deserializePartialResult4PercentileDecimal((*partialResult4PercentileDecimal)(pr))
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta + dataMemDelta
 }
 
 type percentileOriginal4Time struct {
@@ -363,7 +299,7 @@ func (*percentileOriginal4Time) ResetPartialResult(pr PartialResult) {
 	*p = partialResult4PercentileTime{}
 }
 
-func (e *percentileOriginal4Time) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Time) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4PercentileTime)(pr)
 	startMem := p.MemSize()
 	for _, row := range rowsInGroup {
@@ -380,7 +316,7 @@ func (e *percentileOriginal4Time) UpdatePartialResult(sctx AggFuncUpdateContext,
 	return endMem - startMem, nil
 }
 
-func (*percentileOriginal4Time) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (*percentileOriginal4Time) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileTime)(src), (*partialResult4PercentileTime)(dst)
 	mergeBuff := make(partialResult4PercentileTime, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -390,7 +326,7 @@ func (*percentileOriginal4Time) MergePartialResult(_ AggFuncUpdateContext, src, 
 	return 0, nil
 }
 
-func (e *percentileOriginal4Time) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *percentileOriginal4Time) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileTime)(pr)
 	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -401,31 +337,13 @@ func (e *percentileOriginal4Time) AppendFinalResult2Chunk(_ AggFuncUpdateContext
 	return nil
 }
 
-func (e *percentileOriginal4Time) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4PercentileTime)(partialResult)
-	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4PercentileTime(*pr))
-}
-
-func (e *percentileOriginal4Time) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *percentileOriginal4Time) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	success, dataMemDelta := helper.deserializePartialResult4PercentileTime((*partialResult4PercentileTime)(pr))
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta + dataMemDelta
-}
-
 type percentileOriginal4Duration struct {
 	basePercentile
 }
 
 func (*percentileOriginal4Duration) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	// TODO: Preserve appropriate capacity for data
-	pr = PartialResult(&partialResult4PercentileDuration{})
+	pr = PartialResult(&partialResult4PercentileTime{})
 	return pr, DefSliceSize
 }
 
@@ -434,7 +352,7 @@ func (*percentileOriginal4Duration) ResetPartialResult(pr PartialResult) {
 	*p = partialResult4PercentileDuration{}
 }
 
-func (e *percentileOriginal4Duration) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *percentileOriginal4Duration) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4PercentileDuration)(pr)
 	startMem := p.MemSize()
 	for _, row := range rowsInGroup {
@@ -451,7 +369,7 @@ func (e *percentileOriginal4Duration) UpdatePartialResult(sctx AggFuncUpdateCont
 	return endMem - startMem, nil
 }
 
-func (*percentileOriginal4Duration) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (*percentileOriginal4Duration) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4PercentileDuration)(src), (*partialResult4PercentileDuration)(dst)
 	mergeBuff := make(partialResult4PercentileDuration, len(*p1)+len(*p2))
 	copy(mergeBuff, *p2)
@@ -460,7 +378,7 @@ func (*percentileOriginal4Duration) MergePartialResult(_ AggFuncUpdateContext, s
 	*p2 = mergeBuff
 	return 0, nil
 }
-func (e *percentileOriginal4Duration) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *percentileOriginal4Duration) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4PercentileDuration)(pr)
 	if len(*p) == 0 {
 		chk.AppendNull(e.ordinal)
@@ -470,22 +388,4 @@ func (e *percentileOriginal4Duration) AppendFinalResult2Chunk(_ AggFuncUpdateCon
 
 	chk.AppendDuration(e.ordinal, (*p)[index])
 	return nil
-}
-
-func (e *percentileOriginal4Duration) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4PercentileDuration)(partialResult)
-	chk.AppendBytes(e.ordinal, spillHelper.serializePartialResult4PercentileDuration(*pr))
-}
-
-func (e *percentileOriginal4Duration) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *percentileOriginal4Duration) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	success, dataMemDelta := helper.deserializePartialResult4PercentileDuration((*partialResult4PercentileDuration)(pr))
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta + dataMemDelta
 }

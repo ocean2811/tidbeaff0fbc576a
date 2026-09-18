@@ -15,7 +15,7 @@
 package internal
 
 import (
-	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
 )
 
 // StatsCacheInner is the interface to manage the statsCache, it can be implemented by map, lru cache or other structures.
@@ -41,10 +41,4 @@ type StatsCacheInner interface {
 	SetCapacity(int64)
 	// Close stops the cache
 	Close()
-	// TriggerEvict triggers the cache to evict some items
-	TriggerEvict()
-	// WaitForAsyncUpdates blocks until buffered asynchronous cache writes are visible to later Get calls.
-	// Use it after adding new items when following reads depend on them. LFU/Ristretto admits
-	// non-resident items asynchronously; init stats calls this between load phases/chunks.
-	WaitForAsyncUpdates()
 }

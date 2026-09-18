@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/version"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
-	tf "github.com/pingcap/tidb/pkg/util/table-filter"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/filter"
+	tf "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/table-filter"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,8 +18,8 @@ func TestFilterTables(t *testing.T) {
 	dbTables := DatabaseTables{}
 	expectedDBTables := DatabaseTables{}
 
-	dbTables.AppendTables(metadef.InformationSchemaName.O, []string{"xxx"}, []uint64{0})
-	dbTables.AppendTables(strings.ToUpper(metadef.PerformanceSchemaName.O), []string{"xxx"}, []uint64{0})
+	dbTables.AppendTables(filter.InformationSchemaName, []string{"xxx"}, []uint64{0})
+	dbTables.AppendTables(strings.ToUpper(filter.PerformanceSchemaName), []string{"xxx"}, []uint64{0})
 	dbTables.AppendTables("xxx", []string{"yyy"}, []uint64{0})
 	expectedDBTables.AppendTables("xxx", []string{"yyy"}, []uint64{0})
 	dbTables.AppendTables("yyy", []string{"xxx"}, []uint64{0})
@@ -34,7 +34,7 @@ func TestFilterTables(t *testing.T) {
 		Tables:      dbTables,
 		TableFilter: tableFilter,
 	}
-	databases := []string{metadef.InformationSchemaName.O, metadef.PerformanceSchemaName.O, "xxx", "yyy"}
+	databases := []string{filter.InformationSchemaName, filter.PerformanceSchemaName, "xxx", "yyy"}
 	require.Equal(t, databases, filterDatabases(tctx, conf, databases))
 
 	conf.TableFilter = tf.NewSchemasFilter("xxx")

@@ -18,10 +18,10 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/pingcap/tidb/pkg/resourcemanager/scheduler"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/cpu"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/scheduler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/util"
+	tidbutil "github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/cpu"
 )
 
 // InstanceResourceManager is a local instance resource manager

@@ -15,10 +15,10 @@
 package aggregation
 
 import (
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
 )
 
 type maxMinFunction struct {
@@ -40,7 +40,7 @@ func (mmf *maxMinFunction) GetPartialResult(evalCtx *AggEvaluateContext) []types
 // Update implements Aggregation interface.
 func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.StatementContext, row chunk.Row) error {
 	a := mmf.Args[0]
-	value, err := a.Eval(evalCtx.Ctx, row)
+	value, err := a.Eval(row)
 	if err != nil {
 		return err
 	}
@@ -51,7 +51,7 @@ func (mmf *maxMinFunction) Update(evalCtx *AggEvaluateContext, sc *stmtctx.State
 		return nil
 	}
 	var c int
-	c, err = evalCtx.Value.Compare(sc.TypeCtx(), &value, mmf.ctor)
+	c, err = evalCtx.Value.Compare(sc, &value, mmf.ctor)
 	if err != nil {
 		return err
 	}

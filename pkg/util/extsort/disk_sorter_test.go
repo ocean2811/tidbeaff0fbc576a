@@ -398,11 +398,11 @@ func TestSSTReaderPoolParallel(t *testing.T) {
 	pool := newSSTReaderPool(fs, dirname, cache)
 
 	var wg sync.WaitGroup
-	for i := range 17 {
+	for i := 0; i <= 16; i++ {
 		wg.Add(1)
 		go func(fileNum int) {
 			defer wg.Done()
-			for range 10000 {
+			for j := 0; j < 10000; j++ {
 				_, err := pool.get(fileNum)
 				require.NoError(t, err)
 				require.NoError(t, pool.unref(fileNum))

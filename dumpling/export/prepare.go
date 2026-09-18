@@ -10,7 +10,7 @@ import (
 	"text/template"
 
 	"github.com/pingcap/errors"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
 )
 
 const (
@@ -90,7 +90,7 @@ func prepareDumpingDatabases(tctx *tcontext.Context, conf *Config, db *sql.Conn)
 	if len(conf.Databases) == 0 {
 		return databases, nil
 	}
-	dbMap := make(map[string]any, len(databases))
+	dbMap := make(map[string]interface{}, len(databases))
 	for _, database := range databases {
 		dbMap[database] = struct{}{}
 	}

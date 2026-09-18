@@ -19,14 +19,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,7 +34,7 @@ import (
 // Entering interactive mode (type "help" for commands, "o" for options)
 // (pprof) list BenchmarkSubstituteExpression
 // Total: 1.40GB
-// ROUTINE ======================== github.com/pingcap/tidb/pkg/planner/core_test.BenchmarkSubstituteExpression in /home/arenatlx/go/src/github.com/pingcap/tidb/pkg/planner/core/rule_generate_column_substitute_test.go
+// ROUTINE ======================== github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core_test.BenchmarkSubstituteExpression in /home/arenatlx/go/src/github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/rule_generate_column_substitute_test.go
 //
 //	0   173.44MB (flat, cum) 12.12% of Total
 //	.          .     29:func BenchmarkSubstituteExpression(b *testing.B) {
@@ -48,7 +44,7 @@ import (
 //	.          .     33:   tk.MustExec("drop table if exists tai")
 //	.   512.19kB     34:   tk.MustExec("create table tai(a varchar(256), b varchar(256), c int as (a+1), d int as (b+1))")
 //	.          .     35:   is := domain.GetDomain(tk.Session()).InfoSchema()
-//	.          .     36:   _, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tai"))
+//	.          .     36:   _, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tai"))
 //	.          .     37:   require.NoError(b, err)
 //	.          .     38:   condition := "(tai.a='%s' AND tai.b='%s') OR" +
 //	.          .     39:           "(tai.a='%s' AND tai.b='%s') OR" +
@@ -101,7 +97,7 @@ import (
 //	.          .     86:   fmt.Println(sql)
 //	.          .     87:   stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 //	.          .     88:   require.NoError(b, err, sql)
-//	.   512.01kB     89:   p, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
+//	.   512.01kB     89:   p, _, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
 //	.          .     90:   require.NoError(b, err)
 //	.          .     91:   selection := p.(core.LogicalPlan).Children()[0]
 //	.          .     92:   m := make(core.ExprColumnMap, len(selection.Schema().Columns))
@@ -128,7 +124,7 @@ import (
 // Entering interactive mode (type "help" for commands, "o" for options)
 // (pprof) list BenchmarkSubstituteExpression
 // Total: 1.41GB
-// ROUTINE ======================== github.com/pingcap/tidb/pkg/planner/core_test.BenchmarkSubstituteExpression in /home/arenatlx/go/src/github.com/pingcap/tidb/pkg/planner/core/rule_generate_column_substitute_test.go
+// ROUTINE ======================== github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core_test.BenchmarkSubstituteExpression in /home/arenatlx/go/src/github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/rule_generate_column_substitute_test.go
 //
 //	0   172.22MB (flat, cum) 11.90% of Total
 //	.          .     29:func BenchmarkSubstituteExpression(b *testing.B) {
@@ -138,7 +134,7 @@ import (
 //	.          .     33:   tk.MustExec("drop table if exists tai")
 //	.          .     34:   tk.MustExec("create table tai(a varchar(256), b varchar(256), c int as (a+1), d int as (b+1))")
 //	.          .     35:   is := domain.GetDomain(tk.Session()).InfoSchema()
-//	.          .     36:   _, err := is.TableByName(context.Background(), model.NewCIStr("test"), model.NewCIStr("tai"))
+//	.          .     36:   _, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tai"))
 //	.          .     37:   require.NoError(b, err)
 //	.          .     38:   condition := "(tai.a='%s' AND tai.b='%s') OR" +
 //	.          .     39:           "(tai.a='%s' AND tai.b='%s') OR" +
@@ -191,7 +187,7 @@ import (
 //	.          .     86:   fmt.Println(sql)
 //	.          .     87:   stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 //	.          .     88:   require.NoError(b, err, sql)
-//	.   512.07kB     89:   p, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
+//	.   512.07kB     89:   p, _, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
 //	.          .     90:   require.NoError(b, err)
 //	.          .     91:   selection := p.(core.LogicalPlan).Children()[0]
 //	.          .     92:   m := make(core.ExprColumnMap, len(selection.Schema().Columns))
@@ -213,7 +209,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	tk.MustExec("drop table if exists tai")
 	tk.MustExec("create table tai(a varchar(256), b varchar(256), c int as (a+1), d int as (b+1))")
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	_, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("tai"))
+	_, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("tai"))
 	require.NoError(b, err)
 	condition := "(tai.a='%s' AND tai.b='%s') OR" +
 		"(tai.a='%s' AND tai.b='%s') OR" +
@@ -255,22 +251,20 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 		"(tai.a='%s' AND tai.b='%s') OR" +
 		"(tai.a='%s' AND tai.b='%s') OR" +
 		"(tai.a='%s' AND tai.b='%s')"
-	addresses := make([]any, 0, 90)
-	for range 80 {
+	addresses := make([]interface{}, 0, 90)
+	for i := 0; i < 80; i++ {
 		addresses = append(addresses, "0x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC510x6ab6Bf9117A8A9dd5a2FF203aa8a22457162fC51")
 	}
 	condition = fmt.Sprintf(condition, addresses...)
-	s := coretestsdk.CreatePlannerSuite(tk.Session(), is)
-	defer s.Close()
+	s := core.CreatePlannerSuite(tk.Session(), is)
 	ctx := context.Background()
 	sql := "select * from tai where " + condition
 	fmt.Println(sql)
 	stmt, err := s.GetParser().ParseOneStmt(sql, "", "")
 	require.NoError(b, err, sql)
-	nodeW := resolve.NewNodeW(stmt)
-	p, err := core.BuildLogicalPlanForTest(ctx, s.GetSCtx(), nodeW, s.GetIS())
+	p, _, err := core.BuildLogicalPlanForTest(ctx, s.GetCtx(), stmt, s.GetIS())
 	require.NoError(b, err)
-	selection := p.(base.LogicalPlan).Children()[0]
+	selection := p.(core.LogicalPlan).Children()[0]
 	m := make(core.ExprColumnMap, len(selection.Schema().Columns))
 	for _, col := range selection.Schema().Columns {
 		if col.VirtualExpr != nil {
@@ -280,7 +274,7 @@ func BenchmarkSubstituteExpression(b *testing.B) {
 	b.ResetTimer()
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		core.SubstituteExpression(selection.(*logicalop.LogicalSelection).Conditions[0], selection, m, selection.Schema())
+		core.SubstituteExpression(selection.(*core.LogicalSelection).Conditions[0], selection, m, selection.Schema(), nil)
 	}
 	b.StopTimer()
 }

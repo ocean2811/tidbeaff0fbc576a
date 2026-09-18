@@ -19,25 +19,23 @@ import (
 	"errors"
 	"fmt"
 	"math"
-	"slices"
 	"strings"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	core_metrics "github.com/pingcap/tidb/pkg/planner/core/metrics"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/util/fixcontrol"
-	"github.com/pingcap/tidb/pkg/types"
-	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	"github.com/pingcap/tidb/pkg/util/filter"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	core_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util/fixcontrol"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	driver "github.com/ocean2811/tidbeaff0fbc576a/pkg/types/parser_driver"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/filter"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/intest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -50,17 +48,20 @@ func Cacheable(node ast.Node, is infoschema.InfoSchema) bool {
 
 // CacheableWithCtx checks whether the input ast(query) is cacheable.
 // TODO: only for test, remove this function later on.
-func CacheableWithCtx(sctx base.PlanContext, node ast.Node, is infoschema.InfoSchema) (bool, string) {
+func CacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
 	return IsASTCacheable(nil, sctx, node, is)
 }
 
 // IsASTCacheable checks whether the input ast(query) is cacheable.
 // Handle "ignore_plan_cache()" hint
 // If there are multiple hints, only one will take effect
-func IsASTCacheable(ctx context.Context, sctx base.PlanContext, node ast.Node, is infoschema.InfoSchema) (bool, string) {
-	switch node.(type) {
-	case *ast.SelectStmt, *ast.UpdateStmt, *ast.InsertStmt, *ast.DeleteStmt, *ast.SetOprStmt:
-	default:
+func IsASTCacheable(ctx context.Context, sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (bool, string) {
+	_, isSelect := node.(*ast.SelectStmt)
+	_, isUpdate := node.(*ast.UpdateStmt)
+	_, isInsert := node.(*ast.InsertStmt)
+	_, isDelete := node.(*ast.DeleteStmt)
+	_, isSetOpr := node.(*ast.SetOprStmt)
+	if !(isSelect || isUpdate || isInsert || isDelete || isSetOpr) {
 		return false, "not a SELECT/UPDATE/INSERT/DELETE/SET statement"
 	}
 	checker := cacheableChecker{
@@ -70,35 +71,49 @@ func IsASTCacheable(ctx context.Context, sctx base.PlanContext, node ast.Node, i
 		schema:       is,
 		sumInListLen: 0,
 		maxNumParam:  getMaxParamLimit(sctx),
-		cteCanUsed:   make([]string, 0),
 	}
-	ast.Walk(node, &checker)
+	node.Accept(&checker)
 	return checker.cacheable, checker.reason
 }
 
 // cacheableChecker checks whether a query can be cached:
 type cacheableChecker struct {
 	ctx       context.Context
-	sctx      base.PlanContext
+	sctx      sessionctx.Context
 	cacheable bool
 	schema    infoschema.InfoSchema
 	reason    string // reason why cannot use plan-cache
 
 	sumInListLen int // the accumulated number of elements in all in-lists
 	maxNumParam  int
-	// cteCanUsed tracks CTE names visible at current traversal point.
-	cteCanUsed []string
-	// withScopeOffset stores offsets for query block scopes that have WITH clause.
-	withScopeOffset []int
 }
 
-// Enter implements InPlaceVisitor interface.
-func (checker *cacheableChecker) Enter(in ast.Node) (skipChildren bool) {
+// Enter implements Visitor interface.
+func (checker *cacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	switch node := in.(type) {
 	case *ast.SelectStmt:
-		if node.With != nil {
-			// Record the CTE visibility boundary for this query block.
-			checker.withScopeOffset = append(checker.withScopeOffset, len(checker.cteCanUsed))
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
+				return in, true
+			}
+		}
+	case *ast.DeleteStmt:
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
+				return in, true
+			}
+		}
+	case *ast.UpdateStmt:
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
+				return in, true
+			}
 		}
 	case *ast.InsertStmt:
 		if node.Select == nil {
@@ -110,7 +125,14 @@ func (checker *cacheableChecker) Enter(in ast.Node) (skipChildren bool) {
 			if nRows*nCols > checker.maxNumParam { // to save memory
 				checker.cacheable = false
 				checker.reason = "too many values in the insert statement"
-				return true
+				return in, true
+			}
+		}
+		for _, hints := range node.TableHints {
+			if hints.HintName.L == HintIgnorePlanCache {
+				checker.cacheable = false
+				checker.reason = "ignore plan cache by hint"
+				return in, true
 			}
 		}
 	case *ast.PatternInExpr:
@@ -118,34 +140,31 @@ func (checker *cacheableChecker) Enter(in ast.Node) (skipChildren bool) {
 		if checker.sumInListLen > checker.maxNumParam { // to save memory
 			checker.cacheable = false
 			checker.reason = "too many values in in-list"
-			return true
+			return in, true
 		}
 	case *ast.VariableExpr:
 		checker.cacheable = false
 		checker.reason = "query has user-defined variables is un-cacheable"
-		return true
-	case *ast.ExistsSubqueryExpr:
-		return checker.skipForSubqueryDisabled()
-	case *ast.CommonTableExpression:
-		if node.IsRecursive {
-			// Recursive CTE can reference itself, so expose the name before traversing Query.
-			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
+		return in, true
+	case *ast.ExistsSubqueryExpr, *ast.SubqueryExpr:
+		if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
+			checker.cacheable = false
+			checker.reason = "query has sub-queries is un-cacheable"
+			return in, true
 		}
-		return false
-	case *ast.SubqueryExpr:
-		return checker.skipForSubqueryDisabled()
+		return in, false
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
 			checker.reason = fmt.Sprintf("query has '%v' is un-cacheable", node.FnName.L)
-			return true
+			return in, true
 		}
 	case *ast.OrderByClause:
 		for _, item := range node.Items {
 			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
 				checker.cacheable = false
 				checker.reason = "query has 'order by ?' is un-cacheable"
-				return true
+				return in, true
 			}
 		}
 	case *ast.GroupByClause:
@@ -153,7 +172,7 @@ func (checker *cacheableChecker) Enter(in ast.Node) (skipChildren bool) {
 			if _, isParamMarker := item.Expr.(*driver.ParamMarkerExpr); isParamMarker {
 				checker.cacheable = false
 				checker.reason = "query has 'group by ?' is un-cacheable"
-				return true
+				return in, true
 			}
 		}
 	case *ast.Limit:
@@ -161,78 +180,42 @@ func (checker *cacheableChecker) Enter(in ast.Node) (skipChildren bool) {
 			if _, isParamMarker := node.Count.(*driver.ParamMarkerExpr); isParamMarker && !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 				checker.cacheable = false
 				checker.reason = "query has 'limit ?' is un-cacheable"
-				return true
+				return in, true
 			}
 		}
 		if node.Offset != nil {
 			if _, isParamMarker := node.Offset.(*driver.ParamMarkerExpr); isParamMarker && !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 				checker.cacheable = false
 				checker.reason = "query has 'limit ?, 10' is un-cacheable"
-				return true
+				return in, true
 			}
 		}
 	case *ast.FrameBound:
 		if _, ok := node.Expr.(*driver.ParamMarkerExpr); ok {
 			checker.cacheable = false
 			checker.reason = "query has ? in window function frames is un-cacheable"
-			return true
+			return in, true
 		}
 	case *ast.TableName:
 		if checker.schema != nil {
-			if node.Schema.L == "" && slices.Contains(checker.cteCanUsed, node.Name.L) {
-				// Unqualified names can refer to CTEs in current scope; do not resolve them as physical tables.
-				return false
-			}
 			checker.cacheable, checker.reason = checkTableCacheable(checker.ctx, checker.sctx, checker.schema, node, false)
 			if !checker.cacheable {
-				return true
+				return in, true
 			}
 		}
 	}
-	return false
+	return in, false
 }
 
-func (checker *cacheableChecker) skipForSubqueryDisabled() bool {
-	if !checker.sctx.GetSessionVars().EnablePlanCacheForSubquery {
-		checker.cacheable = false
-		checker.reason = "query has sub-queries is un-cacheable"
-		return true
-	}
-	return false
-}
-
-// Leave implements InPlaceVisitor interface.
-func (checker *cacheableChecker) Leave(in ast.Node) (proceed bool) {
-	switch node := in.(type) {
-	case *ast.CommonTableExpression:
-		if !node.IsRecursive {
-			// Non-recursive CTE becomes visible only after its definition has been fully traversed.
-			checker.cteCanUsed = append(checker.cteCanUsed, node.Name.L)
-		}
-	case *ast.SelectStmt:
-		if node.With != nil {
-			// Leave query-block WITH scope and restore CTE visibility from outer context.
-			checker.leaveWithScope()
-		}
-	}
-	return checker.cacheable
-}
-
-func (checker *cacheableChecker) leaveWithScope() {
-	l := len(checker.withScopeOffset)
-	if l == 0 {
-		return
-	}
-	offset := checker.withScopeOffset[l-1]
-	// Pop one WITH scope and roll back CTE names introduced in this query block.
-	checker.withScopeOffset = checker.withScopeOffset[:l-1]
-	checker.cteCanUsed = checker.cteCanUsed[:offset]
+// Leave implements Visitor interface.
+func (checker *cacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
+	return in, checker.cacheable
 }
 
 var nonPrepCacheCheckerPool = &sync.Pool{New: func() any { return &nonPreparedPlanCacheableChecker{} }}
 
 // NonPreparedPlanCacheableWithCtx checks whether this SQL is cacheable for non-prepared plan cache.
-func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is infoschema.InfoSchema) (ok bool, reason string) {
+func NonPreparedPlanCacheableWithCtx(sctx sessionctx.Context, node ast.Node, is infoschema.InfoSchema) (ok bool, reason string) {
 	selStmt, isSelect := node.(*ast.SelectStmt)
 	if !sctx.GetSessionVars().EnableNonPreparedPlanCacheForDML &&
 		(!isSelect || selStmt.LockInfo != nil) {
@@ -308,7 +291,7 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 	checker := nonPrepCacheCheckerPool.Get().(*nonPreparedPlanCacheableChecker)
 	checker.reset(sctx, is, tableNames, maxNumParam)
 
-	ast.Walk(node, checker)
+	node.Accept(checker)
 	cacheable, reason := checker.cacheable, checker.reason
 
 	if !cacheable {
@@ -322,27 +305,17 @@ func NonPreparedPlanCacheableWithCtx(sctx base.PlanContext, node ast.Node, is in
 }
 
 // isSelectStmtNonPrepCacheableFastCheck checks whether the input select statement is cacheable for non-prepared plan cache.
-func isSelectStmtNonPrepCacheableFastCheck(sctx base.PlanContext, selectStmt *ast.SelectStmt) (names []*ast.TableName, ok bool, reason string) {
+func isSelectStmtNonPrepCacheableFastCheck(sctx sessionctx.Context, selectStmt *ast.SelectStmt) (names []*ast.TableName, ok bool, reason string) {
 	if selectStmt.Kind != ast.SelectStmtKindSelect {
 		return nil, false, "not a select statement"
 	}
-
-	if selectStmt.Having != nil { // having
-		return nil, false, "queries with HAVING clauses are not supported"
+	if len(selectStmt.TableHints) > 0 || // hints
+		selectStmt.Having != nil || // having
+		selectStmt.WindowSpecs != nil || // window function
+		(selectStmt.Limit != nil && !sctx.GetSessionVars().EnablePlanCacheForParamLimit) || // limit
+		selectStmt.SelectIntoOpt != nil { // select-into statement
+		return nil, false, "queries that have hints, having-clause, window-function are not supported"
 	}
-
-	if selectStmt.WindowSpecs != nil { // window function
-		return nil, false, "queries using window-functions are not supported"
-	}
-
-	if selectStmt.Limit != nil && !sctx.GetSessionVars().EnablePlanCacheForParamLimit { // limit
-		return nil, false, "queries with limit clauses are not supported"
-	}
-
-	if selectStmt.SelectIntoOpt != nil { // select-into statement
-		return nil, false, "SELECT INTO queries are not supported"
-	}
-
 	from := selectStmt.From
 	if from == nil || selectStmt.From.TableRefs == nil {
 		return nil, false, "queries that have sub-queries are not supported"
@@ -400,7 +373,7 @@ func extractTableNames(node ast.ResultSetNode, names []*ast.TableName) ([]*ast.T
 // nonPreparedPlanCacheableChecker checks whether a query's plan can be cached for non-prepared plan cache.
 // NOTE: we can add more rules in the future.
 type nonPreparedPlanCacheableChecker struct {
-	sctx      base.PlanContext
+	sctx      sessionctx.Context
 	cacheable bool
 	reason    string // reason why this statement cannot hit the cache
 	schema    infoschema.InfoSchema
@@ -413,7 +386,7 @@ type nonPreparedPlanCacheableChecker struct {
 	maxNumberParam int // the maximum number of parameters for a query to be cached.
 }
 
-func (checker *nonPreparedPlanCacheableChecker) reset(sctx base.PlanContext, schema infoschema.InfoSchema, tableNodes []*ast.TableName, maxNumberParam int) {
+func (checker *nonPreparedPlanCacheableChecker) reset(sctx sessionctx.Context, schema infoschema.InfoSchema, tableNodes []*ast.TableName, maxNumberParam int) {
 	checker.sctx = sctx
 	checker.cacheable = true
 	checker.schema = schema
@@ -424,24 +397,23 @@ func (checker *nonPreparedPlanCacheableChecker) reset(sctx base.PlanContext, sch
 	checker.maxNumberParam = maxNumberParam
 }
 
-// Enter implements InPlaceVisitor interface.
-func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (skipChildren bool) {
+// Enter implements Visitor interface.
+func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 	if checker.isFilterNode(in) {
 		checker.filterCnt++
 	}
 
 	switch node := in.(type) {
-	case *ast.AggregateFuncExpr, *ast.Assignment, *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.ByItem,
-		*ast.ColumnNameExpr, *ast.DeleteStmt, *ast.FieldList, *ast.InsertStmt, *ast.IsNullExpr, *ast.Join,
-		*ast.OnCondition, *ast.ParenthesesExpr, *ast.PatternInExpr, *ast.RowExpr, *ast.SelectField,
-		*ast.SelectStmt, *ast.TableOptimizerHint, *ast.TableRefsClause, *ast.TableSource, *ast.UpdateStmt:
-		return !checker.cacheable // skip child if un-cacheable
+	case *ast.SelectStmt, *ast.FieldList, *ast.SelectField, *ast.TableRefsClause, *ast.Join, *ast.BetweenExpr, *ast.OnCondition,
+		*ast.InsertStmt, *ast.DeleteStmt, *ast.UpdateStmt, *ast.Assignment, *ast.ParenthesesExpr, *ast.RowExpr,
+		*ast.TableSource, *ast.ColumnNameExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr, *ast.ByItem, *ast.AggregateFuncExpr:
+		return in, !checker.cacheable // skip child if un-cacheable
 	case *ast.Limit:
 		if !checker.sctx.GetSessionVars().EnablePlanCacheForParamLimit {
 			checker.cacheable = false
 			checker.reason = "query has 'limit ?' is un-cacheable"
 		}
-		return !checker.cacheable
+		return in, !checker.cacheable
 	case *ast.ColumnName:
 		if checker.filterCnt > 0 {
 			// this column is appearing some filters, e.g. `col = 1`
@@ -463,13 +435,13 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (skipChildren
 				checker.reason = "some column is not found in table schema"
 			}
 		}
-		return !checker.cacheable
+		return in, !checker.cacheable
 	case *ast.FuncCallExpr:
 		if _, found := expression.UnCacheableFunctions[node.FnName.L]; found {
 			checker.cacheable = false
 			checker.reason = "query has un-cacheable functions"
 		}
-		return !checker.cacheable
+		return in, !checker.cacheable
 	case *driver.ValueExpr:
 		if node.GetType().GetFlag()&mysql.UnderScoreCharsetFlag > 0 {
 			// for safety, not support values with under-score charsets, e.g. select _latin1'abc' from t.
@@ -493,53 +465,53 @@ func (checker *nonPreparedPlanCacheableChecker) Enter(in ast.Node) (skipChildren
 			checker.cacheable = false
 			checker.reason = "query has too many constants"
 		}
-		return !checker.cacheable
+		return in, !checker.cacheable
 	case *ast.GroupByClause:
 		for _, item := range node.Items {
 			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
 				checker.cacheable = false
 				checker.reason = "only support group by {columns}'"
-				return !checker.cacheable
+				return in, !checker.cacheable
 			}
 		}
-		return !checker.cacheable
+		return in, !checker.cacheable
 	case *ast.OrderByClause:
 		for _, item := range node.Items {
 			if _, isCol := item.Expr.(*ast.ColumnNameExpr); !isCol {
 				checker.cacheable = false
 				checker.reason = "only support order by {columns}'"
-				return !checker.cacheable
+				return in, !checker.cacheable
 			}
 		}
-		return !checker.cacheable
+		return in, !checker.cacheable
 	case *ast.TableName:
-		if filter.IsSystemSchema(node.Schema.L) {
+		if filter.IsSystemSchema(node.Schema.O) {
 			checker.cacheable = false
 			checker.reason = "access tables in system schema"
-			return !checker.cacheable
+			return in, !checker.cacheable
 		}
 		if checker.schema != nil {
 			checker.cacheable, checker.reason = checkTableCacheable(nil, checker.sctx, checker.schema, node, true)
 		}
-		return !checker.cacheable
+		return in, !checker.cacheable
 	}
 
 	checker.cacheable = false // unexpected cases
 	checker.reason = "query has some unsupported Node"
-	return !checker.cacheable
+	return in, !checker.cacheable
 }
 
-// Leave implements InPlaceVisitor interface.
-func (checker *nonPreparedPlanCacheableChecker) Leave(in ast.Node) (proceed bool) {
+// Leave implements Visitor interface.
+func (checker *nonPreparedPlanCacheableChecker) Leave(in ast.Node) (out ast.Node, ok bool) {
 	if checker.isFilterNode(in) {
 		checker.filterCnt--
 	}
-	return checker.cacheable
+	return in, checker.cacheable
 }
 
 func (*nonPreparedPlanCacheableChecker) isFilterNode(node ast.Node) bool {
 	switch node.(type) {
-	case *ast.BetweenExpr, *ast.BinaryOperationExpr, *ast.IsNullExpr, *ast.PatternInExpr:
+	case *ast.BetweenExpr, *ast.PatternInExpr, *ast.BinaryOperationExpr:
 		return true
 	}
 	return false
@@ -549,7 +521,7 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 	if tbl == nil {
 		return 0, false
 	}
-	tb, err := schema.TableByName(context.Background(), tbl.Schema, tbl.Name)
+	tb, err := schema.TableByName(tbl.Schema, tbl.Name)
 	if err != nil {
 		return 0, false
 	}
@@ -562,16 +534,16 @@ func getColType(schema infoschema.InfoSchema, tbl *ast.TableName, col *ast.Colum
 }
 
 // isPlanCacheable returns whether this plan is cacheable and the reason if not.
-func isPlanCacheable(sctx base.PlanContext, p base.Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
-	var pp base.PhysicalPlan
+func isPlanCacheable(sctx sessionctx.Context, p Plan, paramNum, limitParamNum int, hasSubQuery bool) (cacheable bool, reason string) {
+	var pp PhysicalPlan
 	switch x := p.(type) {
-	case *physicalop.Insert:
+	case *Insert:
 		pp = x.SelectPlan
-	case *physicalop.Update:
+	case *Update:
 		pp = x.SelectPlan
-	case *physicalop.Delete:
+	case *Delete:
 		pp = x.SelectPlan
-	case base.PhysicalPlan:
+	case PhysicalPlan:
 		pp = x
 	default:
 		return false, fmt.Sprintf("unexpected un-cacheable plan %v", p.ExplainID().String())
@@ -592,45 +564,36 @@ func isPlanCacheable(sctx base.PlanContext, p base.Plan, paramNum, limitParamNum
 }
 
 // isPhysicalPlanCacheable returns whether this physical plan is cacheable and return the reason if not.
-func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
-	if reason := p.GetNoncacheableReason(); reason != "" {
-		return false, reason
-	}
-
-	var subPlans []base.PhysicalPlan
+func isPhysicalPlanCacheable(sctx sessionctx.Context, p PhysicalPlan, paramNum, limitParamNum int, underIndexMerge bool) (cacheable bool, reason string) {
+	var subPlans []PhysicalPlan
 	switch x := p.(type) {
-	case *physicalop.PhysicalTableDual:
+	case *PhysicalTableDual:
 		if paramNum > 0 {
 			return false, "get a TableDual plan"
 		}
-	case *physicalop.PhysicalTableReader:
+	case *PhysicalTableReader:
 		if x.StoreType == kv.TiFlash {
 			return false, "TiFlash plan is un-cacheable"
 		}
-	case *physicalop.PhysicalShuffle, *physicalop.PhysicalShuffleReceiverStub:
+	case *PhysicalShuffle, *PhysicalShuffleReceiverStub:
 		return false, "get a Shuffle plan"
-	case *physicalop.PhysicalMemTable:
+	case *PhysicalMemTable:
 		return false, "PhysicalMemTable plan is un-cacheable"
-	case *physicalop.PhysicalIndexMergeReader:
-		if x.AccessMVIndex && !enablePlanCacheForGeneratedCols(sctx) {
+	case *PhysicalIndexMergeReader:
+		if x.AccessMVIndex {
 			return false, "the plan with IndexMerge accessing Multi-Valued Index is un-cacheable"
 		}
 		underIndexMerge = true
-		subPlans = append(subPlans, x.PartialPlansRaw...)
-	case *physicalop.PhysicalIndexReader:
-		subPlans = append(subPlans, x.IndexPlan)
-	case *physicalop.PhysicalIndexLookUpReader:
-		// Currently, there's no need to check the table plan of the IndexLookUpReader.
-		subPlans = append(subPlans, x.IndexPlan)
-	case *physicalop.PhysicalIndexScan:
-		if underIndexMerge && x.IsFullScan() {
+		subPlans = append(subPlans, x.partialPlans...)
+	case *PhysicalIndexScan:
+		if underIndexMerge && x.isFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
-	case *physicalop.PhysicalTableScan:
-		if underIndexMerge && x.IsFullScan() {
+	case *PhysicalTableScan:
+		if underIndexMerge && x.isFullScan() {
 			return false, "IndexMerge plan with full-scan is un-cacheable"
 		}
-	case *physicalop.PhysicalApply:
+	case *PhysicalApply:
 		return false, "PhysicalApply plan is un-cacheable"
 	}
 
@@ -644,7 +607,7 @@ func isPhysicalPlanCacheable(sctx base.PlanContext, p base.PhysicalPlan, paramNu
 }
 
 // getMaxParamLimit returns the maximum number of parameters for a query that can be cached in the Plan Cache.
-func getMaxParamLimit(sctx base.PlanContext) int {
+func getMaxParamLimit(sctx sessionctx.Context) int {
 	v := 200
 	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().OptimizerFixControl == nil {
 		return v
@@ -659,23 +622,14 @@ func getMaxParamLimit(sctx base.PlanContext) int {
 	return v
 }
 
-func enablePlanCacheForGeneratedCols(sctx base.PlanContext) bool {
-	// disable this by default since it's not well tested.
-	defaultVal := true
-	if sctx == nil || sctx.GetSessionVars() == nil || sctx.GetSessionVars().GetOptimizerFixControlMap() == nil {
-		return defaultVal
-	}
-	return fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().GetOptimizerFixControlMap(), fixcontrol.Fix45798, defaultVal)
-}
-
 // checkTableCacheable checks whether a query accessing this table is cacheable.
-func checkTableCacheable(ctx context.Context, sctx base.PlanContext, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string) {
+func checkTableCacheable(ctx context.Context, sctx sessionctx.Context, schema infoschema.InfoSchema, node *ast.TableName, isNonPrep bool) (cacheable bool, reason string) {
 	tableSchema := node.Schema
 	if tableSchema.L == "" {
 		tableSchema.O = sctx.GetSessionVars().CurrentDB
 		tableSchema.L = strings.ToLower(tableSchema.O)
 	}
-	tb, err := schema.TableByName(context.Background(), tableSchema, node.Name)
+	tb, err := schema.TableByName(tableSchema, node.Name)
 	if intest.InTest && ctx != nil && ctx.Value(PlanCacheKeyTestIssue46760{}) != nil {
 		err = errors.New("mock error")
 	}
@@ -690,19 +644,18 @@ func checkTableCacheable(ctx context.Context, sctx base.PlanContext, schema info
 	}
 
 	if tb.Meta().GetPartitionInfo() != nil {
-		if sctx == nil || !sctx.GetSessionVars().IsDynamicPartitionPruneEnabled() {
-			return false, "query accesses partitioned tables is un-cacheable if tidb_partition_pruning_mode = 'static'"
-		}
-		if fixcontrol.GetBoolWithDefault(sctx.GetSessionVars().OptimizerFixControl, fixcontrol.Fix33031, false) {
-			return false, "Fix33031 fix-control set and partitioned table"
-		}
-	}
-
-	if !enablePlanCacheForGeneratedCols(sctx) {
-		for _, col := range tb.Cols() {
-			if col.IsGenerated() {
-				return false, "query accesses generated columns is un-cacheable"
+		// Temporary disable prepared plan cache until https://github.com/ocean2811/tidbeaff0fbc576a/issues/33031
+		// is fixed and additional tests with dynamic partition prune mode has been added.
+		/*
+			if checker.sctx != nil && checker.sctx.GetSessionVars().UseDynamicPartitionPrune() {
+				return in, false // dynamic-mode for partition tables can use plan-cache
 			}
+		*/
+		return false, "query accesses partitioned tables is un-cacheable"
+	}
+	for _, col := range tb.Cols() {
+		if col.IsGenerated() {
+			return false, "query accesses generated columns is un-cacheable"
 		}
 	}
 	if tb.Meta().TempTableType != model.TempTableNone {

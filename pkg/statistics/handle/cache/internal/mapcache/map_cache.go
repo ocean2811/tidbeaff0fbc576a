@@ -15,8 +15,8 @@
 package mapcache
 
 import (
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/cache/internal"
 )
 
 type cacheItem struct {
@@ -131,9 +131,3 @@ func (*MapCache) SetCapacity(int64) {}
 
 // Close implements StatsCacheInner
 func (*MapCache) Close() {}
-
-// TriggerEvict implements statsCacheInner
-func (*MapCache) TriggerEvict() {}
-
-// WaitForAsyncUpdates implements statsCacheInner.
-func (*MapCache) WaitForAsyncUpdates() {}

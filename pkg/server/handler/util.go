@@ -20,7 +20,7 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
 )
 
 //revive:disable
@@ -57,13 +57,11 @@ const (
 
 // For query string
 const (
-	TableIDQuery  = "table_id"
-	TableIDsQuery = "table_ids"
-	IDNameOnly    = "id_name_only"
-	Limit         = "limit"
-	JobID         = "start_job_id"
-	Operation     = "op"
-	Seconds       = "seconds"
+	TableIDQuery = "table_id"
+	Limit        = "limit"
+	JobID        = "start_job_id"
+	Operation    = "op"
+	Seconds      = "seconds"
 )
 
 const (
@@ -75,18 +73,13 @@ const (
 
 // WriteError writes error to response.
 func WriteError(w http.ResponseWriter, err error) {
-	WriteErrorWithCode(w, http.StatusBadRequest, err)
-}
-
-// WriteErrorWithCode writes error with specific status code to response.
-func WriteErrorWithCode(w http.ResponseWriter, statusCode int, err error) {
-	w.WriteHeader(statusCode)
+	w.WriteHeader(http.StatusBadRequest)
 	_, err = w.Write([]byte(err.Error()))
 	terror.Log(errors.Trace(err))
 }
 
 // WriteData writes data to response.
-func WriteData(w http.ResponseWriter, data any) {
+func WriteData(w http.ResponseWriter, data interface{}) {
 	js, err := json.MarshalIndent(data, "", " ")
 	if err != nil {
 		WriteError(w, err)

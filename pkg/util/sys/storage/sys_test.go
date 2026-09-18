@@ -17,7 +17,7 @@ package storage_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/util/sys/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sys/storage"
 	"github.com/stretchr/testify/require"
 )
 

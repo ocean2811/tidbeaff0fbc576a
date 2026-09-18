@@ -20,29 +20,29 @@ import (
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/backup"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/conn"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/gc"
-	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/rtree"
-	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/backup"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/checkpoint"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/checksum"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/glue"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/metautil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/summary"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
 	"github.com/spf13/pflag"
 	"github.com/tikv/client-go/v2/oracle"
 	kvutil "github.com/tikv/client-go/v2/util"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 )
 
@@ -53,7 +53,6 @@ const (
 	flagCompressionType  = "compression"
 	flagCompressionLevel = "compression-level"
 	flagRemoveSchedulers = "remove-schedulers"
-	flagRangeLimit       = "range-limit"
 	flagIgnoreStats      = "ignore-stats"
 	flagUseBackupMetaV2  = "use-backupmeta-v2"
 	flagUseCheckpoint    = "use-checkpoint"
@@ -73,6 +72,7 @@ const (
 	TableBackupCmd = "Table Backup"
 	RawBackupCmd   = "Raw Backup"
 	TxnBackupCmd   = "Txn Backup"
+	EBSBackupCmd   = "EBS Backup"
 )
 
 // CompressionConfig is the configuration for sst file compression.
@@ -90,7 +90,6 @@ type BackupConfig struct {
 	LastBackupTS     uint64            `json:"last-backup-ts" toml:"last-backup-ts"`
 	GCTTL            int64             `json:"gc-ttl" toml:"gc-ttl"`
 	RemoveSchedulers bool              `json:"remove-schedulers" toml:"remove-schedulers"`
-	RangeLimit       int               `json:"range-limit" toml:"range-limit"`
 	IgnoreStats      bool              `json:"ignore-stats" toml:"ignore-stats"`
 	UseBackupMetaV2  bool              `json:"use-backupmeta-v2"`
 	UseCheckpoint    bool              `json:"use-checkpoint" toml:"use-checkpoint"`
@@ -118,15 +117,14 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		" use for incremental backup, support TSO only")
 	flags.String(flagBackupTS, "", "the backup ts support TSO or datetime,"+
 		" e.g. '400036290571534337', '2018-05-11 01:42:23'")
-	flags.Int64(flagGCTTL, gc.DefaultBRGCSafePointTTL, "the TTL (in seconds) that PD holds for BR's GC safepoint")
+	flags.Int64(flagGCTTL, utils.DefaultBRGCSafePointTTL, "the TTL (in seconds) that PD holds for BR's GC safepoint")
 	flags.String(flagCompressionType, "zstd",
 		"backup sst file compression algorithm, value can be one of 'lz4|zstd|snappy'")
 	flags.Int32(flagCompressionLevel, 0, "compression level used for sst file compression")
 
-	flags.Uint32(flagConcurrency, 4,
-		"Controls how many backup requests are sent out in parallel to one TiKV node. "+
-			"This doesn't directly impact performance — keeping the default is fine in most cases. "+
-			"Change TiKV's 'backup.num-threads' to adjust actual backup throughput.")
+	flags.Uint32(flagConcurrency, 4, "The size of a BR thread pool that executes tasks, "+
+		"One task represents one table range (or one index range) according to the backup schemas. If there is one table with one index."+
+		"there will be two tasks to back up this table. This value should increase if you need to back up lots of tables or indices.")
 
 	flags.Uint(flagTableConcurrency, backup.DefaultSchemaConcurrency, "The size of a BR thread pool used for backup table metas, "+
 		"including tableInfo/checksum and stats.")
@@ -135,8 +133,6 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 		"disable the balance, shuffle and region-merge schedulers in PD to speed up backup")
 	// This flag can impact the online cluster, so hide it in case of abuse.
 	_ = flags.MarkHidden(flagRemoveSchedulers)
-
-	flags.Int(flagRangeLimit, backup.RangesSentThreshold, "limits the number of ranges marshaled at the same time when sent to many TiKVs.")
 
 	// Disable stats by default.
 	// TODO: we need a better way to backup/restore stats.
@@ -164,7 +160,7 @@ func DefineBackupFlags(flags *pflag.FlagSet) {
 }
 
 // ParseFromFlags parses the backup-related flags from the flag set.
-func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig bool) error {
+func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet) error {
 	timeAgo, err := flags.GetDuration(flagBackupTimeago)
 	if err != nil {
 		return errors.Trace(err)
@@ -217,23 +213,12 @@ func (cfg *BackupConfig) ParseFromFlags(flags *pflag.FlagSet, skipCommonConfig b
 	}
 	cfg.CompressionConfig = *compressionCfg
 
-	// parse common flags if needed
-	if !skipCommonConfig {
-		if err = cfg.Config.ParseFromFlags(flags); err != nil {
-			return errors.Trace(err)
-		}
+	if err = cfg.Config.ParseFromFlags(flags); err != nil {
+		return errors.Trace(err)
 	}
-
 	cfg.RemoveSchedulers, err = flags.GetBool(flagRemoveSchedulers)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	cfg.RangeLimit, err = flags.GetInt(flagRangeLimit)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if cfg.RangeLimit <= 0 {
-		return errors.Errorf("the parameter `--range-limit` should be larger than 0")
 	}
 	cfg.IgnoreStats, err = flags.GetBool(flagIgnoreStats)
 	if err != nil {
@@ -333,7 +318,7 @@ func (cfg *BackupConfig) Adjust() {
 	}
 
 	if cfg.GCTTL == 0 {
-		cfg.GCTTL = gc.DefaultBRGCSafePointTTL
+		cfg.GCTTL = utils.DefaultBRGCSafePointTTL
 	}
 	// Use zstd as default
 	if cfg.CompressionType == backuppb.CompressionType_UNKNOWN {
@@ -349,7 +334,7 @@ type immutableBackupConfig struct {
 	IgnoreStats   bool   `json:"ignore-stats"`
 	UseCheckpoint bool   `json:"use-checkpoint"`
 
-	objstore.BackendOptions
+	storage.BackendOptions
 	Storage      string              `json:"storage"`
 	PD           []string            `json:"pd"`
 	SendCreds    bool                `json:"send-credentials-to-tikv"`
@@ -405,9 +390,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	isIncrementalBackup := cfg.LastBackupTS > 0
-	skipChecksum := !cfg.Checksum || isIncrementalBackup
-	u, err := objstore.ParseBackend(cfg.Storage, &cfg.BackendOptions)
+	u, err := storage.ParseBackend(cfg.Storage, &cfg.BackendOptions)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -421,7 +404,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// Domain loads all table info into memory. By skipping Domain, we save
 	// lots of memory (about 500MB for 40K 40 fields YCSB tables).
 	needDomain := !skipStats
-	mgr, err := NewMgr(ctx, g, cfg.KeyspaceName, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
+	mgr, err := NewMgr(ctx, g, cfg.PD, cfg.TLS, GetKeepalive(&cfg.Config), cfg.CheckRequirements, needDomain, conn.NormalVersionChecker)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -453,14 +436,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	client := backup.NewTableBackupClient(ctx, mgr)
+	client := backup.NewBackupClient(ctx, mgr)
 
 	// set cipher only for checkpoint
 	client.SetCipher(&cfg.CipherInfo)
-	// set skip checksum status
-	client.SetSkipChecksum(skipChecksum)
 
-	opts := storeapi.Options{
+	opts := storage.ExternalStorageOptions{
 		NoCredentials:            cfg.NoCreds,
 		SendCredentials:          cfg.SendCreds,
 		CheckS3ObjectLockOptions: true,
@@ -484,8 +465,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	// if use checkpoint and gcTTL is the default value
 	// update gcttl to checkpoint's default gc ttl
-	if cfg.UseCheckpoint && cfg.GCTTL == gc.DefaultBRGCSafePointTTL {
-		cfg.GCTTL = gc.DefaultCheckpointGCSafePointTTL
+	if cfg.UseCheckpoint && cfg.GCTTL == utils.DefaultBRGCSafePointTTL {
+		cfg.GCTTL = utils.DefaultCheckpointGCSafePointTTL
 		log.Info("use checkpoint's default GC TTL", zap.Int64("GC TTL", cfg.GCTTL))
 	}
 	client.SetGCTTL(cfg.GCTTL)
@@ -496,13 +477,14 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 	g.Record("BackupTS", backupTS)
 	safePointID := client.GetSafePointID()
-	sp := gc.BRServiceSafePoint{
+	sp := utils.BRServiceSafePoint{
 		BackupTS: backupTS,
 		TTL:      client.GetGCTTL(),
 		ID:       safePointID,
 	}
 
 	// use lastBackupTS as safePoint if exists
+	isIncrementalBackup := cfg.LastBackupTS > 0
 	if isIncrementalBackup {
 		sp.BackupTS = cfg.LastBackupTS
 	}
@@ -519,15 +501,16 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		log.Info("start to remove gc-safepoint keeper")
 		// close the gc safe point keeper at first
 		gcSafePointKeeperCancel()
-		// remove the gc-safe-point
-		if err := mgr.GetGCManager().DeleteServiceSafePoint(ctx, sp); err != nil {
-			log.Warn("failed to remove service safe point, backup may fail if gc triggered",
+		// set the ttl to 0 to remove the gc-safe-point
+		sp.TTL = 0
+		if err := utils.UpdateServiceSafePoint(ctx, mgr.GetPDClient(), sp); err != nil {
+			log.Warn("failed to update service safe point, backup may fail if gc triggered",
 				zap.Error(err),
 			)
 		}
 		log.Info("finish removing gc-safepoint keeper")
 	}()
-	err = gc.StartServiceSafePointKeeper(cctx, sp, mgr.GetGCManager())
+	err = utils.StartServiceSafePointKeeper(cctx, mgr.GetPDClient(), sp)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -600,8 +583,8 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		})
 	}
 
-	// check on ranges and schemas and if nothing to back up do early return
-	if len(ranges) == 0 && (schemas == nil || schemas.Len() == 0) {
+	// nothing to backup
+	if len(ranges) == 0 {
 		pdAddress := strings.Join(cfg.PD, ",")
 		log.Warn("Nothing to backup, maybe connected to cluster for restoring",
 			zap.String("PD address", pdAddress))
@@ -618,7 +601,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 			log.Error("LastBackupTS is larger or equal to current TS")
 			return errors.Annotate(berrors.ErrInvalidArgument, "LastBackupTS is larger or equal to current TS")
 		}
-		err = gc.CheckGCSafePoint(ctx, mgr.GetGCManager(), cfg.LastBackupTS)
+		err = utils.CheckGCSafePoint(ctx, mgr.GetPDClient(), cfg.LastBackupTS)
 		if err != nil {
 			log.Error("Check gc safepoint for last backup ts failed", zap.Error(err))
 			return errors.Trace(err)
@@ -635,27 +618,45 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	summary.CollectInt("backup total ranges", len(ranges))
-	progressTotalCount, progressUnit, err := getProgressCountOfRanges(ctx, mgr, ranges)
-	if err != nil {
-		return errors.Trace(err)
+
+	var updateCh glue.Progress
+	var unit backup.ProgressUnit
+	if len(ranges) < 100 {
+		unit = backup.RegionUnit
+		// The number of regions need to backup
+		approximateRegions := 0
+		for _, r := range ranges {
+			var regionCount int
+			regionCount, err = mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
+			if err != nil {
+				return errors.Trace(err)
+			}
+			approximateRegions += regionCount
+		}
+		// Redirect to log if there is no log file to avoid unreadable output.
+		updateCh = g.StartProgress(
+			ctx, cmdName, int64(approximateRegions), !cfg.LogProgress)
+		summary.CollectInt("backup total regions", approximateRegions)
+	} else {
+		unit = backup.RangeUnit
+		// To reduce the costs, we can use the range as unit of progress.
+		updateCh = g.StartProgress(
+			ctx, cmdName, int64(len(ranges)), !cfg.LogProgress)
 	}
-	// Redirect to log if there is no log file to avoid unreadable output.
-	updateCh := g.StartProgress(
-		ctx, cmdName, int64(progressTotalCount), !cfg.LogProgress)
 
 	progressCount := uint64(0)
 	progressCallBack := func(callBackUnit backup.ProgressUnit) {
-		if progressUnit == callBackUnit {
+		if unit == callBackUnit {
 			updateCh.Inc()
+			atomic.AddUint64(&progressCount, 1)
 			failpoint.Inject("progress-call-back", func(v failpoint.Value) {
 				log.Info("failpoint progress-call-back injected")
-				atomic.AddUint64(&progressCount, 1)
 				if fileName, ok := v.(string); ok {
 					f, osErr := os.OpenFile(fileName, os.O_CREATE|os.O_WRONLY, os.ModePerm)
 					if osErr != nil {
 						log.Warn("failed to create file", zap.Error(osErr))
 					}
-					msg := fmt.Appendf(nil, "%s:%d\n", progressUnit, atomic.LoadUint64(&progressCount))
+					msg := []byte(fmt.Sprintf("%s:%d\n", unit, atomic.LoadUint64(&progressCount)))
 					_, err = f.Write(msg)
 					if err != nil {
 						log.Warn("failed to write data to file", zap.Error(err))
@@ -666,7 +667,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	}
 
 	if cfg.UseCheckpoint {
-		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, safePointID, progressCallBack); err != nil {
+		if err = client.StartCheckpointRunner(ctx, cfgHash, backupTS, ranges, safePointID, progressCallBack); err != nil {
 			return errors.Trace(err)
 		}
 		defer func() {
@@ -701,7 +702,7 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	})
 
 	metawriter.StartWriteMetasAsync(ctx, metautil.AppendDataFile)
-	checksumMap, err := client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.RangeLimit, cfg.ReplicaReadLabel, metawriter, progressCallBack)
+	err = client.BackupRanges(ctx, ranges, req, uint(cfg.Concurrency), cfg.ReplicaReadLabel, metawriter, progressCallBack)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -713,13 +714,10 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		return errors.Trace(err)
 	}
 
-	var checksumProgress int64 = 0
-	// if checksumMap is not empty, then checksumProgress will be set to len(schemas)
-	if len(checksumMap) > 0 {
-		checksumProgress = int64(schemas.Len())
-	}
-
+	skipChecksum := !cfg.Checksum || isIncrementalBackup
+	checksumProgress := int64(schemas.Len())
 	if skipChecksum {
+		checksumProgress = 1
 		if isIncrementalBackup {
 			// Since we don't support checksum for incremental data, fast checksum should be skipped.
 			log.Info("Skip fast checksum in incremental backup")
@@ -729,14 +727,12 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 		}
 	}
 	updateCh = g.StartProgress(ctx, "Checksum", checksumProgress, !cfg.LogProgress)
+	schemasConcurrency := mathutil.Min(cfg.TableConcurrency, uint(schemas.Len()))
 
-	if schemas != nil && schemas.Len() > 0 {
-		schemasConcurrency := min(cfg.TableConcurrency, uint(schemas.Len()))
-		err = schemas.BackupSchemas(
-			ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, checksumMap, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
-		if err != nil {
-			return errors.Trace(err)
-		}
+	err = schemas.BackupSchemas(
+		ctx, metawriter, client.GetCheckpointRunner(), mgr.GetStorage(), statsHandle, backupTS, schemasConcurrency, cfg.ChecksumConcurrency, skipChecksum, updateCh)
+	if err != nil {
+		return errors.Trace(err)
 	}
 
 	err = metawriter.FlushBackupMeta(ctx)
@@ -750,39 +746,20 @@ func RunBackup(c context.Context, g glue.Glue, cmdName string, cfg *BackupConfig
 	// Checksum has finished, close checksum progress.
 	updateCh.Close()
 
+	if !skipChecksum {
+		// Check if checksum from files matches checksum from coprocessor.
+		err = checksum.FastChecksum(ctx, metawriter.Backupmeta(), client.GetStorage(), &cfg.CipherInfo)
+		if err != nil {
+			return errors.Trace(err)
+		}
+	}
 	archiveSize := metawriter.ArchiveSize()
 	g.Record(summary.BackupDataSize, archiveSize)
-	//backup from tidb will fetch a general Size issue https://github.com/pingcap/tidb/issues/27247
+	//backup from tidb will fetch a general Size issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/27247
 	g.Record("Size", archiveSize)
 	// Set task summary to success status.
 	summary.SetSuccessStatus(true)
 	return nil
-}
-
-func getProgressCountOfRanges(
-	ctx context.Context,
-	mgr *conn.Mgr,
-	ranges []rtree.KeyRange,
-) (int, backup.ProgressUnit, error) {
-	if len(ranges) > 1000 {
-		return len(ranges), backup.UnitRange, nil
-	}
-	failpoint.Inject("progress-call-back", func(_ failpoint.Value) {
-		if len(ranges) > 100 {
-			failpoint.Return(len(ranges), backup.UnitRange, nil)
-		}
-	})
-	// The number of regions need to backup
-	approximateRegions := 0
-	for _, r := range ranges {
-		regionCount, err := mgr.GetRegionCount(ctx, r.StartKey, r.EndKey)
-		if err != nil {
-			return 0, backup.UnitRegion, errors.Trace(err)
-		}
-		approximateRegions += regionCount
-	}
-	summary.CollectInt("backup total regions", approximateRegions)
-	return approximateRegions, backup.UnitRegion, nil
 }
 
 // ParseTSString port from tidb setSnapshotTS.
@@ -802,7 +779,7 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 			return 0, errors.Errorf("must set timezone when using datetime format ts, e.g. '2018-05-11 01:42:23+0800'")
 		}
 	}
-	t, err := types.ParseTime(sc.TypeCtx(), ts, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(sc, ts, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return 0, errors.Trace(err)
 	}
@@ -813,15 +790,18 @@ func ParseTSString(ts string, tzCheck bool) (uint64, error) {
 	return oracle.GoTimeToTS(t1), nil
 }
 
-func DefaultBackupConfig(commonConfig Config) BackupConfig {
+func DefaultBackupConfig() BackupConfig {
 	fs := pflag.NewFlagSet("dummy", pflag.ContinueOnError)
+	DefineCommonFlags(fs)
 	DefineBackupFlags(fs)
 	cfg := BackupConfig{}
-	err := cfg.ParseFromFlags(fs, true)
+	err := multierr.Combine(
+		cfg.ParseFromFlags(fs),
+		cfg.Config.ParseFromFlags(fs),
+	)
 	if err != nil {
-		log.Panic("failed to parse backup flags to config", zap.Error(err))
+		log.Panic("infallible operation failed.", zap.Error(err))
 	}
-	cfg.Config = commonConfig
 	return cfg
 }
 

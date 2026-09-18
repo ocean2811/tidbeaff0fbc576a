@@ -24,10 +24,10 @@ import (
 
 	"github.com/golang/snappy"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/texttree"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/texttree"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
@@ -61,7 +61,7 @@ var (
 )
 
 var decoderPool = sync.Pool{
-	New: func() any {
+	New: func() interface{} {
 		return &planDecoder{}
 	},
 }
@@ -111,7 +111,7 @@ type planInfo struct {
 }
 
 func (pd *planDecoder) decode(planString string) (string, error) {
-	b, err := Decompress(planString)
+	b, err := decompress(planString)
 	if err != nil {
 		if planString == PlanDiscardedEncoded {
 			return planDiscardedDecoded, nil
@@ -164,7 +164,7 @@ func (pd *planDecoder) buildPlanTree(planString string) (string, error) {
 		// This is for alignment.
 		pd.buf.WriteByte(separator)
 		pd.buf.WriteString(string(pd.indents[i]))
-		for j := range p.fields {
+		for j := 0; j < len(p.fields); j++ {
 			if j > 0 {
 				pd.buf.WriteByte(separator)
 			}
@@ -198,13 +198,13 @@ func (pd *planDecoder) addPlanHeader() {
 
 func (pd *planDecoder) initPlanTreeIndents() {
 	pd.indents = pd.indents[:0]
-	for i := range pd.depths {
+	for i := 0; i < len(pd.depths); i++ {
 		indent := make([]rune, 2*pd.depths[i])
 		pd.indents = append(pd.indents, indent)
 		if len(indent) == 0 {
 			continue
 		}
-		for i := range len(indent) - 2 {
+		for i := 0; i < len(indent)-2; i++ {
 			indent[i] = ' '
 		}
 		indent[len(indent)-2] = texttree.TreeLastNode
@@ -263,7 +263,7 @@ func (pd *planDecoder) alignFields() {
 	// Last field no need to align.
 	fieldsLen--
 	var buf []byte
-	for colIdx := range fieldsLen {
+	for colIdx := 0; colIdx < fieldsLen; colIdx++ {
 		maxFieldLen := pd.getMaxFieldLength(colIdx)
 		for rowIdx, p := range pd.planInfos {
 			fillLen := maxFieldLen - pd.getPlanFieldLen(rowIdx, colIdx, p)
@@ -434,8 +434,7 @@ func Compress(input []byte) string {
 	return base64.StdEncoding.EncodeToString(compressBytes)
 }
 
-// Decompress decodes the input from base64 then decompresses it with snappy.
-func Decompress(str string) ([]byte, error) {
+func decompress(str string) ([]byte, error) {
 	decodeBytes, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
 		return nil, err

@@ -23,12 +23,12 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
@@ -53,16 +53,16 @@ func TestClusterSplit(t *testing.T) {
 	colID := int64(3)
 	handle := int64(1)
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	for range 1000 {
+	for i := 0; i < 1000; i++ {
 		rowKey := tablecodec.EncodeRowKeyWithHandle(tblID, kv.IntHandle(handle))
 		colValue := types.NewStringDatum(strconv.Itoa(int(handle)))
 		// TODO: Should use session's TimeZone instead of UTC.
 		rd := rowcodec.Encoder{Enable: true}
-		rowValue, err1 := tablecodec.EncodeRow(sc.TimeZone(), []types.Datum{colValue}, []int64{colID}, nil, nil, nil, &rd)
+		rowValue, err1 := tablecodec.EncodeRow(sc, []types.Datum{colValue}, []int64{colID}, nil, nil, &rd)
 		require.NoError(t, err1)
 		txn.Set(rowKey, rowValue)
 
-		encodedIndexValue, err1 := codec.EncodeKey(sc.TimeZone(), nil, []types.Datum{colValue, types.NewIntDatum(handle)}...)
+		encodedIndexValue, err1 := codec.EncodeKey(sc, nil, []types.Datum{colValue, types.NewIntDatum(handle)}...)
 		require.NoError(t, err1)
 		idxKey := tablecodec.EncodeIndexSeekKey(tblID, idxID, encodedIndexValue)
 		txn.Set(idxKey, []byte{'0'})

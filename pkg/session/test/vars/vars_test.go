@@ -22,16 +22,12 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/domain"
-	tikv "github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/hint"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	tikv "github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/txnkv/transaction"
 )
@@ -73,7 +69,7 @@ func TestRemovedSysVars(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	variable.RegisterSysVar(&variable.SysVar{Scope: vardef.ScopeGlobal | vardef.ScopeSession, Name: "bogus_var", Value: "acdc"})
+	variable.RegisterSysVar(&variable.SysVar{Scope: variable.ScopeGlobal | variable.ScopeSession, Name: "bogus_var", Value: "acdc"})
 	result := tk.MustQuery("SHOW GLOBAL VARIABLES LIKE 'bogus_var'")
 	result.Check(testkit.Rows("bogus_var acdc"))
 	result = tk.MustQuery("SELECT @@GLOBAL.bogus_var")
@@ -171,7 +167,7 @@ func TestUpgradeSysvars(t *testing.T) {
 	result.Check(testkit.Rows("rpl_semi_sync_slave_enabled OFF"))
 
 	// Ensure variable out of range is converted to in range after upgrade.
-	// This further helps for https://github.com/pingcap/tidb/pull/28842
+	// This further helps for https://github.com/ocean2811/tidbeaff0fbc576a/pull/28842
 
 	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_executor_concurrency', '999')`)
 	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true) // update cache
@@ -187,25 +183,6 @@ func TestUpgradeSysvars(t *testing.T) {
 	v, err = se.GetGlobalSysVar("tidb_enable_noop_functions")
 	require.NoError(t, err)
 	require.Equal(t, "OFF", v) // the default value is restored.
-}
-
-func TestIndexJoinBuildV2SysVarCompatibility(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustQuery("SHOW VARIABLES LIKE 'tidb_opt_index_join_build_v2'").Check(testkit.Rows("tidb_opt_index_join_build_v2 ON"))
-	tk.MustQuery("SELECT @@tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
-
-	tk.MustExec(`REPLACE INTO mysql.global_variables (variable_name, variable_value) VALUES ('tidb_opt_index_join_build_v2', 'OFF')`)
-	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true)
-
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustQuery("SHOW GLOBAL VARIABLES LIKE 'tidb_opt_index_join_build_v2'").Check(testkit.Rows("tidb_opt_index_join_build_v2 ON"))
-	tk2.MustQuery("SELECT @@GLOBAL.tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
-	tk2.MustQuery("SELECT @@tidb_opt_index_join_build_v2").Check(testkit.Rows("1"))
-	tk2.MustContainErrMsg("SET @@tidb_opt_index_join_build_v2 = OFF", "tidb_opt_index_join_build_v2 is now always enabled and cannot be turned off")
 }
 
 func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
@@ -226,11 +203,12 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, defaultValue, v)
 
-	// session.GetGlobalSysVar would not get the value which session.SetInstanceSysVar writes,
-	// because SetInstanceSysVar did not persist values into the mysql.global_variable table.
+	// session.GetGlobalSysVar would not get the value which session.SetGlobalSysVar writes,
+	// because SetGlobalSysVar calls SetGlobalFromHook, which uses TiDBGeneralLog's SetGlobal,
+	// but GetGlobalSysVar could not access TiDBGeneralLog's GetGlobal.
 
 	// set to "1"
-	err = se.SetInstanceSysVar(context.Background(), varName, "ON")
+	err = se.SetGlobalSysVar(context.Background(), varName, "ON")
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("1"))
@@ -238,48 +216,12 @@ func TestSetInstanceSysvarBySetGlobalSysVar(t *testing.T) {
 	require.Equal(t, defaultValue, v)
 
 	// set back to "0"
-	err = se.SetInstanceSysVar(context.Background(), varName, defaultValue)
+	err = se.SetGlobalSysVar(context.Background(), varName, defaultValue)
 	require.NoError(t, err)
 	v, err = se.GetGlobalSysVar(varName)
 	tk.MustQuery("select @@global.tidb_general_log").Check(testkit.Rows("0"))
 	require.NoError(t, err)
 	require.Equal(t, defaultValue, v)
-}
-
-func TestTTLJobEnableExternalWorkloadUpdateOnlyOnSetGlobal(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	originalEnable := vardef.EnableTTLJob.Load()
-	originalHook := variable.UpdateExternalWorkloadTTLJobEnable
-	t.Cleanup(func() {
-		vardef.EnableTTLJob.Store(originalEnable)
-		variable.UpdateExternalWorkloadTTLJobEnable = originalHook
-	})
-
-	updateCount := 0
-	variable.UpdateExternalWorkloadTTLJobEnable = func(context.Context, bool) error {
-		updateCount++
-		return nil
-	}
-
-	tk.MustExec("SET GLOBAL tidb_ttl_job_enable = OFF")
-	require.Equal(t, 1, updateCount)
-	require.False(t, vardef.EnableTTLJob.Load())
-
-	domain.GetDomain(tk.Session()).NotifyUpdateSysVarCache(true)
-	require.Equal(t, 1, updateCount)
-	require.False(t, vardef.EnableTTLJob.Load())
-
-	boom := fmt.Errorf("boom")
-	variable.UpdateExternalWorkloadTTLJobEnable = func(context.Context, bool) error {
-		updateCount++
-		return boom
-	}
-	_, err := tk.Exec("SET GLOBAL tidb_ttl_job_enable = ON")
-	require.ErrorContains(t, err, "boom")
-	require.Equal(t, 2, updateCount)
-	require.False(t, vardef.EnableTTLJob.Load())
 }
 
 func TestTimeZone(t *testing.T) {
@@ -306,23 +248,14 @@ func TestTimeZone(t *testing.T) {
 }
 
 func TestGlobalVarAccessor(t *testing.T) {
-	originalMode := deploymode.Get()
-	if kerneltype.IsNextGen() {
-		require.NoError(t, deploymode.Set(deploymode.Premium))
-		t.Cleanup(func() {
-			require.NoError(t, deploymode.Set(originalMode))
-		})
-	}
-
 	varName := "max_allowed_packet"
-	varValue := strconv.FormatUint(config.GetMaxAllowedPacket(), 10) // This is the default value for max_allowed_packet
+	varValue := strconv.FormatUint(variable.DefMaxAllowedPacket, 10) // This is the default value for max_allowed_packet
 
 	// The value of max_allowed_packet should be a multiple of 1024,
 	// so the setting of varValue1 and varValue2 would be truncated to varValue0
 	varValue0 := "4194304"
 	varValue1 := "4194305"
 	varValue2 := "4194306"
-	configuredMaxAllowedPacket := uint64(8 << 20)
 
 	store := testkit.CreateMockStore(t)
 
@@ -363,66 +296,13 @@ func TestGlobalVarAccessor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, varValue0, v)
 
-	t.Run("non-starter ignores max_allowed_packet from config", func(t *testing.T) {
-		originalMaxAllowedPacket := config.GetGlobalConfig().MaxAllowedPacket
-		t.Cleanup(func() {
-			config.UpdateGlobal(func(c *config.Config) {
-				c.MaxAllowedPacket = originalMaxAllowedPacket
-			})
-		})
-		config.UpdateGlobal(func(c *config.Config) {
-			c.MaxAllowedPacket = configuredMaxAllowedPacket
-		})
-		nonStarterStore := testkit.CreateMockStore(t)
-		nonStarterTk := testkit.NewTestKit(t, nonStarterStore)
-		nonStarterTk.MustExec("use test")
-		nonStarterSe := nonStarterTk.Session().(variable.GlobalVarAccessor)
-		v, err := nonStarterSe.GetGlobalSysVar(varName)
-		require.NoError(t, err)
-		require.Equal(t, strconv.FormatUint(vardef.DefMaxAllowedPacket, 10), v)
-		nonStarterTk.MustExec("set @@global.max_allowed_packet = 4194304")
-		nonStarterTk.MustQuery("select @@global.max_allowed_packet").Check(testkit.Rows("4194304"))
-	})
-
-	t.Run("starter uses max_allowed_packet from config", func(t *testing.T) {
-		if kerneltype.IsClassic() {
-			t.Skip("starter deploy mode is only available in nextgen")
-		}
-		originalMaxAllowedPacket := config.GetGlobalConfig().MaxAllowedPacket
-		t.Cleanup(func() {
-			config.UpdateGlobal(func(c *config.Config) {
-				c.MaxAllowedPacket = originalMaxAllowedPacket
-			})
-			require.NoError(t, deploymode.Set(deploymode.Premium))
-		})
-		require.NoError(t, deploymode.Set(deploymode.Starter))
-		config.UpdateGlobal(func(c *config.Config) {
-			c.MaxAllowedPacket = configuredMaxAllowedPacket
-		})
-		starterStore := testkit.CreateMockStore(t)
-		starterTk := testkit.NewTestKit(t, starterStore)
-		starterTk.MustExec("use test")
-		starterSe := starterTk.Session().(variable.GlobalVarAccessor)
-		v, err := starterSe.GetGlobalSysVar(varName)
-		require.NoError(t, err)
-		require.Equal(t, strconv.FormatUint(configuredMaxAllowedPacket, 10), v)
-		starterTk.MustContainErrMsg(
-			"set @@global.max_allowed_packet = 4194304",
-			"SET GLOBAL max_allowed_packet is not supported in starter deployment mode",
-		)
-	})
-
 	// For issue 10955, make sure the new session load `max_execution_time` into sessionVars.
-	// Global timeout changes affect new sessions without changing existing sessions.
 	tk1.MustExec("set @@global.max_execution_time = 100")
-	tk1.MustExec("set @@global.tidb_dml_max_execution_time = 200")
-	require.Equal(t, uint64(0), tk1.Session().GetSessionVars().DMLMaxExecutionTime)
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test")
 	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().MaxExecutionTime)
-	require.Equal(t, uint64(200), tk2.Session().GetSessionVars().DMLMaxExecutionTime)
+	require.Equal(t, uint64(100), tk2.Session().GetSessionVars().GetMaxExecutionTime())
 	tk1.MustExec("set @@global.max_execution_time = 0")
-	tk1.MustExec("set @@global.tidb_dml_max_execution_time = 0")
 
 	result := tk.MustQuery("show global variables  where variable_name='sql_select_limit';")
 	result.Check(testkit.Rows("sql_select_limit 18446744073709551615"))
@@ -466,41 +346,41 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 
 	type hintCheck struct {
 		hint  string
-		check func(*hint.StmtHints)
+		check func(*stmtctx.StmtHints)
 	}
 
 	hintChecks := []hintCheck{
 		{
 			hint: "MEMORY_QUOTA(1024 MB)",
-			check: func(stmtHint *hint.StmtHints) {
+			check: func(stmtHint *stmtctx.StmtHints) {
 				require.True(t, stmtHint.HasMemQuotaHint)
 				require.Equal(t, int64(1024*1024*1024), stmtHint.MemQuotaQuery)
 			},
 		},
 		{
 			hint: "READ_CONSISTENT_REPLICA()",
-			check: func(stmtHint *hint.StmtHints) {
+			check: func(stmtHint *stmtctx.StmtHints) {
 				require.True(t, stmtHint.HasReplicaReadHint)
 				require.Equal(t, byte(tikv.ReplicaReadFollower), stmtHint.ReplicaRead)
 			},
 		},
 		{
 			hint: "MAX_EXECUTION_TIME(1000)",
-			check: func(stmtHint *hint.StmtHints) {
+			check: func(stmtHint *stmtctx.StmtHints) {
 				require.True(t, stmtHint.HasMaxExecutionTime)
 				require.Equal(t, uint64(1000), stmtHint.MaxExecutionTime)
 			},
 		},
 		{
 			hint: "USE_TOJA(TRUE)",
-			check: func(stmtHint *hint.StmtHints) {
+			check: func(stmtHint *stmtctx.StmtHints) {
 				require.True(t, stmtHint.HasAllowInSubqToJoinAndAggHint)
 				require.True(t, stmtHint.AllowInSubqToJoinAndAgg)
 			},
 		},
 		{
 			hint: "RESOURCE_GROUP(rg1)",
-			check: func(stmtHint *hint.StmtHints) {
+			check: func(stmtHint *stmtctx.StmtHints) {
 				require.True(t, stmtHint.HasResourceGroup)
 				require.Equal(t, "rg1", stmtHint.ResourceGroup)
 			},
@@ -510,41 +390,15 @@ func TestPrepareExecuteWithSQLHints(t *testing.T) {
 	for i, check := range hintChecks {
 		// common path
 		tk.MustExec(fmt.Sprintf("prepare stmt%d from 'select /*+ %s */ * from t'", i, check.hint))
-		for range 10 {
+		for j := 0; j < 10; j++ {
 			tk.MustQuery(fmt.Sprintf("execute stmt%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 		// fast path
 		tk.MustExec(fmt.Sprintf("prepare fast%d from 'select /*+ %s */ * from t where a = 1'", i, check.hint))
-		for range 10 {
+		for j := 0; j < 10; j++ {
 			tk.MustQuery(fmt.Sprintf("execute fast%d", i))
 			check.check(&tk.Session().GetSessionVars().StmtCtx.StmtHints)
 		}
 	}
-}
-
-func TestTiDBValidateTS(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int primary key)")
-	tk.MustExec("insert into t values (1)")
-
-	// default is on
-	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
-
-	// set off
-	tk.MustExec("set global tidb_enable_ts_validation = off")
-	tk.MustQuery("select * from t as of timestamp NOW() + interval 1 day")
-
-	// set on
-	tk.MustExec("set global tidb_enable_ts_validation = on")
-	tk.MustExecToErr("select * from t as of timestamp NOW() + interval 1 day")
-}
-
-func TestTiDBAdvancerCheckPointLagLimit(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_advancer_check_point_lag_limit = '100h'")
-	require.Equal(t, time.Hour*100, vardef.AdvancerCheckPointLagLimit.Load())
 }

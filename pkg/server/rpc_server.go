@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"net"
-	"strconv"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
@@ -26,20 +25,19 @@ import (
 	"github.com/pingcap/kvproto/pkg/mpp"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
 	"github.com/pingcap/sysutil"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
-	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/privilege/privileges"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
-	"github.com/pingcap/tidb/pkg/session/sessmgr"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/memory"
-	"github.com/pingcap/tidb/pkg/util/topsql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/mppcoordmanager"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/extension"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/privilege"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/privilege/privileges"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/keepalive"
@@ -47,7 +45,7 @@ import (
 )
 
 // NewRPCServer creates a new rpc server.
-func NewRPCServer(config *config.Config, dom *domain.Domain, sm sessmgr.Manager) *grpc.Server {
+func NewRPCServer(config *config.Config, dom *domain.Domain, sm util.SessionManager) *grpc.Server {
 	defer func() {
 		if v := recover(); v != nil {
 			logutil.BgLogger().Error("panic in TiDB RPC server", zap.Any("r", v),
@@ -89,7 +87,7 @@ type rpcServer struct {
 	*sysutil.DiagnosticsServer
 	tikvpb.TikvServer
 	dom *domain.Domain
-	sm  sessmgr.Manager
+	sm  util.SessionManager
 }
 
 // Coprocessor implements the TiKVServer interface.
@@ -97,7 +95,7 @@ func (s *rpcServer) Coprocessor(ctx context.Context, in *coprocessor.Request) (r
 	resp = &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Warn("panic when RPC server handing coprocessor", zap.Any("r", v),
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor", zap.Any("r", v),
 				zap.Stack("stack trace"))
 			resp.OtherError = fmt.Sprintf("panic when RPC server handing coprocessor, stack:%v", v)
 		}
@@ -111,7 +109,7 @@ func (s *rpcServer) CoprocessorStream(in *coprocessor.Request, stream tikvpb.Tik
 	resp := &coprocessor.Response{}
 	defer func() {
 		if v := recover(); v != nil {
-			logutil.BgLogger().Warn("panic when RPC server handing coprocessor stream", zap.Any("r", v),
+			logutil.BgLogger().Error("panic when RPC server handing coprocessor stream", zap.Any("r", v),
 				zap.Stack("stack trace"))
 			resp.OtherError = fmt.Sprintf("panic when when RPC server handing coprocessor stream, stack:%v", v)
 			err = stream.Send(resp)
@@ -216,7 +214,7 @@ func (s *rpcServer) handleCopRequest(ctx context.Context, req *coprocessor.Reque
 	return h.HandleRequest(ctx, req)
 }
 
-func (s *rpcServer) createSession() (sessionapi.Session, error) {
+func (s *rpcServer) createSession() (session.Session, error) {
 	se, err := session.CreateSessionWithDomain(s.dom.Store(), s.dom)
 	if err != nil {
 		return nil, err
@@ -237,14 +235,10 @@ func (s *rpcServer) createSession() (sessionapi.Session, error) {
 	vars.SetHashAggFinalConcurrency(1)
 	vars.StmtCtx.InitMemTracker(memory.LabelForSQLText, -1)
 	vars.StmtCtx.MemTracker.AttachTo(vars.MemTracker)
-	if vardef.OOMAction.Load() == vardef.OOMActionCancel {
-		action := &memory.PanicOnExceed{Killer: &vars.SQLKiller}
+	if variable.OOMAction.Load() == variable.OOMActionCancel {
+		action := &memory.PanicOnExceed{}
 		vars.MemTracker.SetActionOnExceed(action)
 	}
-	if err = vars.SetSystemVar(vardef.MaxAllowedPacket, strconv.FormatUint(config.GetMaxAllowedPacket(), 10)); err != nil {
-		return nil, err
-	}
-	se.SetExtensions(extensions.NewSessionExtensions())
 	se.SetSessionManager(s.sm)
 	return se, nil
 }

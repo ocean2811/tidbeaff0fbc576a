@@ -3,11 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "testenv",
     srcs = ["testenv.go"],
-    importpath = "github.com/pingcap/tidb/pkg/testkit/testenv",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testenv",
     visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/config",
-        "//pkg/dxf/framework/handle",
-        "//pkg/keyspace",
-    ],
+    deps = ["//pkg/util/mathutil"],
 )

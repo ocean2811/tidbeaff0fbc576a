@@ -15,8 +15,8 @@
 package plugin
 
 import (
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
 )
 
 var (

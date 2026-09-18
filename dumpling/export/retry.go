@@ -8,9 +8,9 @@ import (
 
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbutil"
 	"go.uber.org/zap"
 )
 
@@ -24,7 +24,7 @@ const (
 )
 
 type backOfferResettable interface {
-	utils.BackoffStrategy
+	utils.Backoffer
 	Reset()
 }
 
@@ -61,7 +61,7 @@ func (b *dumpChunkBackoffer) NextBackoff(err error) time.Duration {
 	return b.delayTime
 }
 
-func (b *dumpChunkBackoffer) RemainingAttempts() int {
+func (b *dumpChunkBackoffer) Attempt() int {
 	return b.attempt
 }
 
@@ -79,7 +79,7 @@ func (b *noopBackoffer) NextBackoff(_ error) time.Duration {
 	return time.Duration(0)
 }
 
-func (b *noopBackoffer) RemainingAttempts() int {
+func (b *noopBackoffer) Attempt() int {
 	return b.attempt
 }
 
@@ -87,7 +87,7 @@ func (b *noopBackoffer) Reset() {
 	b.attempt = 1
 }
 
-func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[string]any, conf *Config) *lockTablesBackoffer {
+func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[string]interface{}, conf *Config) *lockTablesBackoffer {
 	if conf.SpecifiedTables {
 		return &lockTablesBackoffer{
 			tctx:      tctx,
@@ -105,7 +105,7 @@ func newLockTablesBackoffer(tctx *tcontext.Context, blockList map[string]map[str
 type lockTablesBackoffer struct {
 	tctx      *tcontext.Context
 	attempt   int
-	blockList map[string]map[string]any
+	blockList map[string]map[string]interface{}
 }
 
 func (b *lockTablesBackoffer) NextBackoff(err error) time.Duration {
@@ -119,7 +119,7 @@ func (b *lockTablesBackoffer) NextBackoff(err error) time.Duration {
 			return 0
 		}
 		if _, ok := b.blockList[db]; !ok {
-			b.blockList[db] = make(map[string]any)
+			b.blockList[db] = make(map[string]interface{})
 		}
 		b.blockList[db][table] = struct{}{}
 		return 0
@@ -128,7 +128,7 @@ func (b *lockTablesBackoffer) NextBackoff(err error) time.Duration {
 	return 0
 }
 
-func (b *lockTablesBackoffer) RemainingAttempts() int {
+func (b *lockTablesBackoffer) Attempt() int {
 	return b.attempt
 }
 

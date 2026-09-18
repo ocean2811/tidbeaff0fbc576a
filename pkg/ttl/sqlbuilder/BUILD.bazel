@@ -3,17 +3,17 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "sqlbuilder",
     srcs = ["sql.go"],
-    importpath = "github.com/pingcap/tidb/pkg/ttl/sqlbuilder",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/sqlbuilder",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/format",
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/ttl/cache",
         "//pkg/types",
-        "//pkg/util/sqlescape",
-        "@com_github_pingcap_errors//:errors",
+        "//pkg/util/sqlexec",
+        "@com_github_pkg_errors//:errors",
     ],
 )
 
@@ -25,13 +25,13 @@ go_test(
         "sql_test.go",
     ],
     flaky = True,
-    shard_count = 7,
+    shard_count = 5,
     deps = [
         ":sqlbuilder",
         "//pkg/kv",
-        "//pkg/meta/model",
         "//pkg/parser",
         "//pkg/parser/ast",
+        "//pkg/parser/model",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
         "//pkg/testkit",

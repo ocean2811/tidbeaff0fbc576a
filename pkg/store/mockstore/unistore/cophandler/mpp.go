@@ -23,19 +23,17 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/aggregation"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/client"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/dbreader"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/atomic"
 )
@@ -55,7 +53,7 @@ const (
 )
 
 type mppExecBuilder struct {
-	sctx       sessionctx.Context
+	sc         *stmtctx.StatementContext
 	dbReader   *dbreader.DBReader
 	mppCtx     *MPPCtx
 	dagReq     *tipb.DAGRequest
@@ -64,31 +62,18 @@ type mppExecBuilder struct {
 	ndvs       []int64
 	paging     *coprocessor.KeyRange
 	pagingSize uint64
-
-	// is building the index lookup
-	inBuildIndexLookUp bool
 }
 
 func (b *mppExecBuilder) buildMPPTableScan(pb *tipb.TableScan) (*tableScanExec, error) {
-	e, err := b.buildMPPTableScanWithReader(pb, b.dbReader, b.dagCtx.keyRanges)
-	if err != nil {
-		return nil, err
-	}
-	e.counts = b.counts
-	e.ndvs = b.ndvs
-	return e, nil
-}
-
-func (b *mppExecBuilder) buildMPPTableScanWithReader(pb *tipb.TableScan, reader *dbreader.DBReader, readRanges []*coprocessor.KeyRange) (*tableScanExec, error) {
-	ranges, err := extractKVRanges(reader.StartKey, reader.EndKey, readRanges, pb.Desc)
+	ranges, err := extractKVRanges(b.dbReader.StartKey, b.dbReader.EndKey, b.dagCtx.keyRanges, pb.Desc)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	ts := &tableScanExec{
-		baseMPPExec: baseMPPExec{sctx: b.sctx, mppCtx: b.mppCtx},
+		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx},
 		startTS:     b.dagCtx.startTS,
 		kvRanges:    ranges,
-		dbReader:    reader,
+		dbReader:    b.dbReader,
 		counts:      b.counts,
 		ndvs:        b.ndvs,
 		desc:        pb.Desc,
@@ -106,7 +91,7 @@ func (b *mppExecBuilder) buildMPPTableScanWithReader(pb *tipb.TableScan, reader 
 		ft := fieldTypeFromPBColumn(col)
 		ts.fieldTypes = append(ts.fieldTypes, ft)
 	}
-	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sctx.GetSessionVars().StmtCtx.TimeZone())
+	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone())
 	return ts, err
 }
 
@@ -116,7 +101,7 @@ func (b *mppExecBuilder) buildMPPPartitionTableScan(pb *tipb.PartitionTableScan)
 		return nil, errors.Trace(err)
 	}
 	ts := &tableScanExec{
-		baseMPPExec: baseMPPExec{sctx: b.sctx, mppCtx: b.mppCtx},
+		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx},
 		startTS:     b.dagCtx.startTS,
 		kvRanges:    ranges,
 		dbReader:    b.dbReader,
@@ -129,7 +114,7 @@ func (b *mppExecBuilder) buildMPPPartitionTableScan(pb *tipb.PartitionTableScan)
 		ft := fieldTypeFromPBColumn(col)
 		ts.fieldTypes = append(ts.fieldTypes, ft)
 	}
-	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sctx.GetSessionVars().StmtCtx.TimeZone())
+	ts.decoder, err = newRowDecoder(pb.Columns, ts.fieldTypes, pb.PrimaryColumnIds, b.sc.TimeZone())
 	return ts, err
 }
 
@@ -150,6 +135,10 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		numIdxCols--
 		physTblIDColIdx = new(int)
 		*physTblIDColIdx = numIdxCols
+		lastCol = pb.Columns[numIdxCols-1]
+	}
+	if lastCol.GetColumnId() == model.ExtraPidColID {
+		numIdxCols--
 		lastCol = pb.Columns[numIdxCols-1]
 	}
 
@@ -177,101 +166,28 @@ func (b *mppExecBuilder) buildIdxScan(pb *tipb.IndexScan) (*indexScanExec, error
 		})
 	}
 
-	var commonHandleKeyIdx *int
-	if b.inBuildIndexLookUp && len(pb.PrimaryColumnIds) > 0 {
-		// For index scan in index lookup, if the table has common handle, we need to
-		// return the common handle key to indexLookUpExec
-		idx := len(fieldTypes)
-		commonHandleKeyIdx = &idx
-		fieldTypes = append(fieldTypes, types.NewFieldType(mysql.TypeVarchar))
-	}
-
 	var prevVals [][]byte
 	if b.dagReq.GetCollectRangeCounts() {
 		prevVals = make([][]byte, numIdxCols)
 	}
 	idxScan := &indexScanExec{
-		baseMPPExec:        baseMPPExec{sctx: b.sctx, fieldTypes: fieldTypes},
-		startTS:            b.dagCtx.startTS,
-		kvRanges:           ranges,
-		dbReader:           b.dbReader,
-		lockStore:          b.dagCtx.lockStore,
-		resolvedLocks:      b.dagCtx.resolvedLocks,
-		counts:             b.counts,
-		ndvs:               b.ndvs,
-		prevVals:           prevVals,
-		colInfos:           colInfos,
-		numIdxCols:         numIdxCols,
-		hdlStatus:          hdlStatus,
-		desc:               pb.Desc,
-		physTblIDColIdx:    physTblIDColIdx,
-		commonHandleKeyIdx: commonHandleKeyIdx,
-		paging:             b.paging,
+		baseMPPExec:     baseMPPExec{sc: b.sc, fieldTypes: fieldTypes},
+		startTS:         b.dagCtx.startTS,
+		kvRanges:        ranges,
+		dbReader:        b.dbReader,
+		lockStore:       b.dagCtx.lockStore,
+		resolvedLocks:   b.dagCtx.resolvedLocks,
+		counts:          b.counts,
+		ndvs:            b.ndvs,
+		prevVals:        prevVals,
+		colInfos:        colInfos,
+		numIdxCols:      numIdxCols,
+		hdlStatus:       hdlStatus,
+		desc:            pb.Desc,
+		physTblIDColIdx: physTblIDColIdx,
+		paging:          b.paging,
 	}
 	return idxScan, nil
-}
-
-func (b *mppExecBuilder) buildIndexLookUp(pb *tipb.IndexLookUp) (*indexLookUpExec, error) {
-	b.inBuildIndexLookUp = true
-	defer func() {
-		b.inBuildIndexLookUp = false
-	}()
-	if len(pb.Children) != 2 {
-		return nil, errors.New("IndexLookUp should have two children")
-	}
-
-	if pb.Children[1].Tp != tipb.ExecType_TypeTableScan {
-		return nil, errors.New("The second child of IndexLookUp should be TableScan")
-	}
-
-	if b.pagingSize > 0 {
-		return nil, errors.New("paging not supported in index lookup push down")
-	}
-
-	tblScanPB := pb.Children[1].TblScan
-	indexScanChild, err := b.buildMPPExecutor(pb.Children[0])
-	if err != nil {
-		return nil, err
-	}
-
-	fieldTypes := make([]*types.FieldType, 0, len(tblScanPB.Columns))
-	for _, col := range tblScanPB.Columns {
-		fieldTypes = append(fieldTypes, fieldTypeFromPBColumn(col))
-	}
-
-	indexLookUp := &indexLookUpExec{
-		baseMPPExec: baseMPPExec{
-			sctx:       b.sctx,
-			mppCtx:     b.mppCtx,
-			fieldTypes: fieldTypes,
-			children: []mppExec{
-				indexScanChild,
-				// a mock child that only used to provide base and metrics info
-				&baseMPPExec{
-					sctx:       b.sctx,
-					mppCtx:     b.mppCtx,
-					fieldTypes: fieldTypes,
-				},
-			},
-		},
-		keyspaceID:          b.dagCtx.keyspaceID,
-		indexHandleOffsets:  pb.IndexHandleOffsets,
-		tblScanPB:           tblScanPB,
-		isCommonHandle:      len(tblScanPB.PrimaryColumnIds) > 0,
-		extraReaderProvider: b.dbReader.ExtraDbReaderProvider,
-		buildTableScan: func(reader *dbreader.DBReader, ranges []kv.KeyRange) (*tableScanExec, error) {
-			copRanges := make([]*coprocessor.KeyRange, len(ranges))
-			for i, r := range ranges {
-				copRanges[i] = &coprocessor.KeyRange{
-					Start: r.StartKey,
-					End:   r.EndKey,
-				}
-			}
-			return b.buildMPPTableScanWithReader(tblScanPB, reader, copRanges)
-		},
-	}
-
-	return indexLookUp, nil
 }
 
 func (b *mppExecBuilder) buildLimit(pb *tipb.Limit) (*limitExec, error) {
@@ -280,7 +196,7 @@ func (b *mppExecBuilder) buildLimit(pb *tipb.Limit) (*limitExec, error) {
 		return nil, err
 	}
 	exec := &limitExec{
-		baseMPPExec: baseMPPExec{sctx: b.sctx, mppCtx: b.mppCtx, fieldTypes: child.getFieldTypes(), children: []mppExec{child}},
+		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx, fieldTypes: child.getFieldTypes(), children: []mppExec{child}},
 		limit:       pb.GetLimit(),
 	}
 	return exec, nil
@@ -292,7 +208,7 @@ func (b *mppExecBuilder) buildExpand(pb *tipb.Expand) (mppExec, error) {
 		return nil, err
 	}
 	exec := &expandExec{
-		baseMPPExec: baseMPPExec{sctx: b.sctx, mppCtx: b.mppCtx, children: []mppExec{child}},
+		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx, children: []mppExec{child}},
 	}
 
 	childFieldTypes := child.getFieldTypes()
@@ -301,7 +217,7 @@ func (b *mppExecBuilder) buildExpand(pb *tipb.Expand) (mppExec, error) {
 	for _, gs := range pb.GroupingSets {
 		tidbGs := expression.GroupingSet{}
 		for _, groupingExprs := range gs.GroupingExprs {
-			tidbGroupingExprs, err := convertToExprs(b.sctx, childFieldTypes, groupingExprs.GroupingExpr)
+			tidbGroupingExprs, err := convertToExprs(b.sc, childFieldTypes, groupingExprs.GroupingExpr)
 			if err != nil {
 				return nil, err
 			}
@@ -356,16 +272,16 @@ func (b *mppExecBuilder) buildTopN(pb *tipb.TopN) (mppExec, error) {
 		totalCount: int(pb.Limit),
 		topNSorter: topNSorter{
 			orderByItems: pb.OrderBy,
-			sc:           b.sctx.GetSessionVars().StmtCtx,
+			sc:           b.sc,
 		},
 	}
 	fieldTps := child.getFieldTypes()
 	var conds []expression.Expression
-	if conds, err = convertToExprs(b.sctx, fieldTps, pbConds); err != nil {
+	if conds, err = convertToExprs(b.sc, fieldTps, pbConds); err != nil {
 		return nil, errors.Trace(err)
 	}
 	exec := &topNExec{
-		baseMPPExec: baseMPPExec{sctx: b.sctx, mppCtx: b.mppCtx, fieldTypes: fieldTps, children: []mppExec{child}},
+		baseMPPExec: baseMPPExec{sc: b.sc, mppCtx: b.mppCtx, fieldTypes: fieldTps, children: []mppExec{child}},
 		heap:        heap,
 		conds:       conds,
 		row:         newTopNSortRow(len(conds)),
@@ -388,7 +304,7 @@ func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender) (*exchS
 
 	e := &exchSenderExec{
 		baseMPPExec: baseMPPExec{
-			sctx:       b.sctx,
+			sc:         b.sc,
 			mppCtx:     b.mppCtx,
 			children:   []mppExec{child},
 			fieldTypes: child.getFieldTypes(),
@@ -398,7 +314,7 @@ func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender) (*exchS
 	if pb.Tp == tipb.ExchangeType_Hash {
 		// remove the limitation of len(pb.PartitionKeys) == 1
 		for _, partitionKey := range pb.PartitionKeys {
-			expr, err := expression.PBToExpr(b.sctx.GetExprCtx(), partitionKey, child.getFieldTypes())
+			expr, err := expression.PBToExpr(partitionKey, child.getFieldTypes(), b.sc)
 			if err != nil {
 				return nil, errors.Trace(err)
 			}
@@ -437,7 +353,7 @@ func (b *mppExecBuilder) buildMPPExchangeSender(pb *tipb.ExchangeSender) (*exchS
 func (b *mppExecBuilder) buildMPPExchangeReceiver(pb *tipb.ExchangeReceiver) (*exchRecvExec, error) {
 	e := &exchRecvExec{
 		baseMPPExec: baseMPPExec{
-			sctx:   b.sctx,
+			sc:     b.sc,
 			mppCtx: b.mppCtx,
 		},
 		exchangeReceiver: pb,
@@ -456,7 +372,7 @@ func (b *mppExecBuilder) buildMPPExchangeReceiver(pb *tipb.ExchangeReceiver) (*e
 func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) (*joinExec, error) {
 	e := &joinExec{
 		baseMPPExec: baseMPPExec{
-			sctx:   b.sctx,
+			sc:     b.sc,
 			mppCtx: b.mppCtx,
 		},
 		Join:         pb,
@@ -471,7 +387,6 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	e.baseMPPExec.children = []mppExec{leftCh, rightCh}
 	if pb.JoinType == tipb.JoinType_TypeLeftOuterJoin {
 		for _, tp := range rightCh.getFieldTypes() {
 			tp.DelFlag(mysql.NotNullFlag)
@@ -496,12 +411,12 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	if pb.InnerIdx == 1 {
 		e.probeChild = leftCh
 		e.buildChild = rightCh
-		probeExpr, err := expression.PBToExpr(b.sctx.GetExprCtx(), pb.LeftJoinKeys[0], leftCh.getFieldTypes())
+		probeExpr, err := expression.PBToExpr(pb.LeftJoinKeys[0], leftCh.getFieldTypes(), b.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		e.probeKey = probeExpr.(*expression.Column)
-		buildExpr, err := expression.PBToExpr(b.sctx.GetExprCtx(), pb.RightJoinKeys[0], rightCh.getFieldTypes())
+		buildExpr, err := expression.PBToExpr(pb.RightJoinKeys[0], rightCh.getFieldTypes(), b.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -509,12 +424,12 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 	} else {
 		e.probeChild = rightCh
 		e.buildChild = leftCh
-		buildExpr, err := expression.PBToExpr(b.sctx.GetExprCtx(), pb.LeftJoinKeys[0], leftCh.getFieldTypes())
+		buildExpr, err := expression.PBToExpr(pb.LeftJoinKeys[0], leftCh.getFieldTypes(), b.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		e.buildKey = buildExpr.(*expression.Column)
-		probeExpr, err := expression.PBToExpr(b.sctx.GetExprCtx(), pb.RightJoinKeys[0], rightCh.getFieldTypes())
+		probeExpr, err := expression.PBToExpr(pb.RightJoinKeys[0], rightCh.getFieldTypes(), b.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -529,12 +444,7 @@ func (b *mppExecBuilder) buildMPPJoin(pb *tipb.Join, children []*tipb.Executor) 
 }
 
 func (b *mppExecBuilder) buildMPPProj(proj *tipb.Projection) (*projExec, error) {
-	e := &projExec{
-		baseMPPExec: baseMPPExec{
-			sctx:   b.sctx,
-			mppCtx: b.mppCtx,
-		},
-	}
+	e := &projExec{}
 
 	chExec, err := b.buildMPPExecutor(proj.Child)
 	if err != nil {
@@ -543,12 +453,12 @@ func (b *mppExecBuilder) buildMPPProj(proj *tipb.Projection) (*projExec, error) 
 	e.children = []mppExec{chExec}
 
 	for _, pbExpr := range proj.Exprs {
-		expr, err := expression.PBToExpr(b.sctx.GetExprCtx(), pbExpr, chExec.getFieldTypes())
+		expr, err := expression.PBToExpr(pbExpr, chExec.getFieldTypes(), b.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		e.exprs = append(e.exprs, expr)
-		e.fieldTypes = append(e.fieldTypes, expr.GetType(b.sctx.GetExprCtx().GetEvalCtx()))
+		e.fieldTypes = append(e.fieldTypes, expr.GetType())
 	}
 	return e, nil
 }
@@ -561,14 +471,14 @@ func (b *mppExecBuilder) buildMPPSel(sel *tipb.Selection) (*selExec, error) {
 	e := &selExec{
 		baseMPPExec: baseMPPExec{
 			fieldTypes: chExec.getFieldTypes(),
-			sctx:       b.sctx,
+			sc:         b.sc,
 			mppCtx:     b.mppCtx,
 			children:   []mppExec{chExec},
 		},
 	}
 
 	for _, pbExpr := range sel.Conditions {
-		expr, err := expression.PBToExpr(b.sctx.GetExprCtx(), pbExpr, chExec.getFieldTypes())
+		expr, err := expression.PBToExpr(pbExpr, chExec.getFieldTypes(), b.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -579,10 +489,6 @@ func (b *mppExecBuilder) buildMPPSel(sel *tipb.Selection) (*selExec, error) {
 
 func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 	e := &aggExec{
-		baseMPPExec: baseMPPExec{
-			sctx:   b.sctx,
-			mppCtx: b.mppCtx,
-		},
 		groups:     make(map[string]struct{}),
 		aggCtxsMap: make(map[string][]*aggregation.AggEvaluateContext),
 		processed:  false,
@@ -596,19 +502,19 @@ func (b *mppExecBuilder) buildMPPAgg(agg *tipb.Aggregation) (*aggExec, error) {
 	for _, aggFunc := range agg.AggFunc {
 		ft := expression.PbTypeToFieldType(aggFunc.FieldType)
 		e.fieldTypes = append(e.fieldTypes, ft)
-		aggExpr, _, err := aggregation.NewDistAggFunc(aggFunc, chExec.getFieldTypes(), b.sctx.GetExprCtx())
+		aggExpr, err := aggregation.NewDistAggFunc(aggFunc, chExec.getFieldTypes(), b.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
 		e.aggExprs = append(e.aggExprs, aggExpr)
 	}
-	e.sctx = b.sctx
+	e.sc = b.sc
 
 	for _, gby := range agg.GroupBy {
 		ft := expression.PbTypeToFieldType(gby.FieldType)
 		e.fieldTypes = append(e.fieldTypes, ft)
 		e.groupByTypes = append(e.groupByTypes, ft)
-		gbyExpr, err := expression.PBToExpr(b.sctx.GetExprCtx(), gby, chExec.getFieldTypes())
+		gbyExpr, err := expression.PBToExpr(gby, chExec.getFieldTypes(), b.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -640,8 +546,6 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 		return b.buildMPPSel(exec.Selection)
 	case tipb.ExecType_TypeIndexScan:
 		return b.buildIdxScan(exec.IdxScan)
-	case tipb.ExecType_TypeIndexLookUp:
-		return b.buildIndexLookUp(exec.IndexLookup)
 	case tipb.ExecType_TypeLimit:
 		return b.buildLimit(exec.Limit)
 	case tipb.ExecType_TypeTopN:
@@ -652,7 +556,7 @@ func (b *mppExecBuilder) buildMPPExecutor(exec *tipb.Executor) (mppExec, error) 
 	case tipb.ExecType_TypeExpand:
 		return b.buildExpand(exec.Expand)
 	default:
-		return nil, errors.New(ErrExecutorNotSupportedMsg + exec.Tp.String())
+		return nil, errors.Errorf(ErrExecutorNotSupportedMsg + exec.Tp.String())
 	}
 }
 
@@ -669,14 +573,10 @@ func HandleMPPDAGReq(dbReader *dbreader.DBReader, req *coprocessor.Request, mppC
 		startTS:   req.StartTs,
 		keyRanges: req.Ranges,
 	}
-	if reqCtx := req.Context; reqCtx != nil {
-		dagCtx.keyspaceID = reqCtx.GetKeyspaceId()
-	}
-	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	builder := mppExecBuilder{
 		dbReader: dbReader,
 		mppCtx:   mppCtx,
-		sctx:     flagsAndTzToSessionContext(dagReq.Flags, tz),
+		sc:       flagsToStatementContext(dagReq.Flags),
 		dagReq:   dagReq,
 		dagCtx:   dagCtx,
 	}
@@ -711,13 +611,13 @@ type MPPTaskHandler struct {
 // HandleEstablishConn handles EstablishMPPConnectionRequest
 func (h *MPPTaskHandler) HandleEstablishConn(_ context.Context, req *mpp.EstablishMPPConnectionRequest) (*ExchangerTunnel, error) {
 	meta := req.ReceiverMeta
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		tunnel, err := h.getAndActiveTunnel(req)
 		if err == nil {
 			return tunnel, nil
 		}
 		if err.Code == MPPErrMPPGatherIDMismatch {
-			return nil, errors.New(err.Msg)
+			return nil, errors.Errorf(err.Msg)
 		}
 		time.Sleep(time.Second)
 	}
@@ -769,7 +669,7 @@ type ExchangerTunnel struct {
 	ErrCh       chan error
 }
 
-// RecvChunk receive tipb chunk
+// RecvChunk recive tipb chunk
 func (tunnel *ExchangerTunnel) RecvChunk() (tipbChunk *tipb.Chunk, err error) {
 	tipbChunk = <-tunnel.DataCh
 	select {

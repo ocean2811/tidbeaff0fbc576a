@@ -18,7 +18,7 @@ import (
 	"go/ast"
 
 	"github.com/golangci/prealloc"
-	"github.com/pingcap/tidb/build/linter/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -39,7 +39,7 @@ var Analyzer = &analysis.Analyzer{
 	Run:  run,
 }
 
-func run(pass *analysis.Pass) (any, error) {
+func run(pass *analysis.Pass) (interface{}, error) {
 	s := &Settings{
 		Simple:     true,
 		RangeLoops: true,
@@ -56,6 +56,5 @@ func run(pass *analysis.Pass) (any, error) {
 }
 
 func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

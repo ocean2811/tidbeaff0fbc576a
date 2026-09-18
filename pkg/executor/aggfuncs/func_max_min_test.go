@@ -20,12 +20,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggfuncs"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -38,7 +38,7 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 		preSetVal    types.Set
 	)
 
-	for i := range srcChk.NumRows() {
+	for i := 0; i < srcChk.NumRows(); i++ {
 		row := srcChk.GetRow(i)
 		if row.IsNull(0) {
 			continue
@@ -86,12 +86,12 @@ func maxMinUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType, is
 	return memDeltas, nil
 }
 
-func maxUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
-	return maxMinUpdateMemDeltaGens(param.srcChk, param.keyType, true)
+func maxUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	return maxMinUpdateMemDeltaGens(srcChk, dataType, true)
 }
 
-func minUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
-	return maxMinUpdateMemDeltaGens(param.srcChk, param.keyType, false)
+func minUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
+	return maxMinUpdateMemDeltaGens(srcChk, dataType, false)
 }
 
 func TestMergePartialResult4MaxMin(t *testing.T) {
@@ -106,31 +106,32 @@ func TestMergePartialResult4MaxMin(t *testing.T) {
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
 	unsignedType.AddFlag(mysql.UnsignedFlag)
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 0, 5, 4, 4, 4),
-		buildAggTesterWithFieldType(ast.AggFuncMax, unsignedType, nil, 5, 4, 4, 4),
-		buildAggTester(ast.AggFuncMax, mysql.TypeFloat, 0, 5, 4.0, 4.0, 4.0),
-		buildAggTester(ast.AggFuncMax, mysql.TypeDouble, 0, 5, 4.0, 4.0, 4.0),
-		buildAggTester(ast.AggFuncMax, mysql.TypeNewDecimal, 0, 5, types.NewDecFromInt(4), types.NewDecFromInt(4), types.NewDecFromInt(4)),
-		buildAggTester(ast.AggFuncMax, mysql.TypeString, 0, 5, "4", "4", "4"),
-		buildAggTester(ast.AggFuncMax, mysql.TypeDate, 0, 5, types.TimeFromDays(369), types.TimeFromDays(369), types.TimeFromDays(369)),
-		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 0, 5, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}),
-		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 0, 5, types.CreateBinaryJSON(int64(4)), types.CreateBinaryJSON(int64(4)), types.CreateBinaryJSON(int64(4))),
-		buildAggTester(ast.AggFuncMax, mysql.TypeEnum, 0, 5, enumE, enumC, enumE),
-		buildAggTester(ast.AggFuncMax, mysql.TypeSet, 0, 5, setED, setED, setED),
+		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, 4, 4, 4),
+		buildAggTesterWithFieldType(ast.AggFuncMax, unsignedType, 5, 4, 4, 4),
+		buildAggTester(ast.AggFuncMax, mysql.TypeFloat, 5, 4.0, 4.0, 4.0),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDouble, 5, 4.0, 4.0, 4.0),
+		buildAggTester(ast.AggFuncMax, mysql.TypeNewDecimal, 5, types.NewDecFromInt(4), types.NewDecFromInt(4), types.NewDecFromInt(4)),
+		buildAggTester(ast.AggFuncMax, mysql.TypeString, 5, "4", "4", "4"),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDate, 5, types.TimeFromDays(369), types.TimeFromDays(369), types.TimeFromDays(369)),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}, types.Duration{Duration: time.Duration(4)}),
+		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, types.CreateBinaryJSON(int64(4)), types.CreateBinaryJSON(int64(4)), types.CreateBinaryJSON(int64(4))),
+		buildAggTester(ast.AggFuncMax, mysql.TypeEnum, 5, enumE, enumC, enumE),
+		buildAggTester(ast.AggFuncMax, mysql.TypeSet, 5, setED, setED, setED),
 
-		buildAggTester(ast.AggFuncMin, mysql.TypeLonglong, 0, 5, 0, 2, 0),
-		buildAggTesterWithFieldType(ast.AggFuncMin, unsignedType, nil, 5, 0, 2, 0),
-		buildAggTester(ast.AggFuncMin, mysql.TypeFloat, 0, 5, 0.0, 2.0, 0.0),
-		buildAggTester(ast.AggFuncMin, mysql.TypeDouble, 0, 5, 0.0, 2.0, 0.0),
-		buildAggTester(ast.AggFuncMin, mysql.TypeNewDecimal, 0, 5, types.NewDecFromInt(0), types.NewDecFromInt(2), types.NewDecFromInt(0)),
-		buildAggTester(ast.AggFuncMin, mysql.TypeString, 0, 5, "0", "2", "0"),
-		buildAggTester(ast.AggFuncMin, mysql.TypeDate, 0, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
-		buildAggTester(ast.AggFuncMin, mysql.TypeDuration, 0, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
-		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 0, 5, types.CreateBinaryJSON(int64(0)), types.CreateBinaryJSON(int64(2)), types.CreateBinaryJSON(int64(0))),
-		buildAggTester(ast.AggFuncMin, mysql.TypeEnum, 0, 5, enumA, enumA, enumA),
-		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 0, 5, setC, setC, setC),
+		buildAggTester(ast.AggFuncMin, mysql.TypeLonglong, 5, 0, 2, 0),
+		buildAggTesterWithFieldType(ast.AggFuncMin, unsignedType, 5, 0, 2, 0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeFloat, 5, 0.0, 2.0, 0.0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDouble, 5, 0.0, 2.0, 0.0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeNewDecimal, 5, types.NewDecFromInt(0), types.NewDecFromInt(2), types.NewDecFromInt(0)),
+		buildAggTester(ast.AggFuncMin, mysql.TypeString, 5, "0", "2", "0"),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDate, 5, types.TimeFromDays(365), types.TimeFromDays(367), types.TimeFromDays(365)),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDuration, 5, types.Duration{Duration: time.Duration(0)}, types.Duration{Duration: time.Duration(2)}, types.Duration{Duration: time.Duration(0)}),
+		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, types.CreateBinaryJSON(int64(0)), types.CreateBinaryJSON(int64(2)), types.CreateBinaryJSON(int64(0))),
+		buildAggTester(ast.AggFuncMin, mysql.TypeEnum, 5, enumA, enumA, enumA),
+		buildAggTester(ast.AggFuncMin, mysql.TypeSet, 5, setC, setC, setC),
 	}
 	for _, test := range tests {
+		test := test
 		t.Run(test.funcName, func(t *testing.T) {
 			testMergePartialResult(t, test)
 		})
@@ -141,27 +142,28 @@ func TestMaxMin(t *testing.T) {
 	unsignedType := types.NewFieldType(mysql.TypeLonglong)
 	unsignedType.AddFlag(mysql.UnsignedFlag)
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 0, 5, nil, 4),
-		buildAggTesterWithFieldType(ast.AggFuncMax, unsignedType, nil, 5, nil, 4),
-		buildAggTester(ast.AggFuncMax, mysql.TypeFloat, 0, 5, nil, 4.0),
-		buildAggTester(ast.AggFuncMax, mysql.TypeDouble, 0, 5, nil, 4.0),
-		buildAggTester(ast.AggFuncMax, mysql.TypeNewDecimal, 0, 5, nil, types.NewDecFromInt(4)),
-		buildAggTester(ast.AggFuncMax, mysql.TypeString, 0, 5, nil, "4", "4"),
-		buildAggTester(ast.AggFuncMax, mysql.TypeDate, 0, 5, nil, types.TimeFromDays(369)),
-		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 0, 5, nil, types.Duration{Duration: time.Duration(4)}),
-		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 0, 5, nil, types.CreateBinaryJSON(int64(4))),
+		buildAggTester(ast.AggFuncMax, mysql.TypeLonglong, 5, nil, 4),
+		buildAggTesterWithFieldType(ast.AggFuncMax, unsignedType, 5, nil, 4),
+		buildAggTester(ast.AggFuncMax, mysql.TypeFloat, 5, nil, 4.0),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDouble, 5, nil, 4.0),
+		buildAggTester(ast.AggFuncMax, mysql.TypeNewDecimal, 5, nil, types.NewDecFromInt(4)),
+		buildAggTester(ast.AggFuncMax, mysql.TypeString, 5, nil, "4", "4"),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDate, 5, nil, types.TimeFromDays(369)),
+		buildAggTester(ast.AggFuncMax, mysql.TypeDuration, 5, nil, types.Duration{Duration: time.Duration(4)}),
+		buildAggTester(ast.AggFuncMax, mysql.TypeJSON, 5, nil, types.CreateBinaryJSON(int64(4))),
 
-		buildAggTester(ast.AggFuncMin, mysql.TypeLonglong, 0, 5, nil, 0),
-		buildAggTesterWithFieldType(ast.AggFuncMin, unsignedType, nil, 5, nil, 0),
-		buildAggTester(ast.AggFuncMin, mysql.TypeFloat, 0, 5, nil, 0.0),
-		buildAggTester(ast.AggFuncMin, mysql.TypeDouble, 0, 5, nil, 0.0),
-		buildAggTester(ast.AggFuncMin, mysql.TypeNewDecimal, 0, 5, nil, types.NewDecFromInt(0)),
-		buildAggTester(ast.AggFuncMin, mysql.TypeString, 0, 5, nil, "0"),
-		buildAggTester(ast.AggFuncMin, mysql.TypeDate, 0, 5, nil, types.TimeFromDays(365)),
-		buildAggTester(ast.AggFuncMin, mysql.TypeDuration, 0, 5, nil, types.Duration{Duration: time.Duration(0)}),
-		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 0, 5, nil, types.CreateBinaryJSON(int64(0))),
+		buildAggTester(ast.AggFuncMin, mysql.TypeLonglong, 5, nil, 0),
+		buildAggTesterWithFieldType(ast.AggFuncMin, unsignedType, 5, nil, 0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeFloat, 5, nil, 0.0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDouble, 5, nil, 0.0),
+		buildAggTester(ast.AggFuncMin, mysql.TypeNewDecimal, 5, nil, types.NewDecFromInt(0)),
+		buildAggTester(ast.AggFuncMin, mysql.TypeString, 5, nil, "0"),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDate, 5, nil, types.TimeFromDays(365)),
+		buildAggTester(ast.AggFuncMin, mysql.TypeDuration, 5, nil, types.Duration{Duration: time.Duration(0)}),
+		buildAggTester(ast.AggFuncMin, mysql.TypeJSON, 5, nil, types.CreateBinaryJSON(int64(0))),
 	}
 	for _, test := range tests {
+		test := test
 		t.Run(test.funcName, func(t *testing.T) {
 			testAggFunc(t, test)
 		})
@@ -170,53 +172,54 @@ func TestMaxMin(t *testing.T) {
 
 func TestMemMaxMin(t *testing.T) {
 	tests := []aggMemTest{
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 0, 5,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 0, 5,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4MaxMinUintSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeNewDecimal, 0, 5,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4MaxMinDecimalSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeFloat, 0, 5,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeFloat, 5,
 			aggfuncs.DefPartialResult4MaxMinFloat32Size, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeDouble, 0, 5,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4MaxMinFloat64Size, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeDate, 0, 5,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeDate, 5,
 			aggfuncs.DefPartialResult4MaxMinTimeSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeDuration, 0, 5,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4MaxMinDurationSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeString, 0, 99,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeString, 99,
 			aggfuncs.DefPartialResult4MaxMinStringSize, maxUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeJSON, 0, 99,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeJSON, 99,
 			aggfuncs.DefPartialResult4MaxMinJSONSize, maxUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeEnum, 0, 99,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeEnum, 99,
 			aggfuncs.DefPartialResult4MaxMinEnumSize, maxUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMax, mysql.TypeSet, 0, 99,
+		buildAggMemTester(ast.AggFuncMax, mysql.TypeSet, 99,
 			aggfuncs.DefPartialResult4MaxMinSetSize, maxUpdateMemDeltaGens, false),
 
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeLonglong, 0, 5,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4MaxMinIntSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeLonglong, 0, 5,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4MaxMinUintSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeNewDecimal, 0, 5,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4MaxMinDecimalSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeFloat, 0, 5,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeFloat, 5,
 			aggfuncs.DefPartialResult4MaxMinFloat32Size, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeDouble, 0, 5,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4MaxMinFloat64Size, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeDate, 0, 5,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeDate, 5,
 			aggfuncs.DefPartialResult4MaxMinTimeSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeDuration, 0, 5,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4MaxMinDurationSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeString, 0, 99,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeString, 99,
 			aggfuncs.DefPartialResult4MaxMinStringSize, minUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeJSON, 0, 99,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeJSON, 99,
 			aggfuncs.DefPartialResult4MaxMinJSONSize, minUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeEnum, 0, 99,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeEnum, 99,
 			aggfuncs.DefPartialResult4MaxMinEnumSize, minUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncMin, mysql.TypeSet, 0, 99,
+		buildAggMemTester(ast.AggFuncMin, mysql.TypeSet, 99,
 			aggfuncs.DefPartialResult4MaxMinSetSize, minUpdateMemDeltaGens, false),
 	}
 	for _, test := range tests {
+		test := test
 		t.Run(test.aggTest.funcName, func(t *testing.T) {
 			testAggMemFunc(t, test)
 		})
@@ -333,7 +336,7 @@ func TestMaxSlidingWindow(t *testing.T) {
 }
 
 func TestDequeReset(t *testing.T) {
-	deque := aggfuncs.NewDeque(true, func(i, j any) int {
+	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return cmp.Compare(i.(int64), j.(int64))
 	})
 	deque.PushBack(0, 12)
@@ -343,12 +346,12 @@ func TestDequeReset(t *testing.T) {
 }
 
 func TestDequePushPop(t *testing.T) {
-	deque := aggfuncs.NewDeque(true, func(i, j any) int {
+	deque := aggfuncs.NewDeque(true, func(i, j interface{}) int {
 		return cmp.Compare(i.(int64), j.(int64))
 	})
 	times := 15
 	// pushes element from back of deque
-	for i := range times {
+	for i := 0; i < times; i++ {
 		if i != 0 {
 			front, isEnd := deque.Front()
 			require.False(t, isEnd)
@@ -363,7 +366,7 @@ func TestDequePushPop(t *testing.T) {
 	}
 
 	// pops element from back of deque
-	for i := range times {
+	for i := 0; i < times; i++ {
 		pair, isEnd := deque.Back()
 		require.False(t, isEnd)
 		require.Equal(t, pair.Item, times-i-1)

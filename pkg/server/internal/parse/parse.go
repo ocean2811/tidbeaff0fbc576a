@@ -19,22 +19,370 @@ import (
 	"context"
 	"encoding/binary"
 	"fmt"
-	"strconv"
-	"strings"
+	"math"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/server/internal/handshake"
-	util2 "github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/klauspost/compress/zstd"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/handshake"
+	util2 "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
+
+var errUnknownFieldType = dbterror.ClassServer.NewStd(errno.ErrUnknownFieldType)
 
 // maxFetchSize constants
 const (
 	maxFetchSize = 1024
 )
+
+// ExecArgs parse execute arguments to datum slice.
+func ExecArgs(sc *stmtctx.StatementContext, params []expression.Expression, boundParams [][]byte,
+	nullBitmap, paramTypes, paramValues []byte, enc *util2.InputDecoder) (err error) {
+	pos := 0
+	var (
+		tmp    interface{}
+		v      []byte
+		n      int
+		isNull bool
+	)
+	if enc == nil {
+		enc = util2.NewInputDecoder(charset.CharsetUTF8)
+	}
+
+	args := make([]types.Datum, len(params))
+	for i := 0; i < len(args); i++ {
+		// if params had received via ComStmtSendLongData, use them directly.
+		// ref https://dev.mysql.com/doc/internals/en/com-stmt-send-long-data.html
+		// see clientConn#handleStmtSendLongData
+		if boundParams[i] != nil {
+			args[i] = types.NewBytesDatum(boundParams[i])
+
+			// The legacy logic is kept: if the `paramTypes` somehow didn't contain the type information, it will be treated as
+			// BLOB type. We didn't return `mysql.ErrMalformPacket` to keep compatibility with older versions, though it's
+			// meaningless if every clients work properly.
+			if (i<<1)+1 < len(paramTypes) {
+				// Only TEXT or BLOB type will be sent through `SEND_LONG_DATA`.
+				tp := paramTypes[i<<1]
+
+				switch tp {
+				case mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString, mysql.TypeBit:
+					args[i] = types.NewStringDatum(string(hack.String(enc.DecodeInput(boundParams[i]))))
+				case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+					args[i] = types.NewBytesDatum(boundParams[i])
+				}
+			}
+			continue
+		}
+
+		// check nullBitMap to determine the NULL arguments.
+		// ref https://dev.mysql.com/doc/internals/en/com-stmt-execute.html
+		// notice: some client(e.g. mariadb) will set nullBitMap even if data had be sent via ComStmtSendLongData,
+		// so this check need place after boundParam's check.
+		if nullBitmap[i>>3]&(1<<(uint(i)%8)) > 0 {
+			var nilDatum types.Datum
+			nilDatum.SetNull()
+			args[i] = nilDatum
+			continue
+		}
+
+		if (i<<1)+1 >= len(paramTypes) {
+			return mysql.ErrMalformPacket
+		}
+
+		tp := paramTypes[i<<1]
+		isUnsigned := (paramTypes[(i<<1)+1] & 0x80) > 0
+
+		switch tp {
+		case mysql.TypeNull:
+			var nilDatum types.Datum
+			nilDatum.SetNull()
+			args[i] = nilDatum
+			continue
+
+		case mysql.TypeTiny:
+			if len(paramValues) < (pos + 1) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+
+			if isUnsigned {
+				args[i] = types.NewUintDatum(uint64(paramValues[pos]))
+			} else {
+				args[i] = types.NewIntDatum(int64(int8(paramValues[pos])))
+			}
+
+			pos++
+			continue
+
+		case mysql.TypeShort, mysql.TypeYear:
+			if len(paramValues) < (pos + 2) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+			valU16 := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
+			if isUnsigned {
+				args[i] = types.NewUintDatum(uint64(valU16))
+			} else {
+				args[i] = types.NewIntDatum(int64(int16(valU16)))
+			}
+			pos += 2
+			continue
+
+		case mysql.TypeInt24, mysql.TypeLong:
+			if len(paramValues) < (pos + 4) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+			valU32 := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
+			if isUnsigned {
+				args[i] = types.NewUintDatum(uint64(valU32))
+			} else {
+				args[i] = types.NewIntDatum(int64(int32(valU32)))
+			}
+			pos += 4
+			continue
+
+		case mysql.TypeLonglong:
+			if len(paramValues) < (pos + 8) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+			valU64 := binary.LittleEndian.Uint64(paramValues[pos : pos+8])
+			if isUnsigned {
+				args[i] = types.NewUintDatum(valU64)
+			} else {
+				args[i] = types.NewIntDatum(int64(valU64))
+			}
+			pos += 8
+			continue
+
+		case mysql.TypeFloat:
+			if len(paramValues) < (pos + 4) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+
+			args[i] = types.NewFloat32Datum(math.Float32frombits(binary.LittleEndian.Uint32(paramValues[pos : pos+4])))
+			pos += 4
+			continue
+
+		case mysql.TypeDouble:
+			if len(paramValues) < (pos + 8) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+
+			args[i] = types.NewFloat64Datum(math.Float64frombits(binary.LittleEndian.Uint64(paramValues[pos : pos+8])))
+			pos += 8
+			continue
+
+		case mysql.TypeDate, mysql.TypeTimestamp, mysql.TypeDatetime:
+			if len(paramValues) < (pos + 1) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+			// See https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
+			// for more details.
+			length := paramValues[pos]
+			pos++
+			switch length {
+			case 0:
+				tmp = types.ZeroDatetimeStr
+			case 4:
+				pos, tmp = binaryDate(pos, paramValues)
+			case 7:
+				pos, tmp = binaryDateTime(pos, paramValues)
+			case 11:
+				pos, tmp = binaryTimestamp(pos, paramValues)
+			case 13:
+				pos, tmp = binaryTimestampWithTZ(pos, paramValues)
+			default:
+				err = mysql.ErrMalformPacket
+				return
+			}
+			args[i] = types.NewDatum(tmp) // FIXME: After check works!!!!!!
+			continue
+
+		case mysql.TypeDuration:
+			if len(paramValues) < (pos + 1) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+			// See https://dev.mysql.com/doc/internals/en/binary-protocol-value.html
+			// for more details.
+			length := paramValues[pos]
+			pos++
+			switch length {
+			case 0:
+				tmp = "0"
+			case 8:
+				isNegative := paramValues[pos]
+				if isNegative > 1 {
+					err = mysql.ErrMalformPacket
+					return
+				}
+				pos++
+				pos, tmp = binaryDuration(pos, paramValues, isNegative)
+			case 12:
+				isNegative := paramValues[pos]
+				if isNegative > 1 {
+					err = mysql.ErrMalformPacket
+					return
+				}
+				pos++
+				pos, tmp = binaryDurationWithMS(pos, paramValues, isNegative)
+			default:
+				err = mysql.ErrMalformPacket
+				return
+			}
+			args[i] = types.NewDatum(tmp)
+			continue
+		case mysql.TypeNewDecimal:
+			if len(paramValues) < (pos + 1) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+
+			v, isNull, n, err = util2.ParseLengthEncodedBytes(paramValues[pos:])
+			pos += n
+			if err != nil {
+				return
+			}
+
+			if isNull {
+				args[i] = types.NewDecimalDatum(nil)
+			} else {
+				var dec types.MyDecimal
+				err = sc.HandleTruncate(dec.FromString(v))
+				if err != nil {
+					return err
+				}
+				args[i] = types.NewDecimalDatum(&dec)
+			}
+			continue
+		case mysql.TypeBlob, mysql.TypeTinyBlob, mysql.TypeMediumBlob, mysql.TypeLongBlob:
+			if len(paramValues) < (pos + 1) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+			v, isNull, n, err = util2.ParseLengthEncodedBytes(paramValues[pos:])
+			pos += n
+			if err != nil {
+				return
+			}
+
+			if isNull {
+				args[i] = types.NewBytesDatum(nil)
+			} else {
+				args[i] = types.NewBytesDatum(v)
+			}
+			continue
+		case mysql.TypeUnspecified, mysql.TypeVarchar, mysql.TypeVarString, mysql.TypeString,
+			mysql.TypeEnum, mysql.TypeSet, mysql.TypeGeometry, mysql.TypeBit:
+			if len(paramValues) < (pos + 1) {
+				err = mysql.ErrMalformPacket
+				return
+			}
+
+			v, isNull, n, err = util2.ParseLengthEncodedBytes(paramValues[pos:])
+			pos += n
+			if err != nil {
+				return
+			}
+
+			if !isNull {
+				v = enc.DecodeInput(v)
+				tmp = string(hack.String(v))
+			} else {
+				tmp = nil
+			}
+			args[i] = types.NewDatum(tmp)
+			continue
+		default:
+			err = errUnknownFieldType.GenWithStack("stmt unknown field type %d", tp)
+			return
+		}
+	}
+
+	for i := range params {
+		ft := new(types.FieldType)
+		types.InferParamTypeFromUnderlyingValue(args[i].GetValue(), ft)
+		params[i] = &expression.Constant{Value: args[i], RetType: ft}
+	}
+	return
+}
+
+func binaryDate(pos int, paramValues []byte) (int, string) {
+	year := binary.LittleEndian.Uint16(paramValues[pos : pos+2])
+	pos += 2
+	month := paramValues[pos]
+	pos++
+	day := paramValues[pos]
+	pos++
+	return pos, fmt.Sprintf("%04d-%02d-%02d", year, month, day)
+}
+
+func binaryDateTime(pos int, paramValues []byte) (int, string) {
+	pos, date := binaryDate(pos, paramValues)
+	hour := paramValues[pos]
+	pos++
+	minute := paramValues[pos]
+	pos++
+	second := paramValues[pos]
+	pos++
+	return pos, fmt.Sprintf("%s %02d:%02d:%02d", date, hour, minute, second)
+}
+
+func binaryTimestamp(pos int, paramValues []byte) (int, string) {
+	pos, dateTime := binaryDateTime(pos, paramValues)
+	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
+	pos += 4
+	return pos, fmt.Sprintf("%s.%06d", dateTime, microSecond)
+}
+
+func binaryTimestampWithTZ(pos int, paramValues []byte) (int, string) {
+	pos, timestamp := binaryTimestamp(pos, paramValues)
+	tzShiftInMin := int16(binary.LittleEndian.Uint16(paramValues[pos : pos+2]))
+	tzShiftHour := tzShiftInMin / 60
+	tzShiftAbsMin := tzShiftInMin % 60
+	if tzShiftAbsMin < 0 {
+		tzShiftAbsMin = -tzShiftAbsMin
+	}
+	pos += 2
+	return pos, fmt.Sprintf("%s%+02d:%02d", timestamp, tzShiftHour, tzShiftAbsMin)
+}
+
+func binaryDuration(pos int, paramValues []byte, isNegative uint8) (int, string) {
+	sign := ""
+	if isNegative == 1 {
+		sign = "-"
+	}
+	days := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
+	pos += 4
+	hours := paramValues[pos]
+	pos++
+	minutes := paramValues[pos]
+	pos++
+	seconds := paramValues[pos]
+	pos++
+	return pos, fmt.Sprintf("%s%d %02d:%02d:%02d", sign, days, hours, minutes, seconds)
+}
+
+func binaryDurationWithMS(pos int, paramValues []byte,
+	isNegative uint8) (int, string) {
+	pos, dur := binaryDuration(pos, paramValues, isNegative)
+	microSecond := binary.LittleEndian.Uint32(paramValues[pos : pos+4])
+	pos += 4
+	return pos, fmt.Sprintf("%s.%06d", dur, microSecond)
+}
 
 // StmtFetchCmd parse COM_STMT_FETCH command
 func StmtFetchCmd(data []byte) (stmtID uint32, fetchSize uint32, err error) {
@@ -43,7 +391,10 @@ func StmtFetchCmd(data []byte) (stmtID uint32, fetchSize uint32, err error) {
 	}
 	// Please refer to https://dev.mysql.com/doc/internals/en/com-stmt-fetch.html
 	stmtID = binary.LittleEndian.Uint32(data[0:4])
-	fetchSize = min(binary.LittleEndian.Uint32(data[4:8]), maxFetchSize)
+	fetchSize = binary.LittleEndian.Uint32(data[4:8])
+	if fetchSize > maxFetchSize {
+		fetchSize = maxFetchSize
+	}
 	return
 }
 
@@ -52,7 +403,7 @@ func HandshakeResponseHeader(ctx context.Context, packet *handshake.Response41, 
 	// Ensure there are enough data to read:
 	// http://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::SSLRequest
 	if len(data) < 4+4+1+23 {
-		logutil.Logger(ctx).Warn("got malformed handshake response", zap.ByteString("packetData", data))
+		logutil.Logger(ctx).Error("got malformed handshake response", zap.ByteString("packetData", data))
 		return 0, mysql.ErrMalformPacket
 	}
 
@@ -92,10 +443,7 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 		if data[offset] == 0x1 { // No auth data
 			offset += 2
 		} else {
-			num, null, off, err := util2.ParseLengthEncodedInt(data[offset:])
-			if err != nil {
-				return mysql.ErrMalformPacket
-			}
+			num, null, off := util2.ParseLengthEncodedInt(data[offset:])
 			offset += off
 			if !null {
 				packet.Auth = data[offset : offset+int(num)]
@@ -136,31 +484,13 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 			// Defend some ill-formated packet, connection attribute is not important and can be ignored.
 			return nil
 		}
-		num, null, intOff, err := util2.ParseLengthEncodedInt(data[offset:])
-		if err != nil {
-			return mysql.ErrMalformPacket
-		}
-		offset += intOff // Length of variable length encoded integer itself in bytes
-		if !null {
-			if num > 1<<20 { // 1 MiB hard limit
-				return errors.New("connection refused: session connection attributes exceed the 1 MiB hard limit")
-			}
-			end := offset + int(num)
-			if end > len(data) {
-				logutil.Logger(ctx).Error("malformed connection attributes packet",
-					zap.Int("offset", offset),
-					zap.Uint64("attrLength", num),
-					zap.Int("dataLen", len(data)))
-				return mysql.ErrMalformPacket
-			}
-			row := data[offset:end]
-			attrs, warningsText, err := parseAttrs(row)
+		if num, null, intOff := util2.ParseLengthEncodedInt(data[offset:]); !null {
+			offset += intOff // Length of variable length encoded integer itself in bytes
+			row := data[offset : offset+int(num)]
+			attrs, err := parseAttrs(row)
 			if err != nil {
 				logutil.Logger(ctx).Warn("parse attrs failed", zap.Error(err))
 				return nil
-			}
-			if warningsText != "" {
-				logutil.Logger(ctx).Debug(warningsText)
 			}
 			packet.Attrs = attrs
 			offset += int(num) // Length of attributes
@@ -168,148 +498,28 @@ func HandshakeResponseBody(ctx context.Context, packet *handshake.Response41, da
 	}
 
 	if packet.Capability&mysql.ClientZstdCompressionAlgorithm > 0 {
-		packet.ZstdLevel = int(data[offset])
+		packet.ZstdLevel = zstd.EncoderLevelFromZstd(int(data[offset]))
 	}
 
 	return nil
 }
 
-// reservedConnAttrTruncated is injected by TiDB when connection attributes
-// are truncated. A client-provided key with the same name may be overwritten
-// when truncation happens.
-const reservedConnAttrTruncated = "_truncated"
-
-var standardConnAttrs = map[string]struct{}{
-	"_client_name":    {},
-	"_client_version": {},
-	"_os":             {},
-	"_pid":            {},
-	"_platform":       {},
-}
-
-type connAttrKV struct {
-	key   string
-	value string
-}
-
-type decodedConnAttrs struct {
-	items                       []connAttrKV
-	totalSize                   int64
-	hasDeprecatedUnderscoreAttr bool
-}
-
-func parseAttrs(data []byte) (map[string]string, string, error) {
-	if vardef.ConnectAttrsSize.Load() == 0 {
-		return map[string]string{}, "", nil
-	}
-
-	decoded, err := decodeConnAttrs(data)
-	if err != nil {
-		return map[string]string{}, "", err
-	}
-	attrs, warningsText := applyConnAttrsPolicyAndMetrics(decoded, vardef.ConnectAttrsSize.Load())
-	return attrs, warningsText, nil
-}
-
-func decodeConnAttrs(data []byte) (decodedConnAttrs, error) {
-	decoded := decodedConnAttrs{items: make([]connAttrKV, 0)}
+func parseAttrs(data []byte) (map[string]string, error) {
+	attrs := make(map[string]string)
 	pos := 0
-
 	for pos < len(data) {
 		key, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return decoded, err
+			return attrs, err
 		}
 		pos += off
-
 		value, _, off, err := util2.ParseLengthEncodedBytes(data[pos:])
 		if err != nil {
-			return decoded, err
+			return attrs, err
 		}
 		pos += off
 
-		keyStr := string(key)
-		valueStr := string(value)
-
-		decoded.items = append(decoded.items, connAttrKV{key: keyStr, value: valueStr})
-		decoded.totalSize += int64(len(key)) + int64(len(value))
-
-		if !decoded.hasDeprecatedUnderscoreAttr && strings.HasPrefix(keyStr, "_") {
-			if _, ok := standardConnAttrs[keyStr]; !ok {
-				decoded.hasDeprecatedUnderscoreAttr = true
-			}
-		}
+		attrs[string(key)] = string(value)
 	}
-
-	return decoded, nil
-}
-
-func applyConnAttrsPolicyAndMetrics(decoded decodedConnAttrs, limit int64) (map[string]string, string) {
-	attrs := make(map[string]string)
-	effectiveLimit := normalizeConnectAttrsLimit(limit)
-
-	var totalSize int64
-	var acceptedSize int64
-	truncated := false
-
-	for _, item := range decoded.items {
-		kvSize := int64(len(item.key)) + int64(len(item.value))
-		totalSize += kvSize
-		if totalSize > effectiveLimit {
-			if !truncated {
-				truncated = true
-				vardef.ConnectAttrsLost.Add(1)
-			}
-			continue
-		}
-		if !truncated {
-			attrs[item.key] = item.value
-			acceptedSize += kvSize
-		}
-	}
-
-	updateConnectAttrsLongestSeen(decoded.totalSize)
-
-	warnings := make([]string, 0, 2)
-	if decoded.hasDeprecatedUnderscoreAttr {
-		warnings = append(warnings,
-			"custom connection attributes with leading underscore are deprecated and will be rejected in a future release")
-	}
-	if truncated {
-		truncatedBytes := decoded.totalSize - acceptedSize
-		attrs[reservedConnAttrTruncated] = strconv.FormatInt(truncatedBytes, 10)
-		warnings = append(warnings, fmt.Sprintf(
-			"session connection attributes truncated: total size %d bytes exceeds "+
-				"performance_schema_session_connect_attrs_size (%d), %d bytes were discarded",
-			decoded.totalSize, effectiveLimit, truncatedBytes))
-	}
-	warningsText := strings.Join(warnings, "; ")
-	return attrs, warningsText
-}
-
-func normalizeConnectAttrsLimit(limit int64) int64 {
-	if limit < 0 {
-		// In MySQL, -1 means autosizing. We map it to a maximum of 64KB (65536)
-		// to prevent unconstrained slow log bloating.
-		return 65536
-	}
-	return limit
-}
-
-func updateConnectAttrsLongestSeen(totalSize int64) {
-	// Update LongestSeen only for normal-sized payloads (< 64 KiB).
-	// Abnormally large payloads are still accepted (up to 1 MiB) but should
-	// not skew this monitoring metric.
-	if totalSize >= 65536 {
-		return
-	}
-	for {
-		old := vardef.ConnectAttrsLongestSeen.Load()
-		if totalSize <= old {
-			break
-		}
-		if vardef.ConnectAttrsLongestSeen.CompareAndSwap(old, totalSize) {
-			break
-		}
-	}
+	return attrs, nil
 }

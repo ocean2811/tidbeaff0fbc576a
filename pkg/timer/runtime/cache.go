@@ -18,8 +18,8 @@ import (
 	"container/list"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/timer/api"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/timer/api"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/timeutil"
 )
 
 type runtimeProcStatus int8

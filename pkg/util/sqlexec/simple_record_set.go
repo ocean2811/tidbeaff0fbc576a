@@ -17,21 +17,21 @@ package sqlexec
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 // SimpleRecordSet is a simple implementation of RecordSet. All values are known when creating SimpleRecordSet.
 type SimpleRecordSet struct {
-	ResultFields []*resolve.ResultField
-	Rows         [][]any
+	ResultFields []*ast.ResultField
+	Rows         [][]interface{}
 	MaxChunkSize int
 	idx          int
 }
 
 // Fields implements the sqlexec.RecordSet interface.
-func (r *SimpleRecordSet) Fields() []*resolve.ResultField {
+func (r *SimpleRecordSet) Fields() []*ast.ResultField {
 	return r.ResultFields
 }
 

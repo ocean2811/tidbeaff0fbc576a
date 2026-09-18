@@ -24,20 +24,19 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/sessiontxn/isolation"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfork"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testfork"
 	"github.com/stretchr/testify/require"
 	tikverr "github.com/tikv/client-go/v2/error"
 )
@@ -337,7 +336,7 @@ func TestRCProviderInitialize(t *testing.T) {
 		tk.MustExec("set @@autocommit=0")
 		assert = inactiveRCTxnAssert(se)
 		assertAfterActive := activeRCTxnAssert(t, se, true)
-		require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 		provider := assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		ts, err := provider.GetStmtReadTS()
@@ -350,7 +349,7 @@ func TestRCProviderInitialize(t *testing.T) {
 		config.GetGlobalConfig().PessimisticTxn.PessimisticAutoCommit.Store(true)
 		assert = inactiveRCTxnAssert(se)
 		assertAfterActive = activeRCTxnAssert(t, se, true)
-		require.NoError(t, se.PrepareTxnCtx(context.TODO(), nil))
+		require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 		provider = assert.CheckAndGetProvider(t)
 		require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 		ts, err = provider.GetStmtReadTS()
@@ -444,7 +443,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 			}
 			assert = inactiveRCTxnAssert(se)
 			assertAfterUseSnapshot := activeSnapshotTxnAssert(se, se.GetSessionVars().SnapshotTS, "READ-COMMITTED")
-			require.NoError(t, se.PrepareTxnCtx(context.TODO(), &ast.InsertStmt{}))
+			require.NoError(t, se.PrepareTxnCtx(context.TODO()))
 			provider = assert.CheckAndGetProvider(t)
 			require.NoError(t, provider.OnStmtStart(context.TODO(), nil))
 			checkUseSnapshot()
@@ -454,7 +453,7 @@ func TestTidbSnapshotVarInRC(t *testing.T) {
 }
 
 func TestConflictErrorsInRC(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertPessimisticLockErr", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertPessimisticLockErr", "return"))
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -535,7 +534,7 @@ func TestConflictErrorsInRC(t *testing.T) {
 
 	tk.MustExec("rollback")
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertPessimisticLockErr"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertPessimisticLockErr"))
 }
 
 func activeRCTxnAssert(t testing.TB, sctx sessionctx.Context, inTxn bool) *txnAssert[*isolation.PessimisticRCTxnContextProvider] {
@@ -566,12 +565,6 @@ func initializePessimisticRCProvider(t testing.TB, tk *testkit.TestKit) *isolati
 }
 
 func TestFailedDMLConsistency1(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		// NextGen hangs when acquiring pessimistic locks after failed DML with fair locking disabled
-		// root cause: cleanup not triggered properly for non-fair mode
-		// this 35682 might be related.
-		t.Skip("skip for next-gen kernel, as this test requires fair-locking")
-	}
 	store := testkit.CreateMockStore(t)
 
 	tk1 := testkit.NewTestKit(t, store)
@@ -602,12 +595,6 @@ func TestFailedDMLConsistency1(t *testing.T) {
 }
 
 func TestFailedDMLConsistency2(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		// NextGen hangs when acquiring pessimistic locks after failed DML with fair locking disabled
-		// root cause: cleanup not triggered properly for non-fair mode.
-		// this 35682 might be related.
-		t.Skip("skip for next-gen kernel, as this test requires fair-locking")
-	}
 	store := testkit.CreateMockStore(t)
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("set @@tidb_txn_assertion_level=strict")

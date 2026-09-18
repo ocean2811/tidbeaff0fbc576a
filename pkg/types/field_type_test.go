@@ -17,8 +17,8 @@ package types
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
 	"github.com/stretchr/testify/require"
 )
 
@@ -158,7 +158,7 @@ func TestFieldType(t *testing.T) {
 
 func TestDefaultTypeForValue(t *testing.T) {
 	tests := []struct {
-		value     any
+		value     interface{}
 		tp        byte
 		flen      int
 		decimal   int

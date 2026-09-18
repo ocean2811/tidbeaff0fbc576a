@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "mock",
     srcs = ["mock.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/topsql/collector/mock",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/collector/mock",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser",

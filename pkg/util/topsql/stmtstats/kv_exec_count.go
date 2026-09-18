@@ -17,7 +17,7 @@ package stmtstats
 import (
 	"sync"
 
-	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	topsqlstate "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/state"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/tikvrpc/interceptor"
 )
@@ -28,7 +28,7 @@ import (
 func (s *StatementStats) CreateKvExecCounter(sqlDigest, planDigest []byte) *KvExecCounter {
 	return &KvExecCounter{
 		stats:  s,
-		digest: newSQLPlanDigest(sqlDigest, planDigest),
+		digest: SQLPlanDigest{SQLDigest: BinaryDigest(sqlDigest), PlanDigest: BinaryDigest(planDigest)},
 		marked: map[string]struct{}{},
 	}
 }

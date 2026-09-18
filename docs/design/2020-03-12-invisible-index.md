@@ -2,7 +2,7 @@
 
 - Author(s):     [Deardrops](https://github.com/Deardrops), [wjhuang2016](https://github.com/wjhuang2016)
 - Last updated:  Mar. 12, 2020
-- Discussion at: https://github.com/pingcap/tidb/issues/9246
+- Discussion at: https://github.com/ocean2811/tidbeaff0fbc576a/issues/9246
 
 ## Abstract
 
@@ -88,4 +88,4 @@ The syntax and functions are basically compatible with MySQL expect:
 
 ## Open issues
 
-https://github.com/pingcap/tidb/issues/9246
+https://github.com/ocean2811/tidbeaff0fbc576a/issues/9246

@@ -16,86 +16,63 @@ package executor
 
 import (
 	"context"
+	"sync/atomic"
 
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/pingcap/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror/exeerrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
 type analyzeSaveStatsWorker struct {
 	resultsCh <-chan *statistics.AnalyzeResults
+	sctx      sessionctx.Context
 	errCh     chan<- error
-	killer    *sqlkiller.SQLKiller
+	killed    *uint32
 }
 
 func newAnalyzeSaveStatsWorker(
 	resultsCh <-chan *statistics.AnalyzeResults,
+	sctx sessionctx.Context,
 	errCh chan<- error,
-	killer *sqlkiller.SQLKiller) *analyzeSaveStatsWorker {
+	killed *uint32) *analyzeSaveStatsWorker {
 	worker := &analyzeSaveStatsWorker{
 		resultsCh: resultsCh,
+		sctx:      sctx,
 		errCh:     errCh,
-		killer:    killer,
+		killed:    killed,
 	}
 	return worker
 }
 
-// run consumes analyze results and persists them. After a kill signal, it
-// enters "drain mode": do not save more stats, just keep consuming resultsCh
-// and finish jobs with the same error so upstream analyze workers are not
-// blocked on sending.
-func (worker *analyzeSaveStatsWorker) run(ctx context.Context, statsHandle *handle.Handle, analyzeSnapshot bool) {
-	// Report at most one error per save worker. errCh is drained only after all
-	// save workers exit, so sending every per-partition failure can fill errCh
-	// and block this worker, which may deadlock the analyze pipeline.
-	errReported := false
-	// drainErr is only used for kill-signal handling. Save failures should not
-	// switch to drain mode, so we can still try to persist stats for later
-	// partitions. ANALYZE may already end up with partially persisted stats.
-	var drainErr error
+func (worker *analyzeSaveStatsWorker) run(ctx context.Context, analyzeSnapshot bool) {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Error("analyze save stats worker panicked", zap.Any("recover", r), zap.Stack("stack"))
-			if !errReported {
-				worker.errCh <- getAnalyzePanicErr(r)
-				errReported = true
-			}
+			worker.errCh <- getAnalyzePanicErr(r)
 		}
 	}()
 	for results := range worker.resultsCh {
-		if drainErr != nil {
-			// Drain mode: consume the remaining results only to unblock producers.
-			finishJobWithLog(statsHandle, results.Job, drainErr)
-			results.DestroyAndPutToPool()
-			continue
+		if atomic.LoadUint32(worker.killed) == 1 {
+			worker.errCh <- errors.Trace(exeerrors.ErrQueryInterrupted)
+			return
 		}
-		failpoint.InjectCall("analyzeSaveWorkerBeforeHandleSignal")
-		if err := worker.killer.HandleSignal(); err != nil {
-			drainErr = err
-			finishJobWithLog(statsHandle, results.Job, drainErr)
-			results.DestroyAndPutToPool()
-			if !errReported {
-				worker.errCh <- drainErr
-				errReported = true
-			}
-			continue
-		}
-		err := statsHandle.SaveAnalyzeResultToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
+		statsHandle := domain.GetDomain(worker.sctx).StatsHandle()
+		err := statsHandle.SaveTableStatsToStorage(results, analyzeSnapshot, util.StatsMetaHistorySourceAnalyze)
 		if err != nil {
-			logutil.Logger(ctx).Warn("save table stats to storage failed", zap.Error(err))
-			finishJobWithLog(statsHandle, results.Job, err)
-			if !errReported {
-				worker.errCh <- err
-				errReported = true
-			}
-			// Keep draining results to avoid blocking analyze workers after a save failure.
+			logutil.Logger(ctx).Error("save table stats to storage failed", zap.Error(err))
+			finishJobWithLog(worker.sctx, results.Job, err)
+			worker.errCh <- err
 		} else {
-			finishJobWithLog(statsHandle, results.Job, nil)
+			finishJobWithLog(worker.sctx, results.Job, nil)
 		}
 		results.DestroyAndPutToPool()
+		if err != nil {
+			return
+		}
 	}
 }

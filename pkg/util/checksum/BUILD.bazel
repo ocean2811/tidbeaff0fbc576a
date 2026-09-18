@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "checksum",
     srcs = ["checksum.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/checksum",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/checksum",
     visibility = ["//visibility:public"],
     deps = ["//pkg/util/zeropool"],
 )

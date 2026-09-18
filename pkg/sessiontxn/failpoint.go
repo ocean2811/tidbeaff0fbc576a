@@ -18,9 +18,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/stringutil"
 )
 
 // AssertRecordsKey is used to save failPoint invoke records
@@ -60,18 +60,18 @@ var CallOnStmtRetryCount stringutil.StringerStr = "callOnStmtRetryCount"
 var AssertLockErr stringutil.StringerStr = "assertLockError"
 
 // RecordAssert is used only for test
-func RecordAssert(sctx sessionctx.Context, name string, value any) {
-	records, ok := sctx.Value(AssertRecordsKey).(map[string]any)
+func RecordAssert(sctx sessionctx.Context, name string, value interface{}) {
+	records, ok := sctx.Value(AssertRecordsKey).(map[string]interface{})
 	if !ok {
-		records = make(map[string]any)
+		records = make(map[string]interface{})
 		sctx.SetValue(AssertRecordsKey, records)
 	}
 	records[name] = value
 }
 
 // AssertTxnManagerInfoSchema is used only for test
-func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is any) {
-	assertVersion := func(expected any) {
+func AssertTxnManagerInfoSchema(sctx sessionctx.Context, is interface{}) {
+	assertVersion := func(expected interface{}) {
 		if expected == nil {
 			return
 		}

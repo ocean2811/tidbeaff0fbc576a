@@ -1,8 +1,8 @@
 # Proposal: Restructure TiDB Tests
 
 - Author(s): [tison](http://github.com/tisonkun)
-- Discussion PR: https://github.com/pingcap/tidb/pull/26024
-- Tracking Issue: https://github.com/pingcap/tidb/issues/26022
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/pull/26024
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/26022
 
 ## Table of Contents
 
@@ -86,9 +86,9 @@ This proposal is basically about tests themselves. And what we design to do with
 
 ## Impacts & Risks
 
-### Projects depend on github.com/pingcap/tidb/util/testkit or other test utils may break
+### Projects depend on github.com/ocean2811/tidbeaff0fbc576a/util/testkit or other test utils may break
 
-For example, [pingcap/br](http://github.com/pingcap/br), which has an unfortunate circle dependency with pingcap/tidb for historical reasons, depends on `github.com/pingcap/tidb/util/testkit` and will be broken after we reach phase 2.
+For example, [pingcap/br](http://github.com/pingcap/br), which has an unfortunate circle dependency with pingcap/tidb for historical reasons, depends on `github.com/ocean2811/tidbeaff0fbc576a/util/testkit` and will be broken after we reach phase 2.
 
 However, those projects can copy and paste the missing kits when implementation comes to phase 2. Also, we can take care of these cases and help them get rid of pingcap/check later.
 

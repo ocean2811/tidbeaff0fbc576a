@@ -15,7 +15,7 @@
 package t
 
 import (
-	"github.com/pingcap/tidb/pkg/util/linter/constructor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/linter/constructor"
 )
 
 // StructWithSpecificConstructor is a struct with `Constructor`
@@ -59,24 +59,14 @@ func otherFunction() {
 	_ = new(StructWithSpecificConstructor) // want `struct can only be constructed in constructors NewStructWithSpecificConstructor, AnotherConstructor`
 
 	// var
-	var _ StructWithSpecificConstructor // want `struct can only be constructed in constructors NewStructWithSpecificConstructor, AnotherConstructor`
-	var _ *StructWithSpecificConstructor
+	var _ StructWithSpecificConstructor  // want `struct can only be constructed in constructors NewStructWithSpecificConstructor, AnotherConstructor`
+	var _ *StructWithSpecificConstructor // want `struct can only be constructed in constructors NewStructWithSpecificConstructor, AnotherConstructor`
 
 	type compositeImplicitInitiate1 struct {
 		StructWithSpecificConstructor
 	}
 	var _ compositeImplicitInitiate1    // want `struct can only be constructed in constructors NewStructWithSpecificConstructor, AnotherConstructor`
 	_ = new(compositeImplicitInitiate1) // want `struct can only be constructed in constructors NewStructWithSpecificConstructor, AnotherConstructor`
-
-	// specified field is also allowed
-	_ = compositeImplicitInitiate1{
-		StructWithSpecificConstructor: *NewStructWithSpecificConstructor(),
-	}
-
-	// specified field with manually constructed struct is not allowed
-	_ = compositeImplicitInitiate1{
-		StructWithSpecificConstructor: StructWithSpecificConstructor{}, // want `struct can only be constructed in constructors NewStructWithSpecificConstructor, AnotherConstructor`
-	}
 
 	// pointer field is allowed
 	type compositeImplicitInitiate2 struct {

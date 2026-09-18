@@ -14,14 +14,12 @@
 package ast_test
 
 import (
-	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser"
-	. "github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/test_driver"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	. "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/test_driver"
 	"github.com/stretchr/testify/require"
 )
 
@@ -35,8 +33,8 @@ func TestFunctionsVisitorCover(t *testing.T) {
 	}
 
 	for _, stmt := range stmts {
-		Walk(stmt, visitor{})
-		Walk(stmt, visitor1{})
+		stmt.Accept(visitor{})
+		stmt.Accept(visitor1{})
 	}
 }
 
@@ -71,6 +69,7 @@ func TestFuncCallExprRestore(t *testing.T) {
 		{"SUBSTRING('Quadratically' FROM 5)", "SUBSTRING(_UTF8MB4'Quadratically', 5)"},
 		{"SUBSTRING('Quadratically', 5, 6)", "SUBSTRING(_UTF8MB4'Quadratically', 5, 6)"},
 		{"SUBSTRING('Quadratically' FROM 5 FOR 6)", "SUBSTRING(_UTF8MB4'Quadratically', 5, 6)"},
+		{"MASTER_POS_WAIT(@log_name, @log_pos, @timeout, @channel_name)", "MASTER_POS_WAIT(@`log_name`, @`log_pos`, @`timeout`, @`channel_name`)"},
 		{"JSON_TYPE('[123]')", "JSON_TYPE(_UTF8MB4'[123]')"},
 		{"bit_and(all c1)", "BIT_AND(`c1`)"},
 		{"nextval(seq)", "NEXTVAL(`seq`)"},
@@ -244,23 +243,4 @@ func TestGenericFuncRestore(t *testing.T) {
 		return node.(*SelectStmt).Fields.Fields[0].Expr
 	}
 	runNodeRestoreTest(t, testCases, "select %s from t", extractNodeFunc)
-}
-
-func TestRestoreWithError(t *testing.T) {
-	testCases := []string{
-		"json_memberof()",
-	}
-
-	extractNodeFunc := func(node Node) Node {
-		return node.(*SelectStmt).Fields.Fields[0].Expr
-	}
-
-	for _, c := range testCases {
-		sql := "select " + c
-		p := parser.New()
-		stmt, err := p.ParseOneStmt(sql, "", "")
-		require.NoError(t, err)
-		var sb strings.Builder
-		require.Error(t, extractNodeFunc(stmt).Restore(format.NewRestoreCtx(format.DefaultRestoreFlags, &sb)))
-	}
 }

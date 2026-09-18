@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/resourcemanager/scheduler"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
-	"github.com/pingcap/tidb/pkg/util/cgroup"
-	"github.com/pingcap/tidb/pkg/util/cpu"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/scheduler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/cgroup"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/cpu"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,7 +37,7 @@ func TestCPUValue(t *testing.T) {
 	observer := cpu.NewCPUObserver()
 	exit := make(chan struct{})
 	var wg sync.WaitGroup
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -52,7 +52,7 @@ func TestCPUValue(t *testing.T) {
 		}()
 	}
 	observer.Start()
-	for range 10 {
+	for n := 0; n < 10; n++ {
 		time.Sleep(200 * time.Millisecond)
 		value, unsupported := cpu.GetCPUUsage()
 		require.False(t, unsupported)
@@ -65,14 +65,14 @@ func TestCPUValue(t *testing.T) {
 }
 
 func TestFailpointCPUValue(t *testing.T) {
-	failpoint.Enable("github.com/pingcap/tidb/pkg/util/cgroup/GetCgroupCPUErr", "return(true)")
+	failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/cgroup/GetCgroupCPUErr", "return(true)")
 	defer func() {
-		failpoint.Disable("github.com/pingcap/tidb/pkg/util/cgroup/GetCgroupCPUErr")
+		failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/cgroup/GetCgroupCPUErr")
 	}()
 	observer := cpu.NewCPUObserver()
 	exit := make(chan struct{})
 	var wg sync.WaitGroup
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -87,7 +87,7 @@ func TestFailpointCPUValue(t *testing.T) {
 		}()
 	}
 	observer.Start()
-	for range 10 {
+	for n := 0; n < 10; n++ {
 		time.Sleep(200 * time.Millisecond)
 		value, unsupported := cpu.GetCPUUsage()
 		require.True(t, unsupported)

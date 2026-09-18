@@ -18,7 +18,7 @@ This document proposes to support global index for partition table, which can re
 
 ### Partitioned table index in TiDB
 
-In TiDB, index entries are encoded to key-value pairs, like: (In practice, index encoding is more complex, see [this article](https://pingcap.com/blog/2017-07-11-tidbinternal2/#map) and two proposals about [full collations](https://github.com/pingcap/tidb/pull/14574) and [cluster index](https://github.com/pingcap/tidb/blob/master/docs/design/2020-05-08-cluster-index.md) for more information.)
+In TiDB, index entries are encoded to key-value pairs, like: (In practice, index encoding is more complex, see [this article](https://pingcap.com/blog/2017-07-11-tidbinternal2/#map) and two proposals about [full collations](https://github.com/ocean2811/tidbeaff0fbc576a/pull/14574) and [cluster index](https://github.com/ocean2811/tidbeaff0fbc576a/blob/master/docs/design/2020-05-08-cluster-index.md) for more information.)
 
 ```
 Key: tablePrefix{tableID}_indexPrefixSep{indexID}_indexedColumnsValue
@@ -174,7 +174,7 @@ Add extra one range deletion to clean global indexes.
 
 ### Read from global index
 
-In TiDB, operators in the partitioned table will be translated to UnionAll in the logical plan phase. But an in-progress project plan to translate operators to new partitioned table executors (see issue: [#18016](https://github.com/pingcap/tidb/issues/18016)). we will follow this project and add global index support in new executors.
+In TiDB, operators in the partitioned table will be translated to UnionAll in the logical plan phase. But an in-progress project plan to translate operators to new partitioned table executors (see issue: [#18016](https://github.com/ocean2811/tidbeaff0fbc576a/issues/18016)). we will follow this project and add global index support in new executors.
 
 ## Rationale
 
@@ -187,4 +187,4 @@ MySQL does not support global index, which means this feature may cause some com
 
 ## Implementation
 
-DDL operations will be implemented first.  Plan and executor supports  will be implemented after [new PartitionTable executor](https://github.com/pingcap/tidb/issues/18016)  is completed.
+DDL operations will be implemented first.  Plan and executor supports  will be implemented after [new PartitionTable executor](https://github.com/ocean2811/tidbeaff0fbc576a/issues/18016)  is completed.

@@ -11,7 +11,7 @@ go_library(
         "parser.go",
         "rand.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/importer",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/importer",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser",

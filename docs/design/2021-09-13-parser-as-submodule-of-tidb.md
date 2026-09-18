@@ -2,7 +2,7 @@
 
 - Author(s): [xhebox](http://github.com/xhebox)
 - Discussion: [Move parser back to pingcap/tidb](https://internals.tidb.io/t/topic/385)
-- Tracking Issue: [Tracking issue for moving parser back to TiDB](https://github.com/pingcap/tidb/issues/28257)
+- Tracking Issue: [Tracking issue for moving parser back to TiDB](https://github.com/ocean2811/tidbeaff0fbc576a/issues/28257)
 
 ## Table of Contents
 
@@ -23,7 +23,7 @@ I will explain why and how to migrate the parser back to the TiDB repository.
 
 ### Why did we move parser into a separate repository?
 
-The original PR moving out parser is [tidb#7923: Move TiDB parser to a separate repository](https://github.com/pingcap/tidb/issues/7923). When we migrated to go module 111, @tiancaiamao decided to do so, because:
+The original PR moving out parser is [tidb#7923: Move TiDB parser to a separate repository](https://github.com/ocean2811/tidbeaff0fbc576a/issues/7923). When we migrated to go module 111, @tiancaiamao decided to do so, because:
 
 > We can put the generated `parser.go` in the repository directly, rather than generate it using Makefile script. The drawback of this way is that every time `parser.y` is touched, there will be many lines change in `parser.go` . Then the TiDB repo will be inflate quickly.
 >
@@ -55,7 +55,7 @@ The detailed plan:
 1. Create parser directory, a sub-module, in pingcap/tidb, which is synchronized with pingcap/parser, with `replace github.com/pingcap/parser => ./parser`.
 2. Stop sending new PRs and issues to pingcap/parser, new PRs should be directly sent to pingcap/tidb. And merge recent PRs in pingcap/parser as much as possible. Changes will be synchronized from pingcap/parser to pingcap/tidb manually, of course.
 3. Announce the deprecation of pingcap/parser to possible users. Clean up old PRs, reopen it in pingcap/tidb, close it, or just forget about it. As for issues, by @kennytm, we could directly transfer all issues to pingcap/tidb according to the [document](https://docs.github.com/en/issues/tracking-your-work-with-issues/transferring-an-issue-to-another-repository). As for tests, we need to migrate the verify CI tests on jenkins. Since TiDB may migrate to verify CI eventually, it is not a good idea if we migrate to things other than verify CI. Rewriting the import path is enough for migrating verify CI.
-4. We can create wrapper packages for pingcap/parser, which re-exports things from `pingcap/tidb/parser`. I mean something like `import ( . github.com/pingcap/tidb/parser/xxx)`, create a dummy function will eliminate the error of `not used import`. All code of pingcap/parser will be removed in this step. This will delevery new updates without the need of migrating importing paths.
+4. We can create wrapper packages for pingcap/parser, which re-exports things from `pingcap/tidb/parser`. I mean something like `import ( . github.com/ocean2811/tidbeaff0fbc576a/parser/xxx)`, create a dummy function will eliminate the error of `not used import`. All code of pingcap/parser will be removed in this step. This will delevery new updates without the need of migrating importing paths.
 5. After another one or two dev cycles, we could archive pingcap/parser. It mainly depends on users of pingcap/parser.
 
 There will be a tracking issue, and the whole progress is public. Step 1 or 2 will likely take one or two weeks. Internally we could do the migration for internal tools while doing step 3.

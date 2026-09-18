@@ -21,11 +21,11 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/server/handler"
-	"github.com/pingcap/tidb/pkg/session"
-	ttlcient "github.com/pingcap/tidb/pkg/ttl/client"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	ttlcient "github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/client"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 

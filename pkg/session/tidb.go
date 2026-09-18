@@ -20,83 +20,40 @@ package session
 
 import (
 	"context"
+	"sync"
+	"sync/atomic"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/schematracker"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/extworkload"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/infoschema/issyncer"
-	"github.com/pingcap/tidb/pkg/infoschema/validatorapi"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/pkg/util/syncutil"
-	clientv3 "go.etcd.io/etcd/client/v3"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/schematracker"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	session_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/session/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror/exeerrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/syncutil"
 	"go.uber.org/zap"
 )
-
-// StoreBootstrappedKey is used by store.G/SetOption to store related bootstrap context for kv.Storage.
-const StoreBootstrappedKey = "bootstrap"
 
 type domainMap struct {
 	mu      syncutil.Mutex
 	domains map[string]*domain.Domain
 }
 
-type domainCreateOptions struct {
-	extWorkloadMgr          extworkload.Manager
-	serverInfoSyncerOptions []serverinfo.SyncerOption
-}
-
-// Get or create the domain for store.
-// TODO decouple domain create from it, it's more clear to create domain explicitly
-// before any usage of it.
 func (dm *domainMap) Get(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, nil, domainCreateOptions{})
-}
-
-// GetOrCreateWithEtcdClient gets or creates the domain for store with etcd client.
-//
-// Caveat: If there is already a domain opened with your `store`, the filter passed in will be ignored and
-// the actual schema filter of the returned `Domain` is the one when the domain were created.
-func (dm *domainMap) GetOrCreateWithFilter(store kv.Storage, filter issyncer.Filter) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, filter, domainCreateOptions{})
-}
-
-func (dm *domainMap) getDomainForGlobalVarInit(store kv.Storage) (d *domain.Domain, err error) {
-	return dm.getWithEtcdClient(store, nil, systemDBFilter{}, domainCreateOptions{
-		serverInfoSyncerOptions: []serverinfo.SyncerOption{serverinfo.WithoutStatusEndpointClaim()},
-	})
-}
-
-func (dm *domainMap) getWithEtcdClient(
-	store kv.Storage,
-	etcdClient *clientv3.Client,
-	schemaFilter issyncer.Filter,
-	opts domainCreateOptions,
-) (d *domain.Domain, err error) {
 	dm.mu.Lock()
 	defer dm.mu.Unlock()
 
@@ -115,31 +72,25 @@ func (dm *domainMap) getWithEtcdClient(
 		return
 	}
 
-	ddlLease := vardef.GetSchemaLease()
-	statisticLease := vardef.GetStatsLease()
-	planReplayerGCLease := vardef.GetPlanReplayerGCLease()
+	ddlLease := time.Duration(atomic.LoadInt64(&schemaLease))
+	statisticLease := time.Duration(atomic.LoadInt64(&statsLease))
+	idxUsageSyncLease := GetIndexUsageSyncLease()
+	planReplayerGCLease := GetPlanReplayerGCLease()
 	err = util.RunWithRetry(util.DefaultMaxRetries, util.RetryInterval, func() (retry bool, err1 error) {
 		logutil.BgLogger().Info("new domain",
 			zap.String("store", store.UUID()),
 			zap.Stringer("ddl lease", ddlLease),
-			zap.Stringer("stats lease", statisticLease))
-		factory := getSessionFactory(store)
-		sysFactory := getSessionFactoryWithDom(store)
-		d = domain.NewDomainWithEtcdClient(store, ddlLease, statisticLease, planReplayerGCLease, factory,
-			func(targetKS string, schemaValidator validatorapi.Validator) pools.Factory {
-				return getCrossKSSessionFactory(store, targetKS, schemaValidator)
-			},
-			etcdClient,
-			schemaFilter,
-			opts.serverInfoSyncerOptions...,
-		)
-		d.SetExternalWorkloadManager(opts.extWorkloadMgr)
+			zap.Stringer("stats lease", statisticLease),
+			zap.Stringer("index usage sync lease", idxUsageSyncLease))
+		factory := createSessionFunc(store)
+		sysFactory := createSessionWithDomainFunc(store)
+		d = domain.NewDomain(store, ddlLease, statisticLease, idxUsageSyncLease, planReplayerGCLease, factory)
 
-		var ddlInjector func(ddl.DDL, ddl.Executor, *infoschema.InfoCache) *schematracker.Checker
+		var ddlInjector func(ddl.DDL) *schematracker.Checker
 		if injector, ok := store.(schematracker.StorageDDLInjector); ok {
 			ddlInjector = injector.Injector
 		}
-		err1 = d.Init(sysFactory, ddlInjector)
+		err1 = d.Init(ddlLease, sysFactory, ddlInjector)
 		if err1 != nil {
 			// If we don't clean it, there are some dirty data when retrying the function of Init.
 			d.Close()
@@ -169,18 +120,86 @@ var (
 	domap = &domainMap{
 		domains: map[string]*domain.Domain{},
 	}
+	// store.UUID()-> IfBootstrapped
+	storeBootstrapped     = make(map[string]bool)
+	storeBootstrappedLock sync.Mutex
+
+	// schemaLease is the time for re-updating remote schema.
+	// In online DDL, we must wait 2 * SchemaLease time to guarantee
+	// all servers get the neweset schema.
+	// Default schema lease time is 1 second, you can change it with a proper time,
+	// but you must know that too little may cause badly performance degradation.
+	// For production, you should set a big schema lease, like 300s+.
+	schemaLease = int64(1 * time.Second)
+
+	// statsLease is the time for reload stats table.
+	statsLease = int64(3 * time.Second)
+
+	// indexUsageSyncLease is the time for index usage synchronization.
+	// Because we have not completed GC and other functions, we set it to 0.
+	// TODO: Set indexUsageSyncLease to 60s.
+	indexUsageSyncLease = int64(0 * time.Second)
+
+	// planReplayerGCLease is the time for plan replayer gc.
+	planReplayerGCLease = int64(10 * time.Minute)
 )
 
 // ResetStoreForWithTiKVTest is only used in the test code.
 // TODO: Remove domap and storeBootstrapped. Use store.SetOption() to do it.
 func ResetStoreForWithTiKVTest(store kv.Storage) {
 	domap.Delete(store)
-	store.SetOption(StoreBootstrappedKey, nil)
+	unsetStoreBootstrapped(store.UUID())
+}
+
+func setStoreBootstrapped(storeUUID string) {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	storeBootstrapped[storeUUID] = true
+}
+
+// unsetStoreBootstrapped delete store uuid from stored bootstrapped map.
+// currently this function only used for test.
+func unsetStoreBootstrapped(storeUUID string) {
+	storeBootstrappedLock.Lock()
+	defer storeBootstrappedLock.Unlock()
+	delete(storeBootstrapped, storeUUID)
+}
+
+// SetSchemaLease changes the default schema lease time for DDL.
+// This function is very dangerous, don't use it if you really know what you do.
+// SetSchemaLease only affects not local storage after bootstrapped.
+func SetSchemaLease(lease time.Duration) {
+	atomic.StoreInt64(&schemaLease, int64(lease))
+}
+
+// SetStatsLease changes the default stats lease time for loading stats info.
+func SetStatsLease(lease time.Duration) {
+	atomic.StoreInt64(&statsLease, int64(lease))
+}
+
+// SetIndexUsageSyncLease changes the default index usage sync lease time for loading info.
+func SetIndexUsageSyncLease(lease time.Duration) {
+	atomic.StoreInt64(&indexUsageSyncLease, int64(lease))
+}
+
+// GetIndexUsageSyncLease returns the index usage sync lease time.
+func GetIndexUsageSyncLease() time.Duration {
+	return time.Duration(atomic.LoadInt64(&indexUsageSyncLease))
+}
+
+// SetPlanReplayerGCLease changes the default plan repalyer gc lease time.
+func SetPlanReplayerGCLease(lease time.Duration) {
+	atomic.StoreInt64(&planReplayerGCLease, int64(lease))
+}
+
+// GetPlanReplayerGCLease returns the plan replayer gc lease time.
+func GetPlanReplayerGCLease() time.Duration {
+	return time.Duration(atomic.LoadInt64(&planReplayerGCLease))
 }
 
 // DisableStats4Test disables the stats for tests.
 func DisableStats4Test() {
-	vardef.SetStatsLease(-1)
+	SetStatsLease(-1)
 }
 
 // Parse parses a query string to raw ast.StmtNode.
@@ -222,46 +241,10 @@ func recordAbortTxnDuration(sessVars *variable.SessionVars, isInternal bool) {
 
 func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
 	sessVars := se.sessionVars
-	failpoint.Inject("finishStmtError", func(val failpoint.Value) {
-		failCurrentSession := true
-		switch v := val.(type) {
-		case int:
-			failCurrentSession = uint64(v) == sessVars.ConnectionID
-		case int64:
-			failCurrentSession = uint64(v) == sessVars.ConnectionID
-		case uint64:
-			failCurrentSession = v == sessVars.ConnectionID
-		case float64:
-			failCurrentSession = uint64(v) == sessVars.ConnectionID
-		}
-		if failCurrentSession {
-			failpoint.Return(errors.New("occur an error after finishStmt"))
-		}
-	})
-	readOnly := sql.IsReadOnly(sessVars)
-	if !readOnly && meetsErr == nil {
-		checkConnectionAlive := shouldCheckConnectionAliveBeforeCommit(sessVars, sql)
-		if checkConnectionAlive {
-			sessVars.SQLKiller.CheckConnectionAlive()
-		}
-		// Honor timeout signals before commit, even if the context is not yet canceled.
-		// Leave other signals to executors unless a connection check is needed.
-		if checkConnectionAlive || sessVars.SQLKiller.GetKillSignal() == sqlkiller.MaxExecTimeExceeded {
-			meetsErr = handlePendingSQLKillerSignal(sessVars)
-		}
-	}
-	if !readOnly {
+	if !sql.IsReadOnly(sessVars) {
+		// All the history should be added here.
 		if meetsErr == nil && sessVars.TxnCtx.CouldRetry {
-			// Add only retry-safe write statements to StmtHistory.
-			// LOAD DATA LOCAL INFILE uses a one-shot client file stream via
-			// the 0xfb protocol; retrying would desync the connection.
-			// Disable retry instead of recording it. Only LOCAL is affected;
-			// non-LOCAL reads from server/remote storage and can be safely retried.
-			if isLoadDataLocal(sql) {
-				sessVars.TxnCtx.CouldRetry = false
-			} else {
-				GetHistory(se).Add(sql, sessVars.StmtCtx)
-			}
+			GetHistory(se).Add(sql, sessVars.StmtCtx)
 		}
 
 		// Handle the stmt commit/rollback.
@@ -273,7 +256,7 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 			}
 		}
 	}
-	err := executor.NormalizeStmtCancellationError(sessVars, autoCommitAfterStmt(ctx, se, meetsErr, sql))
+	err := autoCommitAfterStmt(ctx, se, meetsErr, sql)
 	if se.txn.pending() {
 		// After run statement finish, txn state is still pending means the
 		// statement never need a Txn(), such as:
@@ -291,56 +274,6 @@ func finishStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.St
 	return checkStmtLimit(ctx, se, true)
 }
 
-// handlePendingSQLKillerSignal avoids checking connection liveness when no signal is pending.
-func handlePendingSQLKillerSignal(sessVars *variable.SessionVars) error {
-	if sessVars.SQLKiller.GetKillSignal() == sqlkiller.UnspecifiedKillSignal {
-		return nil
-	}
-	return sessVars.SQLKiller.HandleSignal()
-}
-
-// isLoadDataLocal returns true if the statement is LOAD DATA LOCAL INFILE.
-func isLoadDataLocal(sql sqlexec.Statement) bool {
-	if s, ok := sql.GetStmtNode().(*ast.LoadDataStmt); ok {
-		return s.FileLocRef == ast.FileLocClient
-	}
-	return false
-}
-
-// Avoid probing the socket on fast OLTP DML. This matches SQLKiller's normal
-// connection-alive throttle, while still covering long statements that reach
-// the disconnect-before-commit race without hitting another checkpoint.
-const minConnectionAliveCheckBeforeCommitDuration = time.Second
-
-func shouldCheckConnectionAliveBeforeCommit(sessVars *variable.SessionVars, sql sqlexec.Statement) bool {
-	if !sessVars.IsAutocommit() || sessVars.InTxn() {
-		return false
-	}
-	if !sessVars.StartTime.IsZero() && time.Since(sessVars.StartTime) < minConnectionAliveCheckBeforeCommitDuration {
-		return false
-	}
-	stmt, err := resolvePreparedStmt(sql.GetStmtNode(), sessVars)
-	if err != nil || stmt == nil {
-		return false
-	}
-	switch stmt.(type) {
-	case *ast.InsertStmt, *ast.UpdateStmt, *ast.DeleteStmt:
-		return true
-	default:
-		return false
-	}
-}
-
-func shouldRollbackTxnOnError(txn kv.Transaction, err error) bool {
-	if !txn.Valid() {
-		return false
-	}
-	if kv.ErrSharedLockLost.Equal(err) {
-		return true
-	}
-	return txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(err)
-}
-
 func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql sqlexec.Statement) error {
 	isInternal := false
 	if internal := se.txn.GetOption(kv.RequestSourceInternal); internal != nil && internal.(bool) {
@@ -352,16 +285,8 @@ func autoCommitAfterStmt(ctx context.Context, se *session, meetsErr error, sql s
 			logutil.BgLogger().Info("rollbackTxn called due to ddl/autocommit failure")
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
-		} else if shouldRollbackTxnOnError(&se.txn, meetsErr) {
-			if kv.ErrSharedLockLost.Equal(meetsErr) {
-				logutil.BgLogger().Info(
-					"rollbackTxn for shared lock loss",
-					zap.Uint64("txn", se.txn.StartTS()),
-					zap.Error(meetsErr),
-				)
-			} else {
-				logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
-			}
+		} else if se.txn.Valid() && se.txn.IsPessimistic() && exeerrors.ErrDeadlock.Equal(meetsErr) {
+			logutil.BgLogger().Info("rollbackTxn for deadlock", zap.Uint64("txn", se.txn.StartTS()))
 			se.RollbackTxn(ctx)
 			recordAbortTxnDuration(sessVars, isInternal)
 		}
@@ -451,7 +376,7 @@ func GetRows4Test(ctx context.Context, _ sessionctx.Context, rs sqlexec.RecordSe
 }
 
 // ResultSetToStringSlice changes the RecordSet to [][]string.
-func ResultSetToStringSlice(ctx context.Context, s sessionapi.Session, rs sqlexec.RecordSet) ([][]string, error) {
+func ResultSetToStringSlice(ctx context.Context, s Session, rs sqlexec.RecordSet) ([][]string, error) {
 	rows, err := GetRows4Test(ctx, s, rs)
 	if err != nil {
 		return nil, err
@@ -464,7 +389,7 @@ func ResultSetToStringSlice(ctx context.Context, s sessionapi.Session, rs sqlexe
 	for i := range rows {
 		row := rows[i]
 		iRow := make([]string, row.Len())
-		for j := range row.Len() {
+		for j := 0; j < row.Len(); j++ {
 			if row.IsNull(j) {
 				iRow[j] = "<nil>"
 			} else {

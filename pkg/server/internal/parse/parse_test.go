@@ -15,13 +15,242 @@
 package parse
 
 import (
-	"bytes"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"github.com/stretchr/testify/require"
 )
+
+func TestParseExecArgs(t *testing.T) {
+	type args struct {
+		args        []expression.Expression
+		boundParams [][]byte
+		nullBitmap  []byte
+		paramTypes  []byte
+		paramValues []byte
+	}
+	tests := []struct {
+		args   args
+		err    error
+		expect interface{}
+	}{
+		// Tests for int overflow
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{1, 0},
+				[]byte{0xff},
+			},
+			nil,
+			int64(-1),
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{2, 0},
+				[]byte{0xff, 0xff},
+			},
+			nil,
+			int64(-1),
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{3, 0},
+				[]byte{0xff, 0xff, 0xff, 0xff},
+			},
+			nil,
+			int64(-1),
+		},
+		// Tests for date/datetime/timestamp
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{12, 0},
+				[]byte{0x0b, 0xda, 0x07, 0x0a, 0x11, 0x13, 0x1b, 0x1e, 0x01, 0x00, 0x00, 0x00},
+			},
+			nil,
+			"2010-10-17 19:27:30.000001",
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{10, 0},
+				[]byte{0x04, 0xda, 0x07, 0x0a, 0x11},
+			},
+			nil,
+			"2010-10-17",
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{7, 0},
+				[]byte{0x0b, 0xda, 0x07, 0x0a, 0x11, 0x13, 0x1b, 0x1e, 0x01, 0x00, 0x00, 0x00},
+			},
+			nil,
+			"2010-10-17 19:27:30.000001",
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{7, 0},
+				[]byte{0x07, 0xda, 0x07, 0x0a, 0x11, 0x13, 0x1b, 0x1e},
+			},
+			nil,
+			"2010-10-17 19:27:30",
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{7, 0},
+				[]byte{0x0d, 0xdb, 0x07, 0x02, 0x03, 0x04, 0x05, 0x06, 0x40, 0xe2, 0x01, 0x00, 0xf2, 0x02},
+			},
+			nil,
+			"2011-02-03 04:05:06.123456+12:34",
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{7, 0},
+				[]byte{0x0d, 0xdb, 0x07, 0x02, 0x03, 0x04, 0x05, 0x06, 0x40, 0xe2, 0x01, 0x00, 0x0e, 0xfd},
+			},
+			nil,
+			"2011-02-03 04:05:06.123456-12:34",
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{7, 0},
+				[]byte{0x00},
+			},
+			nil,
+			types.ZeroDatetimeStr,
+		},
+		// Tests for time
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{11, 0},
+				[]byte{0x0c, 0x01, 0x78, 0x00, 0x00, 0x00, 0x13, 0x1b, 0x1e, 0x01, 0x00, 0x00, 0x00},
+			},
+			nil,
+			"-120 19:27:30.000001",
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{11, 0},
+				[]byte{0x08, 0x01, 0x78, 0x00, 0x00, 0x00, 0x13, 0x1b, 0x1e},
+			},
+			nil,
+			"-120 19:27:30",
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{11, 0},
+				[]byte{0x00},
+			},
+			nil,
+			"0",
+		},
+		// For error test
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{7, 0},
+				[]byte{10},
+			},
+			mysql.ErrMalformPacket,
+			nil,
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{11, 0},
+				[]byte{10},
+			},
+			mysql.ErrMalformPacket,
+			nil,
+		},
+		{
+			args{
+				expression.Args2Expressions4Test(1),
+				[][]byte{nil},
+				[]byte{0x0},
+				[]byte{11, 0},
+				[]byte{8, 2},
+			},
+			mysql.ErrMalformPacket,
+			nil,
+		},
+	}
+	for _, tt := range tests {
+		err := ExecArgs(stmtctx.NewStmtCtx(), tt.args.args, tt.args.boundParams, tt.args.nullBitmap, tt.args.paramTypes, tt.args.paramValues, nil)
+		require.Truef(t, terror.ErrorEqual(err, tt.err), "err %v", err)
+		if err == nil {
+			require.Equal(t, tt.expect, tt.args.args[0].(*expression.Constant).Value.GetValue())
+		}
+	}
+}
+
+func TestParseExecArgsAndEncode(t *testing.T) {
+	dt := expression.Args2Expressions4Test(1)
+	err := ExecArgs(stmtctx.NewStmtCtx(),
+		dt,
+		[][]byte{nil},
+		[]byte{0x0},
+		[]byte{mysql.TypeVarchar, 0},
+		[]byte{4, 178, 226, 202, 212},
+		util.NewInputDecoder("gbk"))
+	require.NoError(t, err)
+	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetValue())
+
+	err = ExecArgs(stmtctx.NewStmtCtx(),
+		dt,
+		[][]byte{{178, 226, 202, 212}},
+		[]byte{0x0},
+		[]byte{mysql.TypeString, 0},
+		[]byte{},
+		util.NewInputDecoder("gbk"))
+	require.NoError(t, err)
+	require.Equal(t, "测试", dt[0].(*expression.Constant).Value.GetString())
+}
 
 func TestParseStmtFetchCmd(t *testing.T) {
 	tests := []struct {
@@ -44,71 +273,4 @@ func TestParseStmtFetchCmd(t *testing.T) {
 		require.Equal(t, tc.fetchSize, fetchSize)
 		require.Equal(t, tc.err, err)
 	}
-}
-
-func TestParseAttrsUnderscoreWarning(t *testing.T) {
-	origSize := vardef.ConnectAttrsSize.Load()
-	defer vardef.ConnectAttrsSize.Store(origSize)
-	vardef.ConnectAttrsSize.Store(-1)
-
-	buildAttrsPayload := func(kvs [][2]string) []byte {
-		var buf bytes.Buffer
-		for _, kv := range kvs {
-			buf.WriteByte(byte(len(kv[0])))
-			buf.WriteString(kv[0])
-			buf.WriteByte(byte(len(kv[1])))
-			buf.WriteString(kv[1])
-		}
-		return buf.Bytes()
-	}
-
-	t.Run("warn for custom underscore attrs", func(t *testing.T) {
-		payload := buildAttrsPayload([][2]string{
-			{"_client_name", "libmysql"},
-			{"_custom", "val"},
-			{"_program_name", "mysql"},
-			{"app_name", "myapp"},
-		})
-
-		attrs, warning, err := parseAttrs(payload)
-		require.NoError(t, err)
-		require.Equal(t, "libmysql", attrs["_client_name"])
-		require.Equal(t, "val", attrs["_custom"])
-		require.Equal(t, "mysql", attrs["_program_name"])
-		require.Equal(t, "myapp", attrs["app_name"])
-		require.Contains(t, warning, "custom connection attributes with leading underscore are deprecated and will be rejected in a future release")
-	})
-
-	t.Run("no warning for standard underscore attrs", func(t *testing.T) {
-		payload := buildAttrsPayload([][2]string{
-			{"_client_name", "libmysql"},
-			{"_client_version", "8.0.33"},
-			{"_os", "linux"},
-			{"_pid", "123"},
-			{"_platform", "x86_64"},
-			{"app_name", "myapp"},
-		})
-
-		_, warning, err := parseAttrs(payload)
-		require.NoError(t, err)
-		require.Empty(t, warning)
-	})
-
-	t.Run("server may overwrite client _truncated on truncation", func(t *testing.T) {
-		origLost := vardef.ConnectAttrsLost.Load()
-		defer vardef.ConnectAttrsLost.Store(origLost)
-		vardef.ConnectAttrsLost.Store(0)
-		vardef.ConnectAttrsSize.Store(20)
-
-		payload := buildAttrsPayload([][2]string{
-			{"_truncated", "client-value"},
-			{"app_name", "my_service"},
-		})
-
-		attrs, warning, err := parseAttrs(payload)
-		require.NoError(t, err)
-		require.Contains(t, warning, "session connection attributes truncated")
-		require.NotEqual(t, "client-value", attrs["_truncated"])
-		require.Equal(t, int64(1), vardef.ConnectAttrsLost.Load())
-	})
 }

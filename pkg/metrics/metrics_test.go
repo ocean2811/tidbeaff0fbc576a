@@ -18,9 +18,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	_ "github.com/pingcap/tidb/pkg/statistics/handle/cache"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	_ "github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/cache"
 	"github.com/stretchr/testify/require"
 )
 

@@ -15,7 +15,7 @@
 package staticcheck
 
 import (
-	"github.com/pingcap/tidb/build/linter/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -29,6 +29,5 @@ var (
 
 func init() {
 	Analyzer = FindAnalyzerByName(name)
-	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

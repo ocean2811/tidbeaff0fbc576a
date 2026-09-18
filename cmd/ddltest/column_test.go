@@ -24,17 +24,17 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/tables"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
 
 // After add column finished, check the records in the table.
-func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal any, updatedVal any) {
+func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal interface{}, updatedVal interface{}) {
 	ctx := s.ctx
 	err := sessiontxn.NewTxn(goctx.Background(), ctx)
 	require.NoError(t, err)
@@ -84,7 +84,7 @@ func (s *ddlSuite) checkAddColumn(t *testing.T, rowID int64, defaultVal any, upd
 	require.Greater(t, deleteCount, int64(0))
 }
 
-func (s *ddlSuite) checkDropColumn(t *testing.T, rowID int64, alterColumn *table.Column, updateDefault any) {
+func (s *ddlSuite) checkDropColumn(t *testing.T, rowID int64, alterColumn *table.Column, updateDefault interface{}) {
 	ctx := s.ctx
 	err := sessiontxn.NewTxn(goctx.Background(), ctx)
 	require.NoError(t, err)
@@ -125,10 +125,10 @@ func TestColumn(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(workerNum)
-	for i := range workerNum {
+	for i := 0; i < workerNum; i++ {
 		go func(i int) {
 			defer wg.Done()
-			for j := range base {
+			for j := 0; j < base; j++ {
 				k := base*i + j
 				s.execInsert(fmt.Sprintf("insert into test_column values (%d, %d)", k, k))
 			}
@@ -140,7 +140,7 @@ func TestColumn(t *testing.T) {
 		Query      string
 		ColumnName string
 		Add        bool
-		Default    any
+		Default    interface{}
 	}{
 		{"alter table test_column add column c3 int default -1", "c3", true, int64(-1)},
 		{"alter table test_column drop column c3", "c3", false, nil},
@@ -189,10 +189,10 @@ func (s *ddlSuite) execColumnOperations(t *testing.T, workerNum, count int, rowI
 	var wg sync.WaitGroup
 	// workerNum = 10
 	wg.Add(workerNum)
-	for range workerNum {
+	for i := 0; i < workerNum; i++ {
 		go func() {
 			defer wg.Done()
-			for range count {
+			for j := 0; j < count; j++ {
 				key := int(atomic.AddInt64(rowID, 2))
 				s.execInsert(fmt.Sprintf("insert into test_column (c1, c2) values (%d, %d)",
 					key-1, key-1))

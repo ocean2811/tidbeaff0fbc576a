@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "err",
     srcs = ["error.go"],
-    importpath = "github.com/pingcap/tidb/pkg/server/err",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/err",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/errno",

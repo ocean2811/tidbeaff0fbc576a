@@ -15,8 +15,8 @@
 package timeutil
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
 )
 
 // ErrUnknownTimeZone indicates timezone is unknown.

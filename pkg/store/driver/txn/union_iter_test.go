@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -187,7 +187,7 @@ func TestUnionIterErrors(t *testing.T) {
 			iter, err = NewUnionIter(dirtyIter, snapIter, false)
 			assert.NotNil(t, iter)
 			assert.Nil(t, err)
-			for range ca.nextTimesWhenErrorHappens - 1 {
+			for i := 0; i < ca.nextTimesWhenErrorHappens-1; i++ {
 				err = iter.Next()
 				assert.Nil(t, err)
 			}

@@ -15,51 +15,33 @@
 package store
 
 import (
-	"fmt"
 	"net/url"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/pdpb"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	pderr "github.com/tikv/pd/client/errs"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-var (
-	storeDrivers    = make(map[config.StoreType]kv.Driver)
-	storeDriverLock sync.RWMutex
-
-	// systemStore is the kv.Storage for the SYSTEM keyspace.
-	// which is only initialized and used in nextgen kernel.
-	// for description of SYSTEM keyspace, see keyspace.System.
-	systemStore kv.Storage
-)
+var stores = make(map[string]kv.Driver)
+var storesLock sync.RWMutex
 
 // Register registers a kv storage with unique name and its associated Driver.
-// TODO: remove this function and use driver directly, TiDB is not a SDK.
-func Register(tp config.StoreType, driver kv.Driver) error {
-	storeDriverLock.Lock()
-	defer storeDriverLock.Unlock()
+func Register(name string, driver kv.Driver) error {
+	storesLock.Lock()
+	defer storesLock.Unlock()
 
-	if !tp.Valid() {
-		return errors.Errorf("invalid storage type %s", tp)
+	name = strings.ToLower(name)
+
+	if _, ok := stores[name]; ok {
+		return errors.Errorf("%s is already registered", name)
 	}
 
-	if _, ok := storeDrivers[tp]; ok {
-		return errors.Errorf("%s is already registered", tp)
-	}
-
-	storeDrivers[tp] = driver
+	stores[name] = driver
 	return nil
 }
 
@@ -84,19 +66,15 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	}
 
 	name := strings.ToLower(storeURL.Scheme)
-	d, ok := loadDriver(config.StoreType(name))
+	d, ok := loadDriver(name)
 	if !ok {
 		return nil, errors.Errorf("invalid uri format, storage %s is not registered", name)
 	}
 
 	var s kv.Storage
-	samLogger := logutil.SampleLoggerFactory(30*time.Second, 1, zap.String("path", path))()
 	err = util.RunWithRetry(maxRetries, util.RetryInterval, func() (bool, error) {
 		logutil.BgLogger().Info("new store", zap.String("path", path))
 		s, err = d.Open(path)
-		if err != nil {
-			samLogger.Info("open store failed, retrying", zap.Error(err))
-		}
 		return isNewStoreRetryableError(err), err
 	})
 
@@ -108,10 +86,10 @@ func newStoreWithRetry(path string, maxRetries int) (kv.Storage, error) {
 	return s, errors.Trace(err)
 }
 
-func loadDriver(tp config.StoreType) (kv.Driver, bool) {
-	storeDriverLock.RLock()
-	defer storeDriverLock.RUnlock()
-	d, ok := storeDrivers[tp]
+func loadDriver(name string) (kv.Driver, bool) {
+	storesLock.RLock()
+	defer storesLock.RUnlock()
+	d, ok := stores[name]
 	return d, ok
 }
 
@@ -121,12 +99,11 @@ func loadDriver(tp config.StoreType) (kv.Driver, bool) {
 //	Transaction conflict and is retryable (kv.IsTxnRetryableError)
 //	PD is not bootstrapped at the time of request
 //	Keyspace requested does not exist (request prior to PD keyspace pre-split)
-//	Generate timestamp failed because requested TSO server is not leader
 func isNewStoreRetryableError(err error) bool {
 	if err == nil {
 		return false
 	}
-	return kv.IsTxnRetryableError(err) || IsNotBootstrappedError(err) || IsKeyspaceNotExistError(err) || IsNotTSOLeaderError(err)
+	return kv.IsTxnRetryableError(err) || IsNotBootstrappedError(err) || IsKeyspaceNotExistError(err)
 }
 
 // IsNotBootstrappedError returns true if the error is pd not bootstrapped error.
@@ -143,67 +120,4 @@ func IsKeyspaceNotExistError(err error) bool {
 		return false
 	}
 	return strings.Contains(err.Error(), pdpb.ErrorType_ENTRY_NOT_FOUND.String())
-}
-
-// IsNotTSOLeaderError returns true if the error is caused by not a TSO leader.
-func IsNotTSOLeaderError(err error) bool {
-	if err == nil {
-		return false
-	}
-	if !strings.Contains(err.Error(), pderr.NotLeaderErr) {
-		return false
-	}
-	return errors.Find(err, func(inner error) bool {
-		pdErr, ok := inner.(*errors.Error)
-		if !ok {
-			return false
-		}
-		return pdErr.RFCCode() == pderr.ErrClientGetTSO.RFCCode() ||
-			pdErr.RFCCode() == pderr.ErrClientGetLeader.RFCCode()
-	}) != nil
-}
-
-// MustInitStorage initializes the kv.Storage for this instance.
-func MustInitStorage(keyspaceName string) kv.Storage {
-	defaultStore := mustInitStorage(keyspaceName)
-	if kerneltype.IsNextGen() {
-		if kv.IsUserKS(defaultStore) {
-			systemStore = mustInitStorage(keyspace.System)
-		} else {
-			systemStore = defaultStore
-		}
-	}
-	return defaultStore
-}
-
-// GetSystemStorage returns the kv.Storage for the SYSTEM keyspace.
-func GetSystemStorage() kv.Storage {
-	return systemStore
-}
-
-// SetSystemStorage returns the kv.Storage for the SYSTEM keyspace.
-// it's only used in test.
-func SetSystemStorage(s kv.Storage) {
-	if s != nil {
-		intest.Assert(s.GetKeyspace() == keyspace.System, "systemStore should be set with SYSTEM keyspace")
-	}
-	systemStore = s
-}
-
-func mustInitStorage(keyspaceName string) kv.Storage {
-	storage, err := InitStorage(keyspaceName)
-	terror.MustNil(err)
-	return storage
-}
-
-// InitStorage initializes the kv.Storage for the given keyspace name.
-func InitStorage(keyspaceName string) (kv.Storage, error) {
-	cfg := config.GetGlobalConfig()
-	var fullPath string
-	if keyspaceName == "" {
-		fullPath = fmt.Sprintf("%s://%s", cfg.Store, cfg.Path)
-	} else {
-		fullPath = fmt.Sprintf("%s://%s?keyspaceName=%s", cfg.Store, cfg.Path, keyspaceName)
-	}
-	return New(fullPath)
 }

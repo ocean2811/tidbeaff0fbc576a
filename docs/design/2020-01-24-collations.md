@@ -2,7 +2,7 @@
 
 - Author(s):     [Wang Cong](http://github.com/bb7133), [Kolbe Kegel](http://github.com/kolbe)
 - Last updated:  2020-02-09
-- Discussion at: https://github.com/pingcap/tidb/issues/14573
+- Discussion at: https://github.com/ocean2811/tidbeaff0fbc576a/issues/14573
 
 ## Abstract
 
@@ -276,10 +276,10 @@ Further, a collation should not need to be a property of a column, it could rath
 
 ## Related issues
 
-- https://github.com/pingcap/tidb/issues/222
-- https://github.com/pingcap/tidb/issues/1161
-- https://github.com/pingcap/tidb/issues/3580
-- https://github.com/pingcap/tidb/issues/4353
-- https://github.com/pingcap/tidb/issues/7519
-- https://github.com/pingcap/tidb/issues/10192
+- https://github.com/ocean2811/tidbeaff0fbc576a/issues/222
+- https://github.com/ocean2811/tidbeaff0fbc576a/issues/1161
+- https://github.com/ocean2811/tidbeaff0fbc576a/issues/3580
+- https://github.com/ocean2811/tidbeaff0fbc576a/issues/4353
+- https://github.com/ocean2811/tidbeaff0fbc576a/issues/7519
+- https://github.com/ocean2811/tidbeaff0fbc576a/issues/10192
 

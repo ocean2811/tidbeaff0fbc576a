@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "topsql",
     srcs = ["topsql.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/topsql",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser",
@@ -11,7 +11,6 @@ go_library(
         "//pkg/util/plancodec",
         "//pkg/util/topsql/collector",
         "//pkg/util/topsql/reporter",
-        "//pkg/util/topsql/state",
         "//pkg/util/topsql/stmtstats",
         "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_pingcap_tipb//go-tipb",
@@ -29,7 +28,6 @@ go_test(
     ],
     embed = [":topsql"],
     flaky = True,
-    shard_count = 6,
     deps = [
         "//pkg/config",
         "//pkg/parser",

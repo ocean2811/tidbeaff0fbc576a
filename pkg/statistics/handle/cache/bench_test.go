@@ -19,14 +19,14 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/testutil"
-	"github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/util/benchdaily"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/cache/internal/testutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/benchdaily"
 )
 
-func benchCopyAndUpdate(b *testing.B, c types.StatsCache) {
+func benchCopyAndUpdate(b *testing.B, c util.StatsCache) {
 	var wg sync.WaitGroup
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -35,16 +35,14 @@ func benchCopyAndUpdate(b *testing.B, c types.StatsCache) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 			t1.PhysicalID = rand.Int63()
-			c.UpdateStatsCache(types.CacheUpdate{
-				Updated: []*statistics.Table{t1},
-			})
+			c.UpdateStatsCache([]*statistics.Table{t1}, nil)
 		}()
 	}
 	wg.Wait()
 	b.StopTimer()
 }
 
-func benchPutGet(b *testing.B, c types.StatsCache) {
+func benchPutGet(b *testing.B, c util.StatsCache) {
 	var wg sync.WaitGroup
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -53,9 +51,7 @@ func benchPutGet(b *testing.B, c types.StatsCache) {
 			defer wg.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 			t1.PhysicalID = rand.Int63()
-			c.UpdateStatsCache(types.CacheUpdate{
-				Updated: []*statistics.Table{t1},
-			})
+			c.UpdateStatsCache([]*statistics.Table{t1}, nil)
 		}(i)
 	}
 	for i := 0; i < b.N; i++ {
@@ -69,7 +65,7 @@ func benchPutGet(b *testing.B, c types.StatsCache) {
 	b.StopTimer()
 }
 
-func benchGet(b *testing.B, c types.StatsCache) {
+func benchGet(b *testing.B, c util.StatsCache) {
 	var w sync.WaitGroup
 	for i := 0; i < b.N; i++ {
 		w.Add(1)
@@ -77,9 +73,7 @@ func benchGet(b *testing.B, c types.StatsCache) {
 			defer w.Done()
 			t1 := testutil.NewMockStatisticsTable(1, 1, true, false, false)
 			t1.PhysicalID = rand.Int63()
-			c.UpdateStatsCache(types.CacheUpdate{
-				Updated: []*statistics.Table{t1},
-			})
+			c.UpdateStatsCache([]*statistics.Table{t1}, nil)
 		}(i)
 	}
 	w.Wait()

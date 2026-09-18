@@ -14,15 +14,17 @@
 package ast
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/parser/tidb"
-	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/tidb"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/types"
 )
 
 var (
@@ -34,15 +36,8 @@ var (
 	_ DDLNode = &CreateIndexStmt{}
 	_ DDLNode = &CreateTableStmt{}
 	_ DDLNode = &CreateViewStmt{}
-	_ DDLNode = &CreateMaterializedViewStmt{}
-	_ DDLNode = &CreateMaterializedViewLogStmt{}
-	_ DDLNode = &AlterMaterializedViewStmt{}
-	_ DDLNode = &AlterMaterializedViewLogStmt{}
-	_ DDLNode = &DropMaterializedViewStmt{}
-	_ DDLNode = &DropMaterializedViewLogStmt{}
 	_ DDLNode = &CreateSequenceStmt{}
 	_ DDLNode = &CreatePlacementPolicyStmt{}
-	_ DDLNode = &CreateMaskingPolicyStmt{}
 	_ DDLNode = &CreateResourceGroupStmt{}
 	_ DDLNode = &DropDatabaseStmt{}
 	_ DDLNode = &FlashBackDatabaseStmt{}
@@ -51,7 +46,6 @@ var (
 	_ DDLNode = &DropSequenceStmt{}
 	_ DDLNode = &DropPlacementPolicyStmt{}
 	_ DDLNode = &DropResourceGroupStmt{}
-	_ DDLNode = &OptimizeTableStmt{}
 	_ DDLNode = &RenameTableStmt{}
 	_ DDLNode = &TruncateTableStmt{}
 	_ DDLNode = &RepairTableStmt{}
@@ -145,7 +139,7 @@ type CreateDatabaseStmt struct {
 	ddlNode
 
 	IfNotExists bool
-	Name        CIStr
+	Name        model.CIStr
 	Options     []*DatabaseOption
 }
 
@@ -181,7 +175,7 @@ func (n *CreateDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type AlterDatabaseStmt struct {
 	ddlNode
 
-	Name                 CIStr
+	Name                 model.CIStr
 	AlterDefaultDatabase bool
 	Options              []*DatabaseOption
 }
@@ -243,7 +237,7 @@ type DropDatabaseStmt struct {
 	ddlNode
 
 	IfExists bool
-	Name     CIStr
+	Name     model.CIStr
 }
 
 // Restore implements Node interface.
@@ -270,7 +264,7 @@ func (n *DropDatabaseStmt) Accept(v Visitor) (Node, bool) {
 type FlashBackDatabaseStmt struct {
 	ddlNode
 
-	DBName  CIStr
+	DBName  model.CIStr
 	NewName string
 }
 
@@ -410,13 +404,13 @@ func (n *ReferenceDef) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("SIMPLE")
 		}
 	}
-	if n.OnDelete.ReferOpt != ReferOptionNoOption {
+	if n.OnDelete.ReferOpt != model.ReferOptionNoOption {
 		ctx.WritePlain(" ")
 		if err := n.OnDelete.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing OnDelete")
 		}
 	}
-	if n.OnUpdate.ReferOpt != ReferOptionNoOption {
+	if n.OnUpdate.ReferOpt != model.ReferOptionNoOption {
 		ctx.WritePlain(" ")
 		if err := n.OnUpdate.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing OnUpdate")
@@ -462,12 +456,12 @@ func (n *ReferenceDef) Accept(v Visitor) (Node, bool) {
 // OnDeleteOpt is used for optional on delete clause.
 type OnDeleteOpt struct {
 	node
-	ReferOpt ReferOptionType
+	ReferOpt model.ReferOptionType
 }
 
 // Restore implements Node interface.
 func (n *OnDeleteOpt) Restore(ctx *format.RestoreCtx) error {
-	if n.ReferOpt != ReferOptionNoOption {
+	if n.ReferOpt != model.ReferOptionNoOption {
 		ctx.WriteKeyWord("ON DELETE ")
 		ctx.WriteKeyWord(n.ReferOpt.String())
 	}
@@ -487,12 +481,12 @@ func (n *OnDeleteOpt) Accept(v Visitor) (Node, bool) {
 // OnUpdateOpt is used for optional on update clause.
 type OnUpdateOpt struct {
 	node
-	ReferOpt ReferOptionType
+	ReferOpt model.ReferOptionType
 }
 
 // Restore implements Node interface.
 func (n *OnUpdateOpt) Restore(ctx *format.RestoreCtx) error {
-	if n.ReferOpt != ReferOptionNoOption {
+	if n.ReferOpt != model.ReferOptionNoOption {
 		ctx.WriteKeyWord("ON UPDATE ")
 		ctx.WriteKeyWord(n.ReferOpt.String())
 	}
@@ -531,10 +525,6 @@ const (
 	ColumnOptionColumnFormat
 	ColumnOptionStorage
 	ColumnOptionAutoRandom
-	ColumnOptionSecondaryEngineAttribute
-	// MariaDB period markers for restore only; no engine semantics.
-	ColumnOptionMariaDBRowStart
-	ColumnOptionMariaDBRowEnd
 )
 
 var (
@@ -544,12 +534,6 @@ var (
 		ColumnOptionDefaultValue:  "DEFAULT",
 	}
 )
-
-// ColumnOptionList stores column options.
-type ColumnOptionList struct {
-	HasCollateOption bool
-	Options          []*ColumnOption
-}
 
 // ColumnOption is used for parsing column constraint info from SQL.
 type ColumnOption struct {
@@ -569,9 +553,8 @@ type ColumnOption struct {
 	// Enforced is only for Check, default is true.
 	Enforced bool
 	// Name is only used for Check Constraint name.
-	ConstraintName      string
-	PrimaryKeyTp        PrimaryKeyType
-	SecondaryEngineAttr string
+	ConstraintName string
+	PrimaryKeyTp   model.PrimaryKeyType
 }
 
 // Restore implements Node interface.
@@ -584,10 +567,10 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		pkTp := n.PrimaryKeyTp.String()
 		if len(pkTp) != 0 {
 			ctx.WritePlain(" ")
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDClusteredIndex, pkTp)
-		}
-		if n.StrValue == "Global" {
-			ctx.WriteKeyWord(" GLOBAL")
+			_ = ctx.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
+				ctx.WriteKeyWord(pkTp)
+				return nil
+			})
 		}
 	case ColumnOptionNotNull:
 		ctx.WriteKeyWord("NOT NULL")
@@ -601,9 +584,6 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 				printOuterParentheses = true
 			}
 		}
-		if _, ok := n.Expr.(*ColumnNameExpr); ok {
-			printOuterParentheses = true
-		}
 		if printOuterParentheses {
 			ctx.WritePlain("(")
 		}
@@ -615,9 +595,6 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 		}
 	case ColumnOptionUniqKey:
 		ctx.WriteKeyWord("UNIQUE KEY")
-		if n.StrValue == "Global" {
-			ctx.WriteKeyWord(" GLOBAL")
-		}
 	case ColumnOptionNull:
 		ctx.WriteKeyWord("NULL")
 	case ColumnOptionOnUpdate:
@@ -690,14 +667,6 @@ func (n *ColumnOption) Restore(ctx *format.RestoreCtx) error {
 			}
 			return nil
 		})
-	case ColumnOptionSecondaryEngineAttribute:
-		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
-		ctx.WritePlain(" = ")
-		ctx.WriteString(n.StrValue)
-	case ColumnOptionMariaDBRowStart:
-		ctx.WriteKeyWord("GENERATED ALWAYS AS ROW START")
-	case ColumnOptionMariaDBRowEnd:
-		ctx.WriteKeyWord("GENERATED ALWAYS AS ROW END")
 	default:
 		return errors.New("An error occurred while splicing ColumnOption")
 	}
@@ -745,64 +714,27 @@ const (
 //	| index_type
 //	| WITH PARSER parser_name
 //	| COMMENT 'string'
-//	| GLOBAL
-//	| PRE_SPLIT_REGIONS = AUTO
 //
 // See http://dev.mysql.com/doc/refman/5.7/en/create-table.html
-// with the addition of Global Index
 type IndexOption struct {
 	node
 
 	KeyBlockSize uint64
-	Tp           IndexType
+	Tp           model.IndexType
 	Comment      string
-	ParserName   CIStr
+	ParserName   model.CIStr
 	Visibility   IndexVisibility
-	PrimaryKeyTp PrimaryKeyType
-	Global       bool
-	SplitOpt     *SplitOption `json:"-"` // SplitOption contains expr nodes, which cannot marshal for DDL job arguments.
-	// AutoPreSplit enables leading-column-only, best-effort automatic pre-splitting
-	// for add-index DDL. Parsed ASTs keep it mutually exclusive with SplitOpt; if a
-	// caller constructs both fields manually, SplitOpt takes precedence.
-	AutoPreSplit               bool `json:"-"`
-	SecondaryEngineAttr        string
-	AddColumnarReplicaOnDemand int
-	Condition                  ExprNode `json:"-"` // Condition contains expr nodes, which cannot marshal for DDL job arguments. It's used for partial index.
-}
-
-// IsEmpty is true if only default options are given
-// and it should not be added to the output
-func (n *IndexOption) IsEmpty() bool {
-	if n.PrimaryKeyTp != PrimaryKeyTypeDefault ||
-		n.KeyBlockSize > 0 ||
-		n.Tp != IndexTypeInvalid ||
-		len(n.ParserName.O) > 0 ||
-		n.Comment != "" ||
-		n.Global ||
-		n.Visibility != IndexVisibilityDefault ||
-		n.SplitOpt != nil ||
-		n.AutoPreSplit ||
-		len(n.SecondaryEngineAttr) > 0 ||
-		n.Condition != nil {
-		return false
-	}
-	return true
+	PrimaryKeyTp model.PrimaryKeyType
 }
 
 // Restore implements Node interface.
 func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 	hasPrevOption := false
-
-	if n.AddColumnarReplicaOnDemand > 0 {
-		ctx.WriteKeyWord("ADD_COLUMNAR_REPLICA_ON_DEMAND")
-		hasPrevOption = true
-	}
-
-	if n.PrimaryKeyTp != PrimaryKeyTypeDefault {
-		if hasPrevOption {
-			ctx.WritePlain(" ")
-		}
-		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDClusteredIndex, n.PrimaryKeyTp.String())
+	if n.PrimaryKeyTp != model.PrimaryKeyTypeDefault {
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDClusteredIndex, func() error {
+			ctx.WriteKeyWord(n.PrimaryKeyTp.String())
+			return nil
+		})
 		hasPrevOption = true
 	}
 	if n.KeyBlockSize > 0 {
@@ -814,7 +746,7 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		hasPrevOption = true
 	}
 
-	if n.Tp != IndexTypeInvalid {
+	if n.Tp != model.IndexTypeInvalid {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
 		}
@@ -841,17 +773,6 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		hasPrevOption = true
 	}
 
-	if n.Global {
-		if hasPrevOption {
-			ctx.WritePlain(" ")
-		}
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDGlobalIndex, func() error {
-			ctx.WriteKeyWord("GLOBAL")
-			return nil
-		})
-		hasPrevOption = true
-	}
-
 	if n.Visibility != IndexVisibilityDefault {
 		if hasPrevOption {
 			ctx.WritePlain(" ")
@@ -862,68 +783,7 @@ func (n *IndexOption) Restore(ctx *format.RestoreCtx) error {
 		case IndexVisibilityInvisible:
 			ctx.WriteKeyWord("INVISIBLE")
 		}
-		hasPrevOption = true
 	}
-
-	if n.SplitOpt != nil {
-		if hasPrevOption {
-			ctx.WritePlain(" ")
-		}
-		err := ctx.WriteWithSpecialComments(tidb.FeatureIDPreSplit, func() error {
-			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
-			ctx.WritePlain(" = ")
-			if n.SplitOpt.Num != 0 && len(n.SplitOpt.Lower) == 0 {
-				ctx.WritePlainf("%d", n.SplitOpt.Num)
-			} else {
-				ctx.WritePlain("(")
-				if err := n.SplitOpt.Restore(ctx); err != nil {
-					return errors.Annotate(err, "An error occurred while splicing IndexOption SplitOpt")
-				}
-				ctx.WritePlain(")")
-			}
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		hasPrevOption = true
-	} else if n.AutoPreSplit {
-		if hasPrevOption {
-			ctx.WritePlain(" ")
-		}
-		err := ctx.WriteWithSpecialComments(tidb.FeatureIDAutoPreSplit, func() error {
-			ctx.WriteKeyWord("PRE_SPLIT_REGIONS")
-			ctx.WritePlain(" = ")
-			ctx.WriteKeyWord("AUTO")
-			return nil
-		})
-		if err != nil {
-			return err
-		}
-		hasPrevOption = true
-	}
-
-	if n.SecondaryEngineAttr != "" {
-		if hasPrevOption {
-			ctx.WritePlain(" ")
-		}
-		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE")
-		ctx.WritePlain(" = ")
-		ctx.WriteString(n.SecondaryEngineAttr)
-		// If a new option is added after, please also uncomment:
-		//hasPrevOption = true
-	}
-
-	if n.Condition != nil {
-		if hasPrevOption {
-			ctx.WritePlain(" ")
-		}
-		ctx.WriteKeyWord("WHERE ")
-		if err := n.Condition.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while splicing IndexOption Condition")
-		}
-	}
-
 	return nil
 }
 
@@ -934,13 +794,6 @@ func (n *IndexOption) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*IndexOption)
-	if n.SplitOpt != nil {
-		node, ok := n.SplitOpt.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.SplitOpt = node.(*SplitOption)
-	}
 	return v.Leave(n)
 }
 
@@ -957,14 +810,8 @@ const (
 	ConstraintUniqKey
 	ConstraintUniqIndex
 	ConstraintForeignKey
-	// ConstraintFulltext is only used in AST.
-	// It will be rewritten into ConstraintIndex after preprocessor phase.
 	ConstraintFulltext
 	ConstraintCheck
-	// ConstraintVector is only used in AST.
-	// It will be rewritten into ConstraintColumnar after preprocessor phase.
-	ConstraintVector
-	ConstraintColumnar
 )
 
 // Constraint is constraint for table definition.
@@ -1004,12 +851,12 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 	case ConstraintKey:
 		ctx.WriteKeyWord("KEY")
 		if n.IfNotExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
+			ctx.WriteKeyWord(" IF NOT EXISTS")
 		}
 	case ConstraintIndex:
 		ctx.WriteKeyWord("INDEX")
 		if n.IfNotExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
+			ctx.WriteKeyWord(" IF NOT EXISTS")
 		}
 	case ConstraintUniq:
 		ctx.WriteKeyWord("UNIQUE")
@@ -1037,16 +884,6 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("NOT ENFORCED")
 		}
 		return nil
-	case ConstraintVector:
-		ctx.WriteKeyWord("VECTOR INDEX")
-		if n.IfNotExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
-		}
-	case ConstraintColumnar:
-		ctx.WriteKeyWord("COLUMNAR INDEX")
-		if n.IfNotExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
-		}
 	}
 
 	if n.Tp == ConstraintForeignKey {
@@ -1057,7 +894,7 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		}
 		ctx.WriteKeyWord("FOREIGN KEY ")
 		if n.IfNotExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF NOT EXISTS ")
+			ctx.WriteKeyWord("IF NOT EXISTS ")
 		}
 	} else if n.Name != "" || n.IsEmptyIndex {
 		ctx.WritePlain(" ")
@@ -1082,7 +919,7 @@ func (n *Constraint) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	if n.Option != nil && !n.Option.IsEmpty() {
+	if n.Option != nil {
 		ctx.WritePlain(" ")
 		if err := n.Option.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while splicing Constraint Option")
@@ -1226,7 +1063,6 @@ type CreateTableStmt struct {
 	ReferTable     *TableName
 	Cols           []*ColumnDef
 	Constraints    []*Constraint
-	SplitIndex     []*SplitIndexOption
 	Options        []*TableOption
 	Partition      *PartitionOptions
 	OnDuplicate    OnDuplicateKeyHandlingType
@@ -1295,13 +1131,6 @@ func (n *CreateTableStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 
-	for _, opt := range n.SplitIndex {
-		ctx.WritePlain(" ")
-		if err := opt.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while splicing CreateTableStmt SplitIndex")
-		}
-	}
-
 	if n.Select != nil {
 		switch n.OnDuplicate {
 		case OnDuplicateKeyHandlingError:
@@ -1360,13 +1189,6 @@ func (n *CreateTableStmt) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.Constraints[i] = node.(*Constraint)
-	}
-	for i, val := range n.SplitIndex {
-		node, ok = val.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.SplitIndex[i] = node.(*SplitIndexOption)
 	}
 	if n.Select != nil {
 		node, ok := n.Select.Accept(v)
@@ -1456,7 +1278,7 @@ type DropPlacementPolicyStmt struct {
 	ddlNode
 
 	IfExists   bool
-	PolicyName CIStr
+	PolicyName model.CIStr
 }
 
 // Restore implements Restore interface.
@@ -1486,7 +1308,7 @@ type DropResourceGroupStmt struct {
 	ddlNode
 
 	IfExists          bool
-	ResourceGroupName CIStr
+	ResourceGroupName model.CIStr
 }
 
 // Restore implements Restore interface.
@@ -1509,40 +1331,6 @@ func (n *DropResourceGroupStmt) Accept(v Visitor) (Node, bool) {
 		return v.Leave(newNode)
 	}
 	n = newNode.(*DropResourceGroupStmt)
-	return v.Leave(n)
-}
-
-type OptimizeTableStmt struct {
-	ddlNode
-
-	NoWriteToBinLog bool
-	Tables          []*TableName
-}
-
-func (n *OptimizeTableStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("OPTIMIZE ")
-	if n.NoWriteToBinLog {
-		ctx.WriteKeyWord("NO_WRITE_TO_BINLOG ")
-	}
-	ctx.WriteKeyWord("TABLE ")
-
-	for index, table := range n.Tables {
-		if index != 0 {
-			ctx.WritePlain(", ")
-		}
-		if err := table.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore OptimizeTableStmt.Tables[%d]", index)
-		}
-	}
-	return nil
-}
-
-func (n *OptimizeTableStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*OptimizeTableStmt)
 	return v.Leave(n)
 }
 
@@ -1676,13 +1464,13 @@ type CreateViewStmt struct {
 
 	OrReplace   bool
 	ViewName    *TableName
-	Cols        []CIStr
+	Cols        []model.CIStr
 	Select      StmtNode
-	SchemaCols  []CIStr
-	Algorithm   ViewAlgorithm
+	SchemaCols  []model.CIStr
+	Algorithm   model.ViewAlgorithm
 	Definer     *auth.UserIdentity
-	Security    ViewSecurity
-	CheckOption ViewCheckOption
+	Security    model.ViewSecurity
+	CheckOption model.ViewCheckOption
 }
 
 // Restore implements Node interface.
@@ -1734,7 +1522,7 @@ func (n *CreateViewStmt) Restore(ctx *format.RestoreCtx) error {
 		return errors.Annotate(err, "An error occurred while create CreateViewStmt.Select")
 	}
 
-	if n.CheckOption != CheckOptionCascaded {
+	if n.CheckOption != model.CheckOptionCascaded {
 		ctx.WriteKeyWord(" WITH ")
 		ctx.WriteKeyWord(n.CheckOption.String())
 		ctx.WriteKeyWord(" CHECK OPTION")
@@ -1762,584 +1550,13 @@ func (n *CreateViewStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// MViewRefreshMethod is the refresh method of a materialized view.
-type MViewRefreshMethod int
-
-const MViewRefreshMethodFast MViewRefreshMethod = iota
-
-func (m MViewRefreshMethod) String() string {
-	switch m {
-	case MViewRefreshMethodFast:
-		return "REFRESH FAST"
-	default:
-		return "UNKNOWN"
-	}
-}
-
-// MViewRefreshClause is the refresh clause in CREATE/ALTER MATERIALIZED VIEW.
-type MViewRefreshClause struct {
-	Method    MViewRefreshMethod
-	StartWith ExprNode
-	Next      ExprNode
-}
-
-// Restore implements Node interface.
-func (n *MViewRefreshClause) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord(n.Method.String())
-	if n.StartWith != nil {
-		ctx.WriteKeyWord(" START WITH ")
-		if err := n.StartWith.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore MViewRefreshClause.StartWith")
-		}
-	}
-	if n.Next != nil {
-		ctx.WriteKeyWord(" NEXT ")
-		if err := n.Next.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore MViewRefreshClause.Next")
-		}
-	}
-	return nil
-}
-
-// CreateMaterializedViewStmt is a statement to create a materialized view.
-type CreateMaterializedViewStmt struct {
-	ddlNode
-
-	ViewName   *TableName
-	Cols       []CIStr
-	Comment    string
-	Refresh    *MViewRefreshClause
-	Attributes string
-	Options    []*TableOption
-	Select     ResultSetNode
-}
-
-// Restore implements Node interface.
-func (n *CreateMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW ")
-	if err := n.ViewName.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.ViewName")
-	}
-	ctx.WritePlain(" (")
-	for i, col := range n.Cols {
-		if i > 0 {
-			ctx.WritePlain(", ")
-		}
-		ctx.WriteName(col.O)
-	}
-	ctx.WritePlain(")")
-	if n.Comment != "" {
-		ctx.WriteKeyWord(" COMMENT ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.Comment)
-	}
-	for i, option := range n.Options {
-		ctx.WritePlain(" ")
-		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore CreateMaterializedViewStmt.TableOption[%d]", i)
-		}
-	}
-	if n.Refresh != nil {
-		ctx.WritePlain(" ")
-		if err := n.Refresh.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.Refresh")
-		}
-	}
-	if n.Attributes != "" {
-		ctx.WriteKeyWord(" ATTRIBUTES ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.Attributes)
-	}
-	ctx.WriteKeyWord(" AS ")
-	if err := n.Select.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewStmt.Select")
-	}
-	return nil
-}
-
-// Accept implements Node Accept interface.
-func (n *CreateMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*CreateMaterializedViewStmt)
-	if n.ViewName != nil {
-		node, ok := n.ViewName.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.ViewName = node.(*TableName)
-	}
-	for i, option := range n.Options {
-		node, ok := option.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Options[i] = node.(*TableOption)
-	}
-	if n.Refresh != nil {
-		if n.Refresh.StartWith != nil {
-			node, ok := n.Refresh.StartWith.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.Refresh.StartWith = node.(ExprNode)
-		}
-		if n.Refresh.Next != nil {
-			node, ok := n.Refresh.Next.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.Refresh.Next = node.(ExprNode)
-		}
-	}
-	if n.Select != nil {
-		node, ok := n.Select.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Select = node.(ResultSetNode)
-	}
-	return v.Leave(n)
-}
-
-// MLogPurgeClause is the purge clause in CREATE/ALTER MATERIALIZED VIEW LOG.
-type MLogPurgeClause struct {
-	Immediate bool
-	StartWith ExprNode
-	Next      ExprNode
-}
-
-// Restore implements Node interface.
-func (n *MLogPurgeClause) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("PURGE")
-	if n.Immediate {
-		ctx.WriteKeyWord(" IMMEDIATE")
-		return nil
-	}
-	if n.StartWith != nil {
-		ctx.WriteKeyWord(" START WITH ")
-		if err := n.StartWith.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore MLogPurgeClause.StartWith")
-		}
-	}
-	if n.Next != nil {
-		ctx.WriteKeyWord(" NEXT ")
-		if err := n.Next.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore MLogPurgeClause.Next")
-		}
-	}
-	return nil
-}
-
-// MLogAccumulationAlertClause is the accumulation alert clause in CREATE MATERIALIZED VIEW LOG.
-type MLogAccumulationAlertClause struct {
-	Rows int64
-}
-
-// Restore implements Node interface.
-func (n *MLogAccumulationAlertClause) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("ALERT ROWS ")
-	ctx.WritePlainf("%d", n.Rows)
-	return nil
-}
-
-// CreateMaterializedViewLogStmt is a statement to create a materialized view log on a base table.
-type CreateMaterializedViewLogStmt struct {
-	ddlNode
-
-	Table             *TableName
-	Cols              []CIStr
-	Options           []*TableOption
-	Purge             *MLogPurgeClause
-	AccumulationAlert *MLogAccumulationAlertClause
-}
-
-// Restore implements Node interface.
-func (n *CreateMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CREATE MATERIALIZED VIEW LOG ON ")
-	if err := n.Table.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Table")
-	}
-	ctx.WritePlain(" (")
-	for i, col := range n.Cols {
-		if i > 0 {
-			ctx.WritePlain(", ")
-		}
-		ctx.WriteName(col.O)
-	}
-	ctx.WritePlain(")")
-	for i, option := range n.Options {
-		ctx.WritePlain(" ")
-		if err := option.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore CreateMaterializedViewLogStmt.Options[%d]", i)
-		}
-	}
-	if n.Purge != nil {
-		ctx.WritePlain(" ")
-		if err := n.Purge.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.Purge")
-		}
-	}
-	if n.AccumulationAlert != nil {
-		ctx.WritePlain(" ")
-		if err := n.AccumulationAlert.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore CreateMaterializedViewLogStmt.AccumulationAlert")
-		}
-	}
-	return nil
-}
-
-// Accept implements Node Accept interface.
-func (n *CreateMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*CreateMaterializedViewLogStmt)
-	if n.Table != nil {
-		node, ok := n.Table.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Table = node.(*TableName)
-	}
-	for i, option := range n.Options {
-		node, ok := option.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Options[i] = node.(*TableOption)
-	}
-	if n.Purge != nil {
-		if n.Purge.StartWith != nil {
-			node, ok := n.Purge.StartWith.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.Purge.StartWith = node.(ExprNode)
-		}
-		if n.Purge.Next != nil {
-			node, ok := n.Purge.Next.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.Purge.Next = node.(ExprNode)
-		}
-	}
-	return v.Leave(n)
-}
-
-// AlterMaterializedViewActionType is the type of ALTER MATERIALIZED VIEW action.
-type AlterMaterializedViewActionType int
-
-const (
-	AlterMaterializedViewActionComment AlterMaterializedViewActionType = iota
-	AlterMaterializedViewActionRefresh
-	AlterMaterializedViewActionAttributes
-)
-
-// AlterMaterializedViewAction is one action in ALTER MATERIALIZED VIEW.
-type AlterMaterializedViewAction struct {
-	node
-	Tp         AlterMaterializedViewActionType
-	Comment    string
-	Refresh    *MViewRefreshClause
-	Attributes string
-}
-
-// Restore implements Node interface.
-func (n *AlterMaterializedViewAction) Restore(ctx *format.RestoreCtx) error {
-	switch n.Tp {
-	case AlterMaterializedViewActionComment:
-		ctx.WriteKeyWord("COMMENT ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.Comment)
-	case AlterMaterializedViewActionRefresh:
-		ctx.WriteKeyWord("REFRESH")
-		if n.Refresh != nil {
-			if n.Refresh.StartWith != nil {
-				ctx.WriteKeyWord(" START WITH ")
-				if err := n.Refresh.StartWith.Restore(ctx); err != nil {
-					return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewAction.Refresh.StartWith")
-				}
-			}
-			if n.Refresh.Next != nil {
-				ctx.WriteKeyWord(" NEXT ")
-				if err := n.Refresh.Next.Restore(ctx); err != nil {
-					return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewAction.Refresh.Next")
-				}
-			}
-		}
-	case AlterMaterializedViewActionAttributes:
-		ctx.WriteKeyWord("ATTRIBUTES ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.Attributes)
-	}
-	return nil
-}
-
-// Accept implements Node Accept interface.
-func (n *AlterMaterializedViewAction) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AlterMaterializedViewAction)
-	if n.Refresh != nil {
-		if n.Refresh.StartWith != nil {
-			node, ok := n.Refresh.StartWith.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.Refresh.StartWith = node.(ExprNode)
-		}
-		if n.Refresh.Next != nil {
-			node, ok := n.Refresh.Next.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.Refresh.Next = node.(ExprNode)
-		}
-	}
-	return v.Leave(n)
-}
-
-// AlterMaterializedViewStmt is a statement to alter a materialized view.
-type AlterMaterializedViewStmt struct {
-	ddlNode
-	ViewName *TableName
-	Actions  []*AlterMaterializedViewAction
-}
-
-// Restore implements Node interface.
-func (n *AlterMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("ALTER MATERIALIZED VIEW ")
-	if err := n.ViewName.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewStmt.ViewName")
-	}
-	ctx.WritePlain(" ")
-	for i, action := range n.Actions {
-		if i > 0 {
-			ctx.WritePlain(", ")
-		}
-		if err := action.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore AlterMaterializedViewStmt.Actions[%d]", i)
-		}
-	}
-	return nil
-}
-
-// Accept implements Node Accept interface.
-func (n *AlterMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AlterMaterializedViewStmt)
-	if n.ViewName != nil {
-		node, ok := n.ViewName.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.ViewName = node.(*TableName)
-	}
-	for i, action := range n.Actions {
-		node, ok := action.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Actions[i] = node.(*AlterMaterializedViewAction)
-	}
-	return v.Leave(n)
-}
-
-// AlterMaterializedViewLogActionType is the type of ALTER MATERIALIZED VIEW LOG action.
-type AlterMaterializedViewLogActionType int
-
-const (
-	AlterMaterializedViewLogActionPurge AlterMaterializedViewLogActionType = iota
-	AlterMaterializedViewLogActionAddColumn
-)
-
-// AlterMaterializedViewLogAction is one action in ALTER MATERIALIZED VIEW LOG.
-type AlterMaterializedViewLogAction struct {
-	node
-	Tp    AlterMaterializedViewLogActionType
-	Purge *MLogPurgeClause
-	Cols  []CIStr
-}
-
-// Restore implements Node interface.
-func (n *AlterMaterializedViewLogAction) Restore(ctx *format.RestoreCtx) error {
-	switch n.Tp {
-	case AlterMaterializedViewLogActionPurge:
-		if n.Purge != nil {
-			return n.Purge.Restore(ctx)
-		}
-	case AlterMaterializedViewLogActionAddColumn:
-		ctx.WriteKeyWord("ADD COLUMN (")
-		for i, col := range n.Cols {
-			if i > 0 {
-				ctx.WritePlain(", ")
-			}
-			ctx.WriteName(col.O)
-		}
-		ctx.WritePlain(")")
-	}
-	return nil
-}
-
-// Accept implements Node Accept interface.
-func (n *AlterMaterializedViewLogAction) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AlterMaterializedViewLogAction)
-	if n.Purge != nil {
-		if n.Purge.StartWith != nil {
-			node, ok := n.Purge.StartWith.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.Purge.StartWith = node.(ExprNode)
-		}
-		if n.Purge.Next != nil {
-			node, ok := n.Purge.Next.Accept(v)
-			if !ok {
-				return n, false
-			}
-			n.Purge.Next = node.(ExprNode)
-		}
-	}
-	return v.Leave(n)
-}
-
-// AlterMaterializedViewLogStmt is a statement to alter a materialized view log.
-type AlterMaterializedViewLogStmt struct {
-	ddlNode
-	Table   *TableName
-	Actions []*AlterMaterializedViewLogAction
-}
-
-// Restore implements Node interface.
-func (n *AlterMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("ALTER MATERIALIZED VIEW LOG ON ")
-	if err := n.Table.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore AlterMaterializedViewLogStmt.Table")
-	}
-	ctx.WritePlain(" ")
-	for i, action := range n.Actions {
-		if i > 0 {
-			ctx.WritePlain(", ")
-		}
-		if err := action.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore AlterMaterializedViewLogStmt.Actions[%d]", i)
-		}
-	}
-	return nil
-}
-
-// Accept implements Node Accept interface.
-func (n *AlterMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*AlterMaterializedViewLogStmt)
-	if n.Table != nil {
-		node, ok := n.Table.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Table = node.(*TableName)
-	}
-	for i, action := range n.Actions {
-		node, ok := action.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Actions[i] = node.(*AlterMaterializedViewLogAction)
-	}
-	return v.Leave(n)
-}
-
-// DropMaterializedViewStmt is a statement to drop a materialized view.
-type DropMaterializedViewStmt struct {
-	ddlNode
-	IfExists bool
-	ViewName *TableName
-}
-
-// Restore implements Node interface.
-func (n *DropMaterializedViewStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("DROP MATERIALIZED VIEW ")
-	if n.IfExists {
-		ctx.WriteKeyWord("IF EXISTS ")
-	}
-	return n.ViewName.Restore(ctx)
-}
-
-// Accept implements Node Accept interface.
-func (n *DropMaterializedViewStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*DropMaterializedViewStmt)
-	if n.ViewName != nil {
-		node, ok := n.ViewName.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.ViewName = node.(*TableName)
-	}
-	return v.Leave(n)
-}
-
-// DropMaterializedViewLogStmt is a statement to drop a materialized view log.
-type DropMaterializedViewLogStmt struct {
-	ddlNode
-	IfExists bool
-	Table    *TableName
-}
-
-// Restore implements Node interface.
-func (n *DropMaterializedViewLogStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("DROP MATERIALIZED VIEW LOG ")
-	if n.IfExists {
-		ctx.WriteKeyWord("IF EXISTS ")
-	}
-	ctx.WriteKeyWord("ON ")
-	return n.Table.Restore(ctx)
-}
-
-// Accept implements Node Accept interface.
-func (n *DropMaterializedViewLogStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*DropMaterializedViewLogStmt)
-	if n.Table != nil {
-		node, ok := n.Table.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Table = node.(*TableName)
-	}
-	return v.Leave(n)
-}
-
 // CreatePlacementPolicyStmt is a statement to create a policy.
 type CreatePlacementPolicyStmt struct {
 	ddlNode
 
 	OrReplace        bool
 	IfNotExists      bool
-	PolicyName       CIStr
+	PolicyName       model.CIStr
 	PlacementOptions []*PlacementOption
 }
 
@@ -2377,163 +1594,12 @@ func (n *CreatePlacementPolicyStmt) Accept(v Visitor) (Node, bool) {
 	return v.Leave(n)
 }
 
-// MaskingPolicyState represents the optional ENABLE/DISABLE state of a masking policy.
-type MaskingPolicyState struct {
-	Enabled  bool
-	Explicit bool
-}
-
-// MaskingPolicyRestrictOps is a bitmask of operations restricted by a masking policy.
-type MaskingPolicyRestrictOps uint64
-
-// Masking policy restricted operation values.
-const (
-	MaskingPolicyRestrictOpNone MaskingPolicyRestrictOps = 0
-
-	MaskingPolicyRestrictOpInsertIntoSelect MaskingPolicyRestrictOps = 1 << iota
-	MaskingPolicyRestrictOpUpdateSelect
-	MaskingPolicyRestrictOpDeleteSelect
-	MaskingPolicyRestrictOpCTAS
-)
-
-// Masking policy restricted operation names.
-const (
-	MaskingPolicyRestrictNameInsertIntoSelect = "INSERT_INTO_SELECT"
-	MaskingPolicyRestrictNameUpdateSelect     = "UPDATE_SELECT"
-	MaskingPolicyRestrictNameDeleteSelect     = "DELETE_SELECT"
-	MaskingPolicyRestrictNameCTAS             = "CTAS"
-)
-
-func (ops MaskingPolicyRestrictOps) names() []string {
-	if ops == MaskingPolicyRestrictOpNone {
-		return nil
-	}
-
-	names := make([]string, 0, 4)
-	if ops&MaskingPolicyRestrictOpInsertIntoSelect != 0 {
-		names = append(names, MaskingPolicyRestrictNameInsertIntoSelect)
-	}
-	if ops&MaskingPolicyRestrictOpUpdateSelect != 0 {
-		names = append(names, MaskingPolicyRestrictNameUpdateSelect)
-	}
-	if ops&MaskingPolicyRestrictOpDeleteSelect != 0 {
-		names = append(names, MaskingPolicyRestrictNameDeleteSelect)
-	}
-	if ops&MaskingPolicyRestrictOpCTAS != 0 {
-		names = append(names, MaskingPolicyRestrictNameCTAS)
-	}
-	return names
-}
-
-func restoreMaskingPolicyRestrictOn(ctx *format.RestoreCtx, ops MaskingPolicyRestrictOps, writeNone bool) {
-	if ops == MaskingPolicyRestrictOpNone {
-		if !writeNone {
-			return
-		}
-		ctx.WriteKeyWord("RESTRICT ON NONE")
-		return
-	}
-
-	ctx.WriteKeyWord("RESTRICT ON (")
-	for i, name := range ops.names() {
-		if i > 0 {
-			ctx.WritePlain(", ")
-		}
-		ctx.WriteKeyWord(name)
-	}
-	ctx.WritePlain(")")
-}
-
-// CreateMaskingPolicyStmt is a statement to create a masking policy.
-type CreateMaskingPolicyStmt struct {
-	ddlNode
-
-	OrReplace          bool
-	IfNotExists        bool
-	PolicyName         CIStr
-	Table              *TableName
-	Column             *ColumnName
-	Expr               ExprNode
-	RestrictOps        MaskingPolicyRestrictOps
-	MaskingPolicyState MaskingPolicyState
-}
-
-// Restore implements Node interface.
-func (n *CreateMaskingPolicyStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("CREATE ")
-	if n.OrReplace {
-		ctx.WriteKeyWord("OR REPLACE ")
-	}
-	ctx.WriteKeyWord("MASKING POLICY ")
-	if n.IfNotExists {
-		ctx.WriteKeyWord("IF NOT EXISTS ")
-	}
-	ctx.WriteName(n.PolicyName.O)
-	ctx.WriteKeyWord(" ON ")
-	if err := n.Table.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore CreateMaskingPolicyStmt.Table")
-	}
-	ctx.WritePlain(" (")
-	if err := n.Column.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore CreateMaskingPolicyStmt.Column")
-	}
-	ctx.WritePlain(") ")
-	ctx.WriteKeyWord("AS ")
-	if err := n.Expr.Restore(ctx); err != nil {
-		return errors.Annotate(err, "An error occurred while restore CreateMaskingPolicyStmt.Expr")
-	}
-	if n.RestrictOps != MaskingPolicyRestrictOpNone {
-		ctx.WritePlain(" ")
-		restoreMaskingPolicyRestrictOn(ctx, n.RestrictOps, false)
-	}
-	if n.MaskingPolicyState.Explicit {
-		ctx.WritePlain(" ")
-		if n.MaskingPolicyState.Enabled {
-			ctx.WriteKeyWord("ENABLE")
-		} else {
-			ctx.WriteKeyWord("DISABLE")
-		}
-	}
-	return nil
-}
-
-// Accept implements Node Accept interface.
-func (n *CreateMaskingPolicyStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*CreateMaskingPolicyStmt)
-	if n.Table != nil {
-		node, ok := n.Table.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Table = node.(*TableName)
-	}
-	if n.Column != nil {
-		node, ok := n.Column.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Column = node.(*ColumnName)
-	}
-	if n.Expr != nil {
-		node, ok := n.Expr.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.Expr = node.(ExprNode)
-	}
-	return v.Leave(n)
-}
-
 // CreateResourceGroupStmt is a statement to create a policy.
 type CreateResourceGroupStmt struct {
 	ddlNode
 
 	IfNotExists             bool
-	ResourceGroupName       CIStr
+	ResourceGroupName       model.CIStr
 	ResourceGroupOptionList []*ResourceGroupOption
 }
 
@@ -2670,13 +1736,7 @@ const (
 	IndexKeyTypeNone IndexKeyType = iota
 	IndexKeyTypeUnique
 	IndexKeyTypeSpatial
-	// IndexKeyTypeFulltext is only used in AST.
-	// It will be rewritten into IndexKeyTypeFulltext after preprocessor phase.
-	IndexKeyTypeFulltext
-	// IndexKeyTypeVector is only used in AST.
-	// It will be rewritten into IndexKeyTypeColumnar after preprocessor phase.
-	IndexKeyTypeVector
-	IndexKeyTypeColumnar
+	IndexKeyTypeFullText
 )
 
 // CreateIndexStmt is a statement to create an index.
@@ -2704,16 +1764,12 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("UNIQUE ")
 	case IndexKeyTypeSpatial:
 		ctx.WriteKeyWord("SPATIAL ")
-	case IndexKeyTypeFulltext:
+	case IndexKeyTypeFullText:
 		ctx.WriteKeyWord("FULLTEXT ")
-	case IndexKeyTypeVector:
-		ctx.WriteKeyWord("VECTOR ")
-	case IndexKeyTypeColumnar:
-		ctx.WriteKeyWord("COLUMNAR ")
 	}
 	ctx.WriteKeyWord("INDEX ")
 	if n.IfNotExists {
-		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF NOT EXISTS ")
+		ctx.WriteKeyWord("IF NOT EXISTS ")
 	}
 	ctx.WriteName(n.IndexName)
 	ctx.WriteKeyWord(" ON ")
@@ -2732,7 +1788,7 @@ func (n *CreateIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	}
 	ctx.WritePlain(")")
 
-	if n.IndexOption != nil && !n.IndexOption.IsEmpty() {
+	if n.IndexOption.Tp != model.IndexTypeInvalid || n.IndexOption.KeyBlockSize > 0 || n.IndexOption.Comment != "" || len(n.IndexOption.ParserName.O) > 0 || n.IndexOption.Visibility != IndexVisibilityDefault {
 		ctx.WritePlain(" ")
 		if err := n.IndexOption.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore CreateIndexStmt.IndexOption")
@@ -2801,7 +1857,10 @@ type DropIndexStmt struct {
 func (n *DropIndexStmt) Restore(ctx *format.RestoreCtx) error {
 	ctx.WriteKeyWord("DROP INDEX ")
 	if n.IfExists {
-		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
+		_ = ctx.WriteWithSpecialComments("", func() error {
+			ctx.WriteKeyWord("IF EXISTS ")
+			return nil
+		})
 	}
 	ctx.WriteName(n.IndexName)
 	ctx.WriteKeyWord(" ON ")
@@ -2852,7 +1911,7 @@ type LockTablesStmt struct {
 // TableLock contains the table name and lock type.
 type TableLock struct {
 	Table *TableName
-	Type  TableLockType
+	Type  model.TableLockType
 }
 
 // Accept implements Node Accept interface.
@@ -3081,7 +2140,7 @@ type ResourceGroupOption struct {
 	Tp                ResourceUnitType
 	StrValue          string
 	UintValue         uint64
-	Burstable         BurstableType
+	BoolValue         bool
 	RunawayOptionList []*ResourceGroupRunawayOption
 	BackgroundOptions []*ResourceGroupBackgroundOption
 }
@@ -3092,7 +2151,6 @@ const (
 	// RU mode
 	ResourceRURate ResourceUnitType = iota
 	ResourcePriority
-	ResourceBurstable
 	// Raw mode
 	ResourceUnitCPU
 	ResourceUnitIOReadBandwidth
@@ -3100,17 +2158,8 @@ const (
 
 	// Options
 	ResourceBurstableOpiton
-	ResourceUnlimitedOption
 	ResourceGroupRunaway
 	ResourceGroupBackground
-)
-
-type BurstableType int
-
-const (
-	BurstableDisable BurstableType = iota
-	BurstableModerated
-	BurstableUnlimited
 )
 
 func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
@@ -3118,15 +2167,11 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	case ResourceRURate:
 		ctx.WriteKeyWord("RU_PER_SEC ")
 		ctx.WritePlain("= ")
-		if n.Burstable == BurstableUnlimited {
-			ctx.WriteKeyWord("UNLIMITED")
-		} else {
-			ctx.WritePlainf("%d", n.UintValue)
-		}
+		ctx.WritePlainf("%d", n.UintValue)
 	case ResourcePriority:
 		ctx.WriteKeyWord("PRIORITY ")
 		ctx.WritePlain("= ")
-		ctx.WriteKeyWord(PriorityValueToName(n.UintValue))
+		ctx.WriteKeyWord(model.PriorityValueToName(n.UintValue))
 	case ResourceUnitCPU:
 		ctx.WriteKeyWord("CPU ")
 		ctx.WritePlain("= ")
@@ -3139,17 +2184,10 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("IO_WRITE_BANDWIDTH ")
 		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
-	case ResourceBurstable:
+	case ResourceBurstableOpiton:
 		ctx.WriteKeyWord("BURSTABLE ")
 		ctx.WritePlain("= ")
-		switch n.Burstable {
-		case BurstableDisable:
-			ctx.WritePlain("OFF")
-		case BurstableModerated:
-			ctx.WritePlain("MODERATED")
-		case BurstableUnlimited:
-			ctx.WritePlain("UNLIMITED")
-		}
+		ctx.WritePlain(strings.ToUpper(fmt.Sprintf("%v", n.BoolValue)))
 	case ResourceGroupRunaway:
 		ctx.WritePlain("QUERY_LIMIT ")
 		ctx.WritePlain("= ")
@@ -3190,115 +2228,45 @@ func (n *ResourceGroupOption) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
+type RunawayOptionType int
+
+const (
+	RunawayRule RunawayOptionType = iota
+	RunawayAction
+	RunawayWatch
+)
+
 // ResourceGroupRunawayOption is used for parsing resource group runaway rule option.
 type ResourceGroupRunawayOption struct {
-	Tp           RunawayOptionType
-	RuleOption   *ResourceGroupRunawayRuleOption
-	ActionOption *ResourceGroupRunawayActionOption
-	WatchOption  *ResourceGroupRunawayWatchOption
+	Tp       RunawayOptionType
+	StrValue string
+	IntValue int32
 }
 
 func (n *ResourceGroupRunawayOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Tp {
 	case RunawayRule:
-		n.RuleOption.restore(ctx)
-	case RunawayAction:
-		n.ActionOption.Restore(ctx)
-	case RunawayWatch:
-		n.WatchOption.restore(ctx)
-	default:
-		return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
-	}
-	return nil
-}
-
-// ResourceGroupRunawayRuleOption is used for parsing the resource group/query watch runaway rule.
-type ResourceGroupRunawayRuleOption struct {
-	Tp            RunawayRuleOptionType
-	ExecElapsed   string
-	ProcessedKeys int64
-	RequestUnit   int64
-}
-
-type RunawayRuleOptionType int
-
-const (
-	RunawayRuleExecElapsed RunawayRuleOptionType = iota
-	RunawayRuleProcessedKeys
-	RunawayRuleRequestUnit
-)
-
-func (n *ResourceGroupRunawayRuleOption) restore(ctx *format.RestoreCtx) error {
-	switch n.Tp {
-	case RunawayRuleExecElapsed:
 		ctx.WriteKeyWord("EXEC_ELAPSED ")
 		ctx.WritePlain("= ")
-		ctx.WriteString(n.ExecElapsed)
-	case RunawayRuleProcessedKeys:
-		ctx.WriteKeyWord("PROCESSED_KEYS ")
+		ctx.WriteString(n.StrValue)
+	case RunawayAction:
+		ctx.WriteKeyWord("ACTION ")
 		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.ProcessedKeys)
-	case RunawayRuleRequestUnit:
-		ctx.WriteKeyWord("RU ")
+		ctx.WriteKeyWord(model.RunawayActionType(n.IntValue).String())
+	case RunawayWatch:
+		ctx.WriteKeyWord("WATCH ")
 		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.RequestUnit)
-	}
-	return nil
-}
-
-// ResourceGroupRunawayActionOption is used for parsing the resource group runaway action.
-type ResourceGroupRunawayActionOption struct {
-	node
-	Type            RunawayActionType
-	SwitchGroupName CIStr
-}
-
-// Restore implements Node interface.
-func (n *ResourceGroupRunawayActionOption) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("ACTION ")
-	ctx.WritePlain("= ")
-	switch n.Type {
-	case RunawayActionNone, RunawayActionDryRun, RunawayActionCooldown, RunawayActionKill:
-		ctx.WriteKeyWord(n.Type.String())
-	case RunawayActionSwitchGroup:
-		switchGroup := n.SwitchGroupName.String()
-		if len(switchGroup) == 0 {
-			return errors.New("SWITCH_GROUP runaway watch action requires a non-empty group name")
+		ctx.WriteKeyWord(model.RunawayWatchType(n.IntValue).String())
+		ctx.WritePlain(" ")
+		ctx.WriteKeyWord("DURATION ")
+		ctx.WritePlain("= ")
+		if len(n.StrValue) > 0 {
+			ctx.WriteString(n.StrValue)
+		} else {
+			ctx.WriteKeyWord("UNLIMITED")
 		}
-		ctx.WriteKeyWord("SWITCH_GROUP")
-		ctx.WritePlain("(")
-		ctx.WriteName(switchGroup)
-		ctx.WritePlain(")")
-	}
-	return nil
-}
-
-// Accept implements Node Accept interface.
-func (n *ResourceGroupRunawayActionOption) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	return v.Leave(n)
-}
-
-// ResourceGroupRunawayWatchOption is used for parsing the resource group runaway watch.
-type ResourceGroupRunawayWatchOption struct {
-	Type     RunawayWatchType
-	Duration string
-}
-
-func (n *ResourceGroupRunawayWatchOption) restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("WATCH ")
-	ctx.WritePlain("= ")
-	ctx.WriteKeyWord(n.Type.String())
-	ctx.WritePlain(" ")
-	ctx.WriteKeyWord("DURATION ")
-	ctx.WritePlain("= ")
-	if len(n.Duration) > 0 {
-		ctx.WriteString(n.Duration)
-	} else {
-		ctx.WriteKeyWord("UNLIMITED")
+	default:
+		return errors.Errorf("invalid ResourceGroupRunawayOption: %d", n.Tp)
 	}
 	return nil
 }
@@ -3308,26 +2276,20 @@ type BackgroundOptionType int
 const (
 	BackgroundOptionNone BackgroundOptionType = iota
 	BackgroundOptionTaskNames
-	BackgroundUtilizationLimit
 )
 
 // ResourceGroupBackgroundOption is used to config background job settings.
 type ResourceGroupBackgroundOption struct {
-	Type      BackgroundOptionType
-	StrValue  string
-	UintValue uint64
+	Type     BackgroundOptionType
+	StrValue string
 }
 
 func (n *ResourceGroupBackgroundOption) Restore(ctx *format.RestoreCtx) error {
 	switch n.Type {
 	case BackgroundOptionTaskNames:
-		ctx.WriteKeyWord("TASK_TYPES")
-		ctx.WritePlain(" = ")
+		ctx.WriteKeyWord("TASK_TYPES ")
+		ctx.WritePlain("= ")
 		ctx.WriteString(n.StrValue)
-	case BackgroundUtilizationLimit:
-		ctx.WriteKeyWord("UTILIZATION_LIMIT")
-		ctx.WritePlain(" = ")
-		ctx.WritePlainf("%d", n.UintValue)
 	default:
 		return errors.Errorf("unknown ResourceGroupBackgroundOption: %d", n.Type)
 	}
@@ -3388,18 +2350,6 @@ const (
 	TableOptionTTL
 	TableOptionTTLEnable
 	TableOptionTTLJobInterval
-	TableOptionEngineAttribute
-	TableOptionStorageClass
-	TableOptionSecondaryEngineAttribute
-	TableOptionAutoextendSize
-	TableOptionPageChecksum
-	TableOptionPageCompressed
-	TableOptionPageCompressionLevel
-	TableOptionTransactional
-	TableOptionIetfQuotes
-	TableOptionSequence
-	TableOptionAffinity
-	TableOptionStartTransaction
 	TableOptionPlacementPolicy = TableOptionType(PlacementOptionPolicy)
 	TableOptionStatsBuckets    = TableOptionType(StatsOptionBuckets)
 	TableOptionStatsTopN       = TableOptionType(StatsOptionTopN)
@@ -3444,32 +2394,6 @@ const (
 	TableOptionCharsetWithConvertTo    uint64 = 1
 )
 
-// TableOptionCompressionNone is the string value of TableOptionCompression
-// which means the table is not compressed.
-const TableOptionCompressionNone = "NONE"
-
-const (
-	// TableAffinityLevelNone means no affinity.
-	TableAffinityLevelNone = "none"
-	// TableAffinityLevelTable means table-level affinity.
-	TableAffinityLevelTable = "table"
-	// TableAffinityLevelPartition means partition-level affinity.
-	TableAffinityLevelPartition = "partition"
-)
-
-// NormalizeTableAffinityLevel normalizes the affinity level to lower case and checks if it's valid.
-func NormalizeTableAffinityLevel(s string) (string, bool) {
-	lower := strings.ToLower(s)
-	switch lower {
-	case TableAffinityLevelNone, TableAffinityLevelTable, TableAffinityLevelPartition:
-		return lower, true
-	case "":
-		return TableAffinityLevelNone, true
-	default:
-		return s, false
-	}
-}
-
 // TableOption is used for parsing table option from SQL.
 type TableOption struct {
 	node
@@ -3494,14 +2418,6 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		} else {
 			ctx.WritePlain("''")
 		}
-	case TableOptionEngineAttribute:
-		ctx.WriteKeyWord("ENGINE_ATTRIBUTE ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
-	case TableOptionStorageClass:
-		ctx.WriteKeyWord("STORAGE_CLASS ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
 	case TableOptionCharset:
 		if n.UintValue == TableOptionCharsetWithConvertTo {
 			ctx.WriteKeyWord("CONVERT TO ")
@@ -3523,7 +2439,11 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord(n.StrValue)
 	case TableOptionAutoIncrement:
 		if n.BoolValue {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDForceAutoInc, "FORCE ")
+			_ = ctx.WriteWithSpecialComments(tidb.FeatureIDForceAutoInc, func() error {
+				ctx.WriteKeyWord("FORCE")
+				return nil
+			})
+			ctx.WritePlain(" ")
 		}
 		ctx.WriteKeyWord("AUTO_INCREMENT ")
 		ctx.WritePlain("= ")
@@ -3537,7 +2457,11 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		})
 	case TableOptionAutoRandomBase:
 		if n.BoolValue {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDForceAutoInc, "FORCE ")
+			_ = ctx.WriteWithSpecialComments(tidb.FeatureIDForceAutoInc, func() error {
+				ctx.WriteKeyWord("FORCE")
+				return nil
+			})
+			ctx.WritePlain(" ")
 		}
 		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAutoRandomBase, func() error {
 			ctx.WriteKeyWord("AUTO_RANDOM_BASE ")
@@ -3688,10 +2612,6 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 		ctx.WriteKeyWord("SECONDARY_ENGINE ")
 		ctx.WritePlain("= ")
 		ctx.WriteKeyWord("NULL")
-	case TableOptionSecondaryEngineAttribute:
-		ctx.WriteKeyWord("SECONDARY_ENGINE_ATTRIBUTE ")
-		ctx.WritePlain("= ")
-		ctx.WriteString(n.StrValue)
 	case TableOptionInsertMethod:
 		ctx.WriteKeyWord("INSERT_METHOD ")
 		ctx.WritePlain("= ")
@@ -3795,51 +2715,6 @@ func (n *TableOption) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteString(n.StrValue)
 			return nil
 		})
-	case TableOptionAutoextendSize:
-		ctx.WriteKeyWord("AUTOEXTEND_SIZE ")
-		ctx.WritePlain("= ")
-		ctx.WritePlain(n.StrValue) // e.g. '4M'
-
-	// MariaDB specific options
-	case TableOptionPageChecksum:
-		ctx.WriteKeyWord("PAGE_CHECKSUM ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-		return nil
-	case TableOptionPageCompressed:
-		ctx.WriteKeyWord("PAGE_COMPRESSED ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-		return nil
-	case TableOptionPageCompressionLevel:
-		ctx.WriteKeyWord("PAGE_COMPRESSION_LEVEL ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-		return nil
-	case TableOptionTransactional:
-		ctx.WriteKeyWord("TRANSACTIONAL ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-		return nil
-	case TableOptionIetfQuotes:
-		ctx.WriteKeyWord("IETF_QUOTES ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%s", n.StrValue)
-		return nil
-	case TableOptionSequence:
-		ctx.WriteKeyWord("SEQUENCE ")
-		ctx.WritePlain("= ")
-		ctx.WritePlainf("%d", n.UintValue)
-		return nil
-	case TableOptionAffinity:
-		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDAffinity, func() error {
-			ctx.WriteKeyWord("AFFINITY ")
-			ctx.WritePlain("= ")
-			ctx.WriteString(n.StrValue)
-			return nil
-		})
-	case TableOptionStartTransaction:
-		ctx.WriteKeyWord("START TRANSACTION")
 	default:
 		return errors.Errorf("invalid TableOption: %d", n.Tp)
 	}
@@ -4059,13 +2934,6 @@ const (
 	AlterTableReorganizeLastPartition
 	AlterTableReorganizeFirstPartition
 	AlterTableRemoveTTL
-	AlterTableSplitIndex
-	AlterTableAddMaskingPolicy
-	AlterTableEnableMaskingPolicy
-	AlterTableDisableMaskingPolicy
-	AlterTableDropMaskingPolicy
-	AlterTableModifyMaskingPolicyExpression
-	AlterTableModifyMaskingPolicyRestrictOn
 )
 
 // LockType is the type for AlterTableSpec.
@@ -4138,40 +3006,34 @@ type AlterTableSpec struct {
 	NoWriteToBinlog bool
 	OnAllPartitions bool
 
-	Tp                       AlterTableType
-	Name                     string
-	IndexName                CIStr
-	Constraint               *Constraint
-	SplitIndex               *SplitIndexOption
-	Options                  []*TableOption
-	OrderByList              []*AlterOrderItem
-	NewTable                 *TableName
-	NewColumns               []*ColumnDef
-	NewConstraints           []*Constraint
-	OldColumnName            *ColumnName
-	NewColumnName            *ColumnName
-	Position                 *ColumnPosition
-	LockType                 LockType
-	Algorithm                AlgorithmType
-	Comment                  string
-	FromKey                  CIStr
-	ToKey                    CIStr
-	Partition                *PartitionOptions
-	PartitionNames           []CIStr
-	PartDefinitions          []*PartitionDefinition
-	WithValidation           bool
-	Num                      uint64
-	Visibility               IndexVisibility
-	TiFlashReplica           *TiFlashReplicaSpec
-	Writeable                bool
-	Statistics               *StatisticsSpec
-	MaskingPolicyName        CIStr
-	MaskingPolicyColumn      *ColumnName
-	MaskingPolicyExpr        ExprNode
-	MaskingPolicyRestrictOps MaskingPolicyRestrictOps
-	MaskingPolicyState       MaskingPolicyState
-	AttributesSpec           *AttributesSpec
-	StatsOptionsSpec         *StatsOptionsSpec
+	Tp               AlterTableType
+	Name             string
+	IndexName        model.CIStr
+	Constraint       *Constraint
+	Options          []*TableOption
+	OrderByList      []*AlterOrderItem
+	NewTable         *TableName
+	NewColumns       []*ColumnDef
+	NewConstraints   []*Constraint
+	OldColumnName    *ColumnName
+	NewColumnName    *ColumnName
+	Position         *ColumnPosition
+	LockType         LockType
+	Algorithm        AlgorithmType
+	Comment          string
+	FromKey          model.CIStr
+	ToKey            model.CIStr
+	Partition        *PartitionOptions
+	PartitionNames   []model.CIStr
+	PartDefinitions  []*PartitionDefinition
+	WithValidation   bool
+	Num              uint64
+	Visibility       IndexVisibility
+	TiFlashReplica   *TiFlashReplicaSpec
+	Writeable        bool
+	Statistics       *StatisticsSpec
+	AttributesSpec   *AttributesSpec
+	StatsOptionsSpec *StatsOptionsSpec
 }
 
 type TiFlashReplicaSpec struct {
@@ -4260,51 +3122,6 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			ctx.WriteKeyWord("IF EXISTS ")
 		}
 		ctx.WriteName(n.Statistics.StatsName)
-	case AlterTableAddMaskingPolicy:
-		ctx.WriteKeyWord("ADD MASKING POLICY ")
-		ctx.WriteName(n.MaskingPolicyName.O)
-		ctx.WritePlain(" ON (")
-		if err := n.MaskingPolicyColumn.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.MaskingPolicyColumn")
-		}
-		ctx.WritePlain(") ")
-		ctx.WriteKeyWord("AS ")
-		if err := n.MaskingPolicyExpr.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.MaskingPolicyExpr")
-		}
-		if n.MaskingPolicyRestrictOps != MaskingPolicyRestrictOpNone {
-			ctx.WritePlain(" ")
-			restoreMaskingPolicyRestrictOn(ctx, n.MaskingPolicyRestrictOps, false)
-		}
-		if n.MaskingPolicyState.Explicit {
-			ctx.WritePlain(" ")
-			if n.MaskingPolicyState.Enabled {
-				ctx.WriteKeyWord("ENABLE")
-			} else {
-				ctx.WriteKeyWord("DISABLE")
-			}
-		}
-	case AlterTableEnableMaskingPolicy:
-		ctx.WriteKeyWord("ENABLE MASKING POLICY ")
-		ctx.WriteName(n.MaskingPolicyName.O)
-	case AlterTableDisableMaskingPolicy:
-		ctx.WriteKeyWord("DISABLE MASKING POLICY ")
-		ctx.WriteName(n.MaskingPolicyName.O)
-	case AlterTableDropMaskingPolicy:
-		ctx.WriteKeyWord("DROP MASKING POLICY ")
-		ctx.WriteName(n.MaskingPolicyName.O)
-	case AlterTableModifyMaskingPolicyExpression:
-		ctx.WriteKeyWord("MODIFY MASKING POLICY ")
-		ctx.WriteName(n.MaskingPolicyName.O)
-		ctx.WriteKeyWord(" SET EXPRESSION = ")
-		if err := n.MaskingPolicyExpr.Restore(ctx); err != nil {
-			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.MaskingPolicyExpr")
-		}
-	case AlterTableModifyMaskingPolicyRestrictOn:
-		ctx.WriteKeyWord("MODIFY MASKING POLICY ")
-		ctx.WriteName(n.MaskingPolicyName.O)
-		ctx.WriteKeyWord(" SET ")
-		restoreMaskingPolicyRestrictOn(ctx, n.MaskingPolicyRestrictOps, true)
 	case AlterTableOption:
 		switch {
 		case len(n.Options) == 2 && n.Options[0].Tp == TableOptionCharset && n.Options[1].Tp == TableOptionCollate:
@@ -4337,7 +3154,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableAddColumns:
 		ctx.WriteKeyWord("ADD COLUMN ")
 		if n.IfNotExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF NOT EXISTS ")
+			ctx.WriteKeyWord("IF NOT EXISTS ")
 		}
 		if n.Position != nil && len(n.NewColumns) == 1 {
 			if err := n.NewColumns[0].Restore(ctx); err != nil {
@@ -4378,7 +3195,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableDropColumn:
 		ctx.WriteKeyWord("DROP COLUMN ")
 		if n.IfExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
+			ctx.WriteKeyWord("IF EXISTS ")
 		}
 		if err := n.OldColumnName.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.OldColumnName")
@@ -4389,19 +3206,19 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableDropIndex:
 		ctx.WriteKeyWord("DROP INDEX ")
 		if n.IfExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
+			ctx.WriteKeyWord("IF EXISTS ")
 		}
 		ctx.WriteName(n.Name)
 	case AlterTableDropForeignKey:
 		ctx.WriteKeyWord("DROP FOREIGN KEY ")
 		if n.IfExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
+			ctx.WriteKeyWord("IF EXISTS ")
 		}
 		ctx.WriteName(n.Name)
 	case AlterTableModifyColumn:
 		ctx.WriteKeyWord("MODIFY COLUMN ")
 		if n.IfExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
+			ctx.WriteKeyWord("IF EXISTS ")
 		}
 		if err := n.NewColumns[0].Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.NewColumns[0]")
@@ -4415,7 +3232,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableChangeColumn:
 		ctx.WriteKeyWord("CHANGE COLUMN ")
 		if n.IfExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
+			ctx.WriteKeyWord("IF EXISTS ")
 		}
 		if err := n.OldColumnName.Restore(ctx); err != nil {
 			return errors.Annotate(err, "An error occurred while restore AlterTableSpec.OldColumnName")
@@ -4503,7 +3320,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableAddPartitions:
 		ctx.WriteKeyWord("ADD PARTITION")
 		if n.IfNotExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, " IF NOT EXISTS")
+			ctx.WriteKeyWord(" IF NOT EXISTS")
 		}
 		if n.NoWriteToBinlog {
 			ctx.WriteKeyWord(" NO_WRITE_TO_BINLOG")
@@ -4592,7 +3409,7 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 	case AlterTableDropPartition:
 		ctx.WriteKeyWord("DROP PARTITION ")
 		if n.IfExists {
-			ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTiDB, "IF EXISTS ")
+			ctx.WriteKeyWord("IF EXISTS ")
 		}
 		for i, name := range n.PartitionNames {
 			if i != 0 {
@@ -4800,12 +3617,10 @@ func (n *AlterTableSpec) Restore(ctx *format.RestoreCtx) error {
 			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.StatsOptionsSpec")
 		}
 	case AlterTableRemoveTTL:
-		ctx.WriteKeyWordWithSpecialComments(tidb.FeatureIDTTL, "REMOVE TTL")
-	case AlterTableSplitIndex:
-		spec := n.SplitIndex
-		if err := spec.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore AlterTableSpec.SplitIndex")
-		}
+		_ = ctx.WriteWithSpecialComments(tidb.FeatureIDTTL, func() error {
+			ctx.WriteKeyWord("REMOVE TTL")
+			return nil
+		})
 	default:
 		// TODO: not support
 		ctx.WritePlainf(" /* AlterTableType(%d) is not supported */ ", n.Tp)
@@ -4833,13 +3648,6 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 			return n, false
 		}
 		n.NewTable = node.(*TableName)
-	}
-	if n.SplitIndex != nil {
-		node, ok := n.SplitIndex.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.SplitIndex = node.(*SplitIndexOption)
 	}
 	for i, col := range n.NewColumns {
 		node, ok := col.Accept(v)
@@ -4869,20 +3677,6 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		}
 		n.Position = node.(*ColumnPosition)
 	}
-	if n.MaskingPolicyColumn != nil {
-		node, ok := n.MaskingPolicyColumn.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.MaskingPolicyColumn = node.(*ColumnName)
-	}
-	if n.MaskingPolicyExpr != nil {
-		node, ok := n.MaskingPolicyExpr.Accept(v)
-		if !ok {
-			return n, false
-		}
-		n.MaskingPolicyExpr = node.(ExprNode)
-	}
 	if n.Partition != nil {
 		node, ok := n.Partition.Accept(v)
 		if !ok {
@@ -4898,7 +3692,7 @@ func (n *AlterTableSpec) Accept(v Visitor) (Node, bool) {
 		n.Options[i] = node.(*TableOption)
 	}
 	for _, def := range n.PartDefinitions {
-		if !def.accept(v) {
+		if !def.acceptInPlace(v) {
 			return n, false
 		}
 	}
@@ -5037,7 +3831,7 @@ var (
 )
 
 type SubPartitionDefinition struct {
-	Name    CIStr
+	Name    model.CIStr
 	Options []*TableOption
 }
 
@@ -5055,12 +3849,11 @@ func (spd *SubPartitionDefinition) Restore(ctx *format.RestoreCtx) error {
 
 type PartitionDefinitionClause interface {
 	restore(ctx *format.RestoreCtx) error
-	accept(v Visitor) bool
-	acceptInPlace(v InPlaceVisitor) bool
+	acceptInPlace(v Visitor) bool
 	// Validate checks if the clause is consistent with the given options.
 	// `pt` can be 0 and `columns` can be -1 to skip checking the clause against
 	// the partition type or number of columns in the expression list.
-	Validate(pt PartitionType, columns int) error
+	Validate(pt model.PartitionType, columns int) error
 }
 
 type PartitionDefinitionClauseNone struct{}
@@ -5069,22 +3862,18 @@ func (*PartitionDefinitionClauseNone) restore(_ *format.RestoreCtx) error {
 	return nil
 }
 
-func (*PartitionDefinitionClauseNone) accept(_ Visitor) bool {
+func (*PartitionDefinitionClauseNone) acceptInPlace(_ Visitor) bool {
 	return true
 }
 
-func (*PartitionDefinitionClauseNone) acceptInPlace(_ InPlaceVisitor) bool {
-	return true
-}
-
-func (*PartitionDefinitionClauseNone) Validate(pt PartitionType, _ int) error {
+func (*PartitionDefinitionClauseNone) Validate(pt model.PartitionType, _ int) error {
 	switch pt {
 	case 0:
-	case PartitionTypeRange:
+	case model.PartitionTypeRange:
 		return ErrPartitionRequiresValues.GenWithStackByArgs("RANGE", "LESS THAN")
-	case PartitionTypeList:
+	case model.PartitionTypeList:
 		return ErrPartitionRequiresValues.GenWithStackByArgs("LIST", "IN")
-	case PartitionTypeSystemTime:
+	case model.PartitionTypeSystemTime:
 		return ErrSystemVersioningWrongPartitions
 	}
 	return nil
@@ -5109,7 +3898,7 @@ func (n *PartitionDefinitionClauseLessThan) restore(ctx *format.RestoreCtx) erro
 	return nil
 }
 
-func (n *PartitionDefinitionClauseLessThan) accept(v Visitor) bool {
+func (n *PartitionDefinitionClauseLessThan) acceptInPlace(v Visitor) bool {
 	for i, expr := range n.Exprs {
 		newExpr, ok := expr.Accept(v)
 		if !ok {
@@ -5120,18 +3909,9 @@ func (n *PartitionDefinitionClauseLessThan) accept(v Visitor) bool {
 	return true
 }
 
-func (n *PartitionDefinitionClauseLessThan) acceptInPlace(v InPlaceVisitor) bool {
-	for _, expr := range n.Exprs {
-		if !expr.AcceptInPlace(v) {
-			return false
-		}
-	}
-	return true
-}
-
-func (n *PartitionDefinitionClauseLessThan) Validate(pt PartitionType, columns int) error {
+func (n *PartitionDefinitionClauseLessThan) Validate(pt model.PartitionType, columns int) error {
 	switch pt {
-	case PartitionTypeRange, 0:
+	case model.PartitionTypeRange, 0:
 	default:
 		return ErrPartitionWrongValues.GenWithStackByArgs("RANGE", "LESS THAN")
 	}
@@ -5189,7 +3969,7 @@ func (n *PartitionDefinitionClauseIn) restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-func (n *PartitionDefinitionClauseIn) accept(v Visitor) bool {
+func (n *PartitionDefinitionClauseIn) acceptInPlace(v Visitor) bool {
 	for _, valList := range n.Values {
 		for j, val := range valList {
 			newVal, ok := val.Accept(v)
@@ -5202,20 +3982,9 @@ func (n *PartitionDefinitionClauseIn) accept(v Visitor) bool {
 	return true
 }
 
-func (n *PartitionDefinitionClauseIn) acceptInPlace(v InPlaceVisitor) bool {
-	for _, valList := range n.Values {
-		for _, val := range valList {
-			if !val.AcceptInPlace(v) {
-				return false
-			}
-		}
-	}
-	return true
-}
-
-func (n *PartitionDefinitionClauseIn) Validate(pt PartitionType, columns int) error {
+func (n *PartitionDefinitionClauseIn) Validate(pt model.PartitionType, columns int) error {
 	switch pt {
-	case PartitionTypeList, 0:
+	case model.PartitionTypeList, 0:
 	default:
 		return ErrPartitionWrongValues.GenWithStackByArgs("LIST", "IN")
 	}
@@ -5273,17 +4042,13 @@ func (n *PartitionDefinitionClauseHistory) restore(ctx *format.RestoreCtx) error
 	return nil
 }
 
-func (*PartitionDefinitionClauseHistory) accept(_ Visitor) bool {
+func (*PartitionDefinitionClauseHistory) acceptInPlace(_ Visitor) bool {
 	return true
 }
 
-func (*PartitionDefinitionClauseHistory) acceptInPlace(_ InPlaceVisitor) bool {
-	return true
-}
-
-func (*PartitionDefinitionClauseHistory) Validate(pt PartitionType, _ int) error {
+func (*PartitionDefinitionClauseHistory) Validate(pt model.PartitionType, _ int) error {
 	switch pt {
-	case 0, PartitionTypeSystemTime:
+	case 0, model.PartitionTypeSystemTime:
 	default:
 		return ErrWrongPartitionTypeExpectedSystemTime
 	}
@@ -5293,7 +4058,7 @@ func (*PartitionDefinitionClauseHistory) Validate(pt PartitionType, _ int) error
 
 // PartitionDefinition defines a single partition.
 type PartitionDefinition struct {
-	Name    CIStr
+	Name    model.CIStr
 	Clause  PartitionDefinitionClause
 	Options []*TableOption
 	Sub     []*SubPartitionDefinition
@@ -5310,11 +4075,7 @@ func (n *PartitionDefinition) Comment() (string, bool) {
 	return "", false
 }
 
-func (n *PartitionDefinition) accept(v Visitor) bool {
-	return n.Clause.accept(v)
-}
-
-func (n *PartitionDefinition) acceptInPlace(v InPlaceVisitor) bool {
+func (n *PartitionDefinition) acceptInPlace(v Visitor) bool {
 	return n.Clause.acceptInPlace(v)
 }
 
@@ -5373,7 +4134,7 @@ type PartitionMethod struct {
 	// partition definitions
 	node
 	// Tp is the type of the partition function
-	Tp PartitionType
+	Tp model.PartitionType
 	// Linear is a modifier to the HASH and KEY type for choosing a different
 	// algorithm
 	Linear bool
@@ -5413,7 +4174,7 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 	}
 
 	switch {
-	case n.Tp == PartitionTypeSystemTime:
+	case n.Tp == model.PartitionTypeSystemTime:
 		if n.Expr != nil && n.Unit != TimeUnitInvalid {
 			ctx.WriteKeyWord(" INTERVAL ")
 			if err := n.Expr.Restore(ctx); err != nil {
@@ -5435,7 +4196,7 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 
 	default:
-		if n.Tp == PartitionTypeRange || n.Tp == PartitionTypeList {
+		if n.Tp == model.PartitionTypeRange || n.Tp == model.PartitionTypeList {
 			ctx.WriteKeyWord(" COLUMNS")
 		}
 		ctx.WritePlain(" (")
@@ -5479,8 +4240,8 @@ func (n *PartitionMethod) Restore(ctx *format.RestoreCtx) error {
 	return nil
 }
 
-// accept is like Node.Accept but does not allow replacing the node itself.
-func (n *PartitionMethod) accept(v Visitor) bool {
+// acceptInPlace is like Node.Accept but does not allow replacing the node itself.
+func (n *PartitionMethod) acceptInPlace(v Visitor) bool {
 	if n.Expr != nil {
 		expr, ok := n.Expr.Accept(v)
 		if !ok {
@@ -5498,24 +4259,11 @@ func (n *PartitionMethod) accept(v Visitor) bool {
 	return true
 }
 
-func (n *PartitionMethod) acceptInPlace(v InPlaceVisitor) bool {
-	if n.Expr != nil && !n.Expr.AcceptInPlace(v) {
-		return false
-	}
-	for _, colName := range n.ColumnNames {
-		if !colName.AcceptInPlace(v) {
-			return false
-		}
-	}
-	return true
-}
-
 // PartitionOptions specifies the partition options.
 type PartitionOptions struct {
 	PartitionMethod
-	Sub           *PartitionMethod
-	Definitions   []*PartitionDefinition
-	UpdateIndexes []*Constraint
+	Sub         *PartitionMethod
+	Definitions []*PartitionDefinition
 }
 
 // Validate checks if the partition is well-formed.
@@ -5549,15 +4297,15 @@ func (n *PartitionOptions) Validate() error {
 	}
 
 	switch n.Tp {
-	case PartitionTypeHash, PartitionTypeKey:
+	case model.PartitionTypeHash, model.PartitionTypeKey:
 		if n.Num == 0 {
 			n.Num = 1
 		}
-	case PartitionTypeRange, PartitionTypeList:
+	case model.PartitionTypeRange, model.PartitionTypeList:
 		if n.Interval == nil && len(n.Definitions) == 0 {
 			return ErrPartitionsMustBeDefined.GenWithStackByArgs(n.Tp)
 		}
-	case PartitionTypeSystemTime:
+	case model.PartitionTypeSystemTime:
 		if len(n.Definitions) < 2 {
 			return ErrSystemVersioningWrongPartitions
 		}
@@ -5609,22 +4357,6 @@ func (n *PartitionOptions) Restore(ctx *format.RestoreCtx) error {
 		ctx.WritePlain(")")
 	}
 
-	if len(n.UpdateIndexes) > 0 {
-		ctx.WritePlain(" UPDATE INDEXES (")
-		for i, update := range n.UpdateIndexes {
-			if i > 0 {
-				ctx.WritePlain(",")
-			}
-			ctx.WriteName(update.Name)
-			if update.Option != nil && update.Option.Global {
-				ctx.WritePlain(" GLOBAL")
-			} else {
-				ctx.WritePlain(" LOCAL")
-			}
-		}
-		ctx.WritePlain(")")
-	}
-
 	return nil
 }
 
@@ -5635,14 +4367,14 @@ func (n *PartitionOptions) Accept(v Visitor) (Node, bool) {
 	}
 
 	n = newNode.(*PartitionOptions)
-	if !n.PartitionMethod.accept(v) {
+	if !n.PartitionMethod.acceptInPlace(v) {
 		return n, false
 	}
-	if n.Sub != nil && !n.Sub.accept(v) {
+	if n.Sub != nil && !n.Sub.acceptInPlace(v) {
 		return n, false
 	}
 	for _, def := range n.Definitions {
-		if !def.accept(v) {
+		if !def.acceptInPlace(v) {
 			return n, false
 		}
 	}
@@ -5700,7 +4432,7 @@ type FlashBackToTimestampStmt struct {
 	FlashbackTS  ExprNode
 	FlashbackTSO uint64
 	Tables       []*TableName
-	DBName       CIStr
+	DBName       model.CIStr
 }
 
 // Restore implements Node interface
@@ -5858,7 +4590,7 @@ func (n *StatsOptionsSpec) Accept(v Visitor) (Node, bool) {
 type AlterPlacementPolicyStmt struct {
 	ddlNode
 
-	PolicyName       CIStr
+	PolicyName       model.CIStr
 	IfExists         bool
 	PlacementOptions []*PlacementOption
 }
@@ -5906,10 +4638,6 @@ func CheckAppend(ops []*ResourceGroupOption, newOp *ResourceGroupOption) bool {
 func CheckRunawayAppend(ops []*ResourceGroupRunawayOption, newOp *ResourceGroupRunawayOption) bool {
 	for _, op := range ops {
 		if op.Tp == newOp.Tp {
-			// support multiple runaway rules.
-			if op.Tp == RunawayRule {
-				continue
-			}
 			return false
 		}
 	}
@@ -5929,7 +4657,7 @@ func CheckBackgroundAppend(ops []*ResourceGroupBackgroundOption, newOp *Resource
 type AlterResourceGroupStmt struct {
 	ddlNode
 
-	ResourceGroupName       CIStr
+	ResourceGroupName       model.CIStr
 	IfExists                bool
 	ResourceGroupOptionList []*ResourceGroupOption
 }

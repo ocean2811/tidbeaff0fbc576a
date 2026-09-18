@@ -16,9 +16,12 @@ package infosync
 
 import (
 	"context"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
 
-	"github.com/tikv/pd/client/errs"
-	pd "github.com/tikv/pd/client/http"
+	"github.com/pingcap/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/pdapi"
 )
 
 // PlacementScheduleState is the returned third-valued state from GetReplicationState(). For convenience, the string of PD is deserialized into an enum first.
@@ -52,69 +55,32 @@ func GetReplicationState(ctx context.Context, startKey []byte, endKey []byte) (P
 	if err != nil {
 		return PlacementScheduleStatePending, err
 	}
-	if is.pdHTTPCli == nil {
+
+	if is.etcdCli == nil {
 		return PlacementScheduleStatePending, nil
 	}
-	state, err := is.pdHTTPCli.GetRegionsReplicatedStateByKeyRange(ctx, pd.NewKeyRange(startKey, endKey))
-	if err != nil || len(state) == 0 {
-		return PlacementScheduleStatePending, err
-	}
-	st := PlacementScheduleStatePending
-	switch state {
-	case "REPLICATED":
-		st = PlacementScheduleStateScheduled
-	case "INPROGRESS":
-		st = PlacementScheduleStateInProgress
-	case "PENDING":
-		st = PlacementScheduleStatePending
-	}
-	return st, nil
-}
 
-// GetRegionDistributionByKeyRange is used to get the region distributions by given key range from PD.
-func GetRegionDistributionByKeyRange(ctx context.Context, startKey []byte, endKey []byte, engine string) (*pd.RegionDistributions, error) {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return nil, err
-	}
-	if is.pdHTTPCli == nil {
-		return nil, errs.ErrClientGetLeader.FastGenByArgs("pd http cli is nil")
-	}
-	return is.pdHTTPCli.GetRegionDistributionByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), engine)
-}
+	addrs := is.etcdCli.Endpoints()
 
-// GetSchedulerConfig is used to get the configuration of the specified scheduler from PD.
-func GetSchedulerConfig(ctx context.Context, schedulerName string) (any, error) {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return nil, err
+	if len(addrs) == 0 {
+		return PlacementScheduleStatePending, errors.Errorf("pd unavailable")
 	}
-	if is.pdHTTPCli == nil {
-		return nil, errs.ErrClientGetLeader.FastGenByArgs("pd http cli is nil")
-	}
-	return is.pdHTTPCli.GetSchedulerConfig(ctx, schedulerName)
-}
 
-// CreateSchedulerConfigWithInput is used to create a scheduler with the specified input.
-func CreateSchedulerConfigWithInput(ctx context.Context, schedulerName string, input map[string]any) error {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return err
+	res, err := doRequest(ctx, "GetReplicationState", addrs, fmt.Sprintf("%s/replicated?startKey=%s&endKey=%s", pdapi.Regions, hex.EncodeToString(startKey), hex.EncodeToString(endKey)), "GET", nil)
+	if err == nil && res != nil {
+		st := PlacementScheduleStatePending
+		// it should not fail
+		var state string
+		_ = json.Unmarshal(res, &state)
+		switch state {
+		case "REPLICATED":
+			st = PlacementScheduleStateScheduled
+		case "INPROGRESS":
+			st = PlacementScheduleStateInProgress
+		case "PENDING":
+			st = PlacementScheduleStatePending
+		}
+		return st, nil
 	}
-	if is.pdHTTPCli == nil {
-		return errs.ErrClientGetLeader.FastGenByArgs(schedulerName)
-	}
-	return is.pdHTTPCli.CreateSchedulerWithInput(ctx, schedulerName, input)
-}
-
-// CancelSchedulerJob is used to cancel a given scheduler job.
-func CancelSchedulerJob(ctx context.Context, schedulerName string, jobID uint64) error {
-	is, err := getGlobalInfoSyncer()
-	if err != nil {
-		return err
-	}
-	if is.pdHTTPCli == nil {
-		return errs.ErrClientGetLeader.FastGenByArgs(schedulerName)
-	}
-	return is.pdHTTPCli.CancelSchedulerJob(ctx, schedulerName, jobID)
+	return PlacementScheduleStatePending, err
 }

@@ -15,18 +15,16 @@
 package extension_test
 
 import (
-	"slices"
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/privilege/privileges"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/testkit"
-	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/extension"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/privilege/privileges"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sem"
 	"github.com/stretchr/testify/require"
 )
 
@@ -102,7 +100,7 @@ func TestRegisterExtensionWithDyncPrivs(t *testing.T) {
 	defer extension.Reset()
 
 	origDynPrivs := privileges.GetDynamicPrivileges()
-	origDynPrivs = slices.Clone(origDynPrivs)
+	origDynPrivs = append([]string{}, origDynPrivs...)
 
 	extension.Reset()
 	require.NoError(t, extension.Register("test", extension.WithCustomDynPrivs([]string{"priv1", "priv2"})))
@@ -135,17 +133,17 @@ func TestRegisterExtensionWithSysVars(t *testing.T) {
 	defer extension.Reset()
 
 	sysVar1 := &variable.SysVar{
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Scope: variable.ScopeGlobal | variable.ScopeSession,
 		Name:  "var1",
-		Value: vardef.On,
-		Type:  vardef.TypeBool,
+		Value: variable.On,
+		Type:  variable.TypeBool,
 	}
 
 	sysVar2 := &variable.SysVar{
-		Scope: vardef.ScopeSession,
+		Scope: variable.ScopeSession,
 		Name:  "var2",
 		Value: "val2",
-		Type:  vardef.TypeStr,
+		Type:  variable.TypeStr,
 	}
 
 	// normal register
@@ -158,7 +156,7 @@ func TestRegisterExtensionWithSysVars(t *testing.T) {
 	// test for empty name
 	extension.Reset()
 	require.NoError(t, extension.Register("test", extension.WithCustomSysVariables([]*variable.SysVar{
-		{Scope: vardef.ScopeGlobal, Name: "", Value: "val3"},
+		{Scope: variable.ScopeGlobal, Name: "", Value: "val3"},
 	})))
 	require.EqualError(t, extension.Setup(), "system var name should not be empty")
 	require.Nil(t, variable.GetSysVar(""))
@@ -167,12 +165,12 @@ func TestRegisterExtensionWithSysVars(t *testing.T) {
 	extension.Reset()
 	require.NoError(t, extension.Register("test", extension.WithCustomSysVariables([]*variable.SysVar{
 		sysVar1,
-		{Scope: vardef.ScopeGlobal, Name: vardef.TiDBSnapshot, Value: "val3"},
+		{Scope: variable.ScopeGlobal, Name: variable.TiDBSnapshot, Value: "val3"},
 	})))
 	require.EqualError(t, extension.Setup(), "system var 'tidb_snapshot' has already registered")
 	require.Nil(t, variable.GetSysVar("var1"))
-	require.Equal(t, "", variable.GetSysVar(vardef.TiDBSnapshot).Value)
-	require.Equal(t, vardef.ScopeSession, variable.GetSysVar(vardef.TiDBSnapshot).Scope)
+	require.Equal(t, "", variable.GetSysVar(variable.TiDBSnapshot).Value)
+	require.Equal(t, variable.ScopeSession, variable.GetSysVar(variable.TiDBSnapshot).Scope)
 
 	// test for duplicate name with other extension
 	extension.Reset()
@@ -184,20 +182,15 @@ func TestRegisterExtensionWithSysVars(t *testing.T) {
 }
 
 func TestSetVariablePrivilege(t *testing.T) {
-	testSetVariablePrivilege(t, sem.V1)
-	testSetVariablePrivilege(t, sem.V2)
-}
-
-func testSetVariablePrivilege(t *testing.T, semVer string) {
 	defer extension.Reset()
 
 	sysVar1 := &variable.SysVar{
-		Scope:    vardef.ScopeGlobal | vardef.ScopeSession,
+		Scope:    variable.ScopeGlobal | variable.ScopeSession,
 		Name:     "var1",
 		Value:    "1",
 		MinValue: 0,
 		MaxValue: 100,
-		Type:     vardef.TypeInt,
+		Type:     variable.TypeInt,
 		RequireDynamicPrivileges: func(isGlobal bool, sem bool) []string {
 			privs := []string{"priv1"}
 			if isGlobal {
@@ -232,6 +225,7 @@ func testSetVariablePrivilege(t *testing.T, semVer string) {
 	tk2 := testkit.NewTestKit(t, store)
 	require.NoError(t, tk2.Session().Auth(&auth.UserIdentity{Username: "u2", Hostname: "localhost"}, nil, nil, nil))
 
+	sem.Disable()
 	tk1.MustExec("set @@var1=7")
 	tk1.MustQuery("select @@var1").Check(testkit.Rows("7"))
 
@@ -253,7 +247,8 @@ func testSetVariablePrivilege(t *testing.T, semVer string) {
 	tk2.MustExec("set @@global.var1=18")
 	tk2.MustQuery("select @@global.var1").Check(testkit.Rows("18"))
 
-	defer sem.SwitchToSEMForTest(t, semVer)()
+	sem.Enable()
+	defer sem.Disable()
 
 	require.EqualError(t, tk1.ExecToErr("set @@global.var1=27"), "[planner:1227]Access denied; you need (at least one of) the restricted_priv3 privilege(s) for this operation")
 	tk1.MustQuery("select @@global.var1").Check(testkit.Rows("18"))
@@ -267,11 +262,6 @@ func testSetVariablePrivilege(t *testing.T, semVer string) {
 }
 
 func TestCustomAccessCheck(t *testing.T) {
-	testCustomAccessCheck(t, sem.V1)
-	testCustomAccessCheck(t, sem.V2)
-}
-
-func testCustomAccessCheck(t *testing.T, semVer string) {
 	defer extension.Reset()
 	extension.Reset()
 
@@ -339,7 +329,8 @@ func testCustomAccessCheck(t *testing.T, semVer string) {
 	tk2.MustExec("update t1 set v=12 where id<2")
 	tk2.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 12"))
 
-	defer sem.SwitchToSEMForTest(t, semVer)()
+	sem.Enable()
+	defer sem.Disable()
 
 	require.EqualError(t, tk1.ExecToErr("update t1 set v=21 where id=1"), "[planner:8121]privilege check for 'Update' fail")
 	require.EqualError(t, tk1.ExecToErr("update t1 set v=21 where id<2"), "[planner:8121]privilege check for 'Update' fail")
@@ -355,131 +346,4 @@ func testCustomAccessCheck(t *testing.T, semVer string) {
 
 	tk2.MustExec("update t1 set v=32 where id<2")
 	tk2.MustQuery("select * from t1 where id=1").Check(testkit.Rows("1 32"))
-}
-
-func TestAuthPluginValidation(t *testing.T) {
-	defer extension.Reset()
-	extension.Reset()
-
-	require.NoError(t, extension.Register("test", extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
-		{Name: ""},
-	})))
-	require.ErrorContains(t, extension.Setup(), "auth plugin name cannot be empty")
-
-	extension.Reset()
-	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
-			{
-				Name: "plugin1",
-				ValidateAuthString: func(pwdHash string) bool {
-					return false
-				},
-				GenerateAuthString: func(pwd string) (string, bool) {
-					return pwd, true
-				},
-			},
-		})),
-	)
-	require.ErrorContains(t, extension.Setup(), "auth plugin AuthenticateUser function cannot be nil for plugin1")
-
-	extension.Reset()
-	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
-			{
-				Name: "plugin1",
-				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
-					return nil
-				},
-				GenerateAuthString: func(pwd string) (string, bool) {
-					return pwd, true
-				},
-			},
-		})),
-	)
-	require.ErrorContains(t, extension.Setup(), "auth plugin ValidateAuthString function cannot be nil for plugin1")
-
-	extension.Reset()
-	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
-			{
-				Name: "plugin1",
-				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
-					return nil
-				},
-				ValidateAuthString: func(pwdHash string) bool {
-					return true
-				},
-			},
-		})),
-	)
-	require.ErrorContains(t, extension.Setup(), "auth plugin GenerateAuthString function cannot be nil for plugin1")
-
-	extension.Reset()
-	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
-			{
-				Name: "plugin1",
-				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
-					return nil
-				},
-				GenerateAuthString: func(pwd string) (string, bool) {
-					return pwd, true
-				},
-				ValidateAuthString: func(pwdHash string) bool {
-					return true
-				},
-			},
-			{
-				Name: "plugin1",
-				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
-					return nil
-				},
-				GenerateAuthString: func(pwd string) (string, bool) {
-					return pwd, true
-				},
-				ValidateAuthString: func(pwdHash string) bool {
-					return true
-				},
-			},
-		})),
-	)
-	require.ErrorContains(t, extension.Setup(), "has already been registered")
-
-	extension.Reset()
-	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
-			{
-				Name: "mysql_native_password",
-				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
-					return nil
-				},
-				GenerateAuthString: func(pwd string) (string, bool) {
-					return pwd, true
-				},
-				ValidateAuthString: func(pwdHash string) bool {
-					return true
-				},
-			},
-		})),
-	)
-	require.ErrorContains(t, extension.Setup(), "a reserved name for default auth plugins")
-
-	extension.Reset()
-	require.NoError(t, extension.Register("test",
-		extension.WithCustomAuthPlugins([]*extension.AuthPlugin{
-			{
-				Name: "plugin1",
-				AuthenticateUser: func(ctx extension.AuthenticateRequest) error {
-					return nil
-				},
-				GenerateAuthString: func(pwd string) (string, bool) {
-					return pwd, true
-				},
-				ValidateAuthString: func(pwdHash string) bool {
-					return true
-				},
-			},
-		})),
-	)
-	require.NoError(t, extension.Setup())
 }

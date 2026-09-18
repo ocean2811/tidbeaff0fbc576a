@@ -1,13 +1,5 @@
 load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
-package_group(
-    name = "aggregation_friend",
-    packages = [
-        "-//pkg/sessionctx/...",
-        "//...",
-    ],
-)
-
 go_library(
     name = "aggregation",
     srcs = [
@@ -24,27 +16,23 @@ go_library(
         "explain.go",
         "first_row.go",
         "max_min.go",
-        "max_min_count.go",
         "sum.go",
-        "sum_int.go",
         "util.go",
         "window_func.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/expression/aggregation",
-    visibility = [
-        ":aggregation_friend",
-    ],
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/aggregation",
+    visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
-        "//pkg/expression/exprctx",
         "//pkg/kv",
         "//pkg/parser/ast",
         "//pkg/parser/charset",
         "//pkg/parser/mysql",
         "//pkg/parser/terror",
-        "//pkg/planner/cascades/base",
         "//pkg/planner/util",
+        "//pkg/sessionctx",
         "//pkg/sessionctx/stmtctx",
+        "//pkg/sessionctx/variable",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/codec",
@@ -71,22 +59,19 @@ go_test(
     ],
     embed = [":aggregation"],
     flaky = True,
-    shard_count = 22,
+    shard_count = 14,
     deps = [
         "//pkg/expression",
         "//pkg/kv",
         "//pkg/parser/ast",
-        "//pkg/parser/charset",
         "//pkg/parser/mysql",
-        "//pkg/planner/cascades/base",
-        "//pkg/planner/util",
-        "//pkg/sessionctx/vardef",
+        "//pkg/sessionctx",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/sessionctx/variable",
         "//pkg/testkit/testsetup",
         "//pkg/types",
         "//pkg/util/chunk",
         "//pkg/util/mock",
-        "@com_github_pingcap_tipb//go-tipb",
         "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],

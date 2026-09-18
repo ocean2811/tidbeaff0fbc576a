@@ -13,3 +13,12 @@
 // limitations under the License.
 
 package staleread
+
+import (
+	mysql "github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
+)
+
+var (
+	errAsOf = dbterror.ClassOptimizer.NewStd(mysql.ErrAsOf)
+)

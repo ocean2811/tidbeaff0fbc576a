@@ -21,8 +21,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/pool"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/util"
 	"github.com/stretchr/testify/require"
 )
 
@@ -46,7 +46,7 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for range 30 {
+		for i := 0; i < 30; i++ {
 			_ = p.Run(func() {
 				time.Sleep(100 * time.Microsecond)
 			})
@@ -68,7 +68,7 @@ func TestReleaseWhenRunningPool(t *testing.T) {
 func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	c := make(chan struct{})
 	p, _ := NewPool("TestPoolTuneScaleUp", 2, util.UNKNOWN, WithBlocking(true))
-	for range 2 {
+	for i := 0; i < 2; i++ {
 		_ = p.Run(func() {
 			<-c
 		})
@@ -83,7 +83,7 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 
 	// test pool tune scale up multiple
 	var wg sync.WaitGroup
-	for range 5 {
+	for i := 0; i < 5; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -97,11 +97,11 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	require.Eventually(t, func() bool { return p.Running() == 8 }, 1*time.Second, 200*time.Millisecond)
 	// test pool tune scale down
 	p.Tune(2)
-	for range 6 {
+	for i := 0; i < 6; i++ {
 		c <- struct{}{}
 	}
 	require.Eventually(t, func() bool { return p.Running() == 2 }, 1*time.Second, 200*time.Millisecond)
-	for range 2 {
+	for i := 0; i < 2; i++ {
 		c <- struct{}{}
 	}
 	require.Eventually(t, func() bool { return p.Running() == 0 }, 1*time.Second, 200*time.Millisecond)
@@ -116,7 +116,7 @@ func TestPoolTuneScaleUpAndDown(t *testing.T) {
 	err := p.RunWithConcurrency(fnChan, 2)
 	require.NoError(t, err)
 	require.Equal(t, int32(2), p.Running())
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		fnChan <- workerFn
 	}
 	require.Eventually(t, func() bool { return cnt.Load() == 10 }, 1*time.Second, 200*time.Millisecond)
@@ -141,7 +141,7 @@ func TestRunOverload(t *testing.T) {
 	require.NoErrorf(t, err, "create TimingPool failed: %v", err)
 	defer p.ReleaseAndWait()
 	defer stop.Store(true)
-	for range poolSize - 1 {
+	for i := 0; i < poolSize-1; i++ {
 		require.NoError(t, p.Run(longRunningFunc), "submit when pool is not full shouldn't return error")
 	}
 	// p is full now.
@@ -180,7 +180,7 @@ func TestRunWithNotEnough2(t *testing.T) {
 	require.Equal(t, int32(1), p.Running())
 	require.Error(t, p.RunWithConcurrency(fnChan, 1))
 	require.Error(t, p.Run(func() {}))
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		fnChan <- fn
 	}
 	close(fnChan)
@@ -194,20 +194,8 @@ func TestWithTaskManager(t *testing.T) {
 	require.NoError(t, err)
 	defer p.ReleaseAndWait()
 	fnChan := make(chan func(), 10)
-	defer close(fnChan)
 	require.NoError(t, p.RunWithConcurrency(fnChan, 2), "submit when pool is not full shouldn't return error")
-	workerReady := make(chan struct{})
-	fnChan <- func() {
-		close(workerReady)
-	}
-	require.Eventually(t, func() bool {
-		select {
-		case <-workerReady:
-			return true
-		default:
-			return false
-		}
-	}, 1*time.Second, 10*time.Millisecond)
+	time.Sleep(100 * time.Microsecond)
 	require.Equal(t, int32(1), p.Running())
 
 	// increase the concurrency
@@ -222,4 +210,5 @@ func TestWithTaskManager(t *testing.T) {
 	require.Eventually(t, func() bool { return p.Running() == 2 }, 1*time.Second, 200*time.Millisecond)
 	p.Tune(1)
 	require.Eventually(t, func() bool { return p.Running() == 1 }, 1*time.Second, 200*time.Millisecond)
+	close(fnChan)
 }

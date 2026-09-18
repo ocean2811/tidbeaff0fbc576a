@@ -19,25 +19,22 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
-	"github.com/pingcap/tidb/pkg/util/topsql"
-	topsqlstate "github.com/pingcap/tidb/pkg/util/topsql/state"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror/exeerrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql"
+	topsqlstate "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/state"
 	"go.uber.org/zap"
 )
 
@@ -56,14 +53,12 @@ type PrepareExec struct {
 
 	ID         uint32
 	ParamCount int
-	Fields     []*resolve.ResultField
-	Stmt       any
+	Fields     []*ast.ResultField
+	Stmt       interface{}
 
 	// If it's generated from executing "prepare stmt from '...'", the process is parse -> plan -> executor
 	// If it's generated from the prepare protocol, the process is session.PrepareStmt -> NewPrepareExec
 	// They both generate a PrepareExec struct, but the second case needs to reset the statement context while the first already do that.
-	// Also, the second case need charset_client param since SQL is directly passed from clients.
-	// While the text-prepare already transformed charset by parser.
 	needReset bool
 }
 
@@ -89,45 +84,28 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 			return nil
 		}
 	}
+	charset, collation := vars.GetCharsetInfo()
 	var (
 		stmts []ast.StmtNode
 		err   error
 	)
-	var params []parser.ParseParam
-	if e.needReset {
-		params = vars.GetParseParams()
-	} else {
-		var paramsArr [2]parser.ParseParam
-		charset, collation := vars.GetCharsetInfo()
-		paramsArr[0] = parser.CharsetConnection(charset)
-		paramsArr[1] = parser.CollationConnection(collation)
-		params = paramsArr[:]
-	}
-
-	warnCountBeforeParse := len(vars.StmtCtx.GetWarnings())
 	if sqlParser, ok := e.Ctx().(sqlexec.SQLParser); ok {
 		// FIXME: ok... yet another parse API, may need some api interface clean.
-		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText, params...)
+		stmts, _, err = sqlParser.ParseSQL(ctx, e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
 	} else {
 		p := parser.New()
 		p.SetParserConfig(vars.BuildParserConfig())
 		var warns []error
-		stmts, warns, err = p.ParseSQL(e.sqlText, params...)
+		stmts, warns, err = p.ParseSQL(e.sqlText,
+			parser.CharsetConnection(charset),
+			parser.CollationConnection(collation))
 		for _, warn := range warns {
 			e.Ctx().GetSessionVars().StmtCtx.AppendWarning(util.SyntaxWarn(warn))
 		}
 	}
 	if err != nil {
-		if !vars.InRestrictedSQL {
-			vars.StmtCtx.AppendError(err)
-		}
-
-		if e.needReset {
-			// If an error happened, we'll need to remove the warnings in previous execution because the `ResetContextOfStmt` will not be called.
-			// Ref https://github.com/pingcap/tidb/issues/59132
-			vars.StmtCtx.SetWarnings(vars.StmtCtx.GetWarnings()[warnCountBeforeParse:])
-		}
-
 		return util.SyntaxError(err)
 	}
 	if len(stmts) != 1 {
@@ -144,7 +122,7 @@ func (e *PrepareExec) Next(ctx context.Context, _ *chunk.Chunk) error {
 	if err != nil {
 		return err
 	}
-	if topsqlstate.TopProfilingEnabled() {
+	if topsqlstate.TopSQLEnabled() {
 		e.Ctx().GetSessionVars().StmtCtx.IsSQLRegistered.Store(true)
 		topsql.AttachAndRegisterSQLInfo(ctx, stmt.NormalizedSQL, stmt.SQLDigest, vars.InRestrictedSQL)
 	}
@@ -181,7 +159,7 @@ type ExecuteExec struct {
 	usingVars     []expression.Expression
 	stmtExec      exec.Executor
 	stmt          ast.StmtNode
-	plan          base.Plan
+	plan          plannercore.Plan
 	lowerPriority bool
 	outputNames   []*types.FieldName
 }
@@ -218,16 +196,19 @@ func (e *DeallocateExec) Next(context.Context, *chunk.Chunk) error {
 	vars := e.Ctx().GetSessionVars()
 	id, ok := vars.PreparedStmtNameToID[e.Name]
 	if !ok {
-		return errors.Trace(plannererrors.ErrStmtNotFound)
+		return errors.Trace(plannercore.ErrStmtNotFound)
 	}
 	preparedPointer := vars.PreparedStmts[id]
 	preparedObj, ok := preparedPointer.(*plannercore.PlanCacheStmt)
 	if !ok {
 		return errors.Errorf("invalid PlanCacheStmt type")
 	}
+	prepared := preparedObj.PreparedAst
 	delete(vars.PreparedStmtNameToID, e.Name)
 	if e.Ctx().GetSessionVars().EnablePreparedPlanCache {
-		cacheKey, _, _, _, err := plannercore.NewPlanCacheKey(e.Ctx(), preparedObj)
+		bindSQL, _ := plannercore.GetBindSQL4PlanCache(e.Ctx(), preparedObj)
+		cacheKey, err := plannercore.NewPlanCacheKey(vars, preparedObj.StmtText, preparedObj.StmtDB, prepared.SchemaVersion,
+			0, bindSQL, expression.ExprPushDownBlackListReloadTimeStamp.Load(), preparedObj.RelateVersion)
 		if err != nil {
 			return err
 		}

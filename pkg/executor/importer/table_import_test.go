@@ -15,20 +15,14 @@
 package importer
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/kvproto/pkg/metapb"
-	tidb "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/lightning/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/lightning/config"
+	tidb "github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
 	"github.com/stretchr/testify/require"
-	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/opt"
-	"github.com/tikv/pd/client/pkg/caller"
 	"go.uber.org/zap"
 )
 
@@ -44,7 +38,7 @@ func TestPrepareSortDir(t *testing.T) {
 	importDir := filepath.Join(dir, "import-4000")
 
 	// dir not exist, create it
-	sortDir, err := prepareSortDir(e, "1", tidbCfg)
+	sortDir, err := prepareSortDir(e, 1, tidbCfg)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "1"), sortDir)
 	info, err := os.Stat(importDir)
@@ -58,7 +52,7 @@ func TestPrepareSortDir(t *testing.T) {
 	require.NoError(t, os.Remove(importDir))
 	_, err = os.Create(importDir)
 	require.NoError(t, err)
-	sortDir, err = prepareSortDir(e, "2", tidbCfg)
+	sortDir, err = prepareSortDir(e, 2, tidbCfg)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "2"), sortDir)
 	info, err = os.Stat(importDir)
@@ -66,7 +60,7 @@ func TestPrepareSortDir(t *testing.T) {
 	require.True(t, info.IsDir())
 
 	// dir already exist, do nothing
-	sortDir, err = prepareSortDir(e, "3", tidbCfg)
+	sortDir, err = prepareSortDir(e, 3, tidbCfg)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "3"), sortDir)
 	info, err = os.Stat(importDir)
@@ -75,7 +69,7 @@ func TestPrepareSortDir(t *testing.T) {
 
 	// sortdir already exist, remove it
 	require.NoError(t, os.Mkdir(sortDir, 0755))
-	sortDir, err = prepareSortDir(e, "3", tidbCfg)
+	sortDir, err = prepareSortDir(e, 3, tidbCfg)
 	require.NoError(t, err)
 	require.Equal(t, filepath.Join(importDir, "3"), sortDir)
 	info, err = os.Stat(importDir)
@@ -120,35 +114,16 @@ func TestCalculateSubtaskCnt(t *testing.T) {
 			e := &LoadDataController{
 				Plan: &Plan{
 					MaxEngineSize:   tt.maxEngineSize,
+					TotalFileSize:   tt.totalSize,
 					CloudStorageURI: tt.cloudStorageURL,
 				},
-				TotalRealSize: tt.totalSize,
+				ExecuteNodesCnt: tt.executeNodeCnt,
 			}
-			e.SetExecuteNodeCnt(tt.executeNodeCnt)
 			if got := e.calculateSubtaskCnt(); got != tt.want {
 				t.Errorf("calculateSubtaskCnt() = %v, want %v", got, tt.want)
 			}
 		})
 	}
-}
-
-func TestCalculateSubtaskCntUsesRealSizeNotFileSize(t *testing.T) {
-	// Regression: compressed imports can have TotalFileSize << TotalRealSize.
-	// Subtask planning must use decoded footprint (TotalRealSize), not on-disk bytes.
-	e := &LoadDataController{
-		Plan: &Plan{
-			MaxEngineSize: 500,
-			TotalFileSize: 100,
-		},
-		TotalRealSize: 1500,
-	}
-	require.Equal(t, 3, e.calculateSubtaskCnt())
-	require.Equal(t, int64(500), e.getAdjustedMaxEngineSize())
-
-	e.Plan.TotalFileSize = 1500
-	e.TotalRealSize = 100
-	require.Equal(t, 1, e.calculateSubtaskCnt())
-	require.Equal(t, int64(100), e.getAdjustedMaxEngineSize())
 }
 
 func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
@@ -187,49 +162,14 @@ func TestLoadDataControllerGetAdjustedMaxEngineSize(t *testing.T) {
 			e := &LoadDataController{
 				Plan: &Plan{
 					MaxEngineSize:   tt.maxEngineSize,
+					TotalFileSize:   tt.totalSize,
 					CloudStorageURI: tt.cloudStorageURL,
 				},
-				TotalRealSize: tt.totalSize,
+				ExecuteNodesCnt: tt.executeNodeCnt,
 			}
-			e.SetExecuteNodeCnt(tt.executeNodeCnt)
 			if got := e.getAdjustedMaxEngineSize(); got != tt.want {
 				t.Errorf("getAdjustedMaxEngineSize() = %v, want %v", got, tt.want)
 			}
 		})
 	}
-}
-
-type mockPDClient struct {
-	pd.Client
-}
-
-// GetAllStores return fake stores.
-func (c *mockPDClient) GetAllStores(context.Context, ...opt.GetStoreOption) ([]*metapb.Store, error) {
-	return nil, nil
-}
-
-func (c *mockPDClient) Close() {
-}
-
-func (c *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
-	return c
-}
-
-func TestGetRegionSplitSizeKeys(t *testing.T) {
-	bak := NewClientWithAPIContext
-	t.Cleanup(func() {
-		NewClientWithAPIContext = bak
-	})
-	NewClientWithAPIContext = func(_ context.Context, _ pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
-		return nil, errors.New("mock error")
-	}
-	_, _, err := GetRegionSplitSizeKeys(context.Background())
-	require.ErrorContains(t, err, "mock error")
-
-	NewClientWithAPIContext = func(_ context.Context, _ pd.APIContext, _ caller.Component, _ []string, _ pd.SecurityOption, _ ...opt.ClientOption) (pd.Client, error) {
-		return &mockPDClient{}, nil
-	}
-	_, _, err = GetRegionSplitSizeKeys(context.Background())
-	require.ErrorContains(t, err, "get region split size and keys failed")
-	// no positive case, more complex to mock it
 }

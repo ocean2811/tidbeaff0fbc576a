@@ -2,8 +2,8 @@
 
 - Author(s): [Yifan Xu](https://github.com/SabaPing)
 - Last updated: May 11, 2021
-- Discussion at: https://github.com/pingcap/tidb/pull/24181
-- Tracking issue: https://github.com/pingcap/tidb/issues/24190
+- Discussion at: https://github.com/ocean2811/tidbeaff0fbc576a/pull/24181
+- Tracking issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/24190
 
 ## Abstract
 
@@ -73,7 +73,7 @@ First, it is necessary to initialize the standard log handler (package level han
 
 Then, determine whether the configuration has enabled slow query log, and if so, create a log handler specific to slow query.
 
-[Here is the code](https://github.com/pingcap/tidb/blob/e79fa8c6b654e5b94e9ed0a1c0f997d6564e95be/util/logutil/log.go#L261).
+[Here is the code](https://github.com/ocean2811/tidbeaff0fbc576a/blob/e79fa8c6b654e5b94e9ed0a1c0f997d6564e95be/util/logutil/log.go#L261).
 
 Regarding where these two handlers are used.
 
@@ -95,7 +95,7 @@ Similar to `logrus`, the init method of zap `func InitZapLogger(cfg *LogConfig) 
 
 In `main.go` there is a bunch of grpc logger initialization code, which is not in `util/logutil/log.go`.
 
-[Here is the code](https://github.com/pingcap/tidb/blob/e79fa8c6b654e5b94e9ed0a1c0f997d6564e95be/tidb-server/main.go#L591).
+[Here is the code](https://github.com/ocean2811/tidbeaff0fbc576a/blob/e79fa8c6b654e5b94e9ed0a1c0f997d6564e95be/tidb-server/main.go#L591).
 
 The `NewLoggerV2` method creates a go native logger handler and is only used in grpc.
 
@@ -155,7 +155,7 @@ Guaranteed by unit testing.
 
 ## Implementation
 
-See meta issue: https://github.com/pingcap/tidb/issues/24190.
+See meta issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/24190.
 
 ## Testing Plan
 

@@ -3,7 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library", "go_test")
 go_library(
     name = "br_lib",
     srcs = [
-        "abort.go",
         "backup.go",
         "cmd.go",
         "debug.go",
@@ -12,7 +11,7 @@ go_library(
         "restore.go",
         "stream.go",
     ],
-    importpath = "github.com/pingcap/tidb/br/cmd/br",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/br/cmd/br",
     visibility = ["//visibility:private"],
     deps = [
         "//br/pkg/conn",
@@ -22,10 +21,9 @@ go_library(
         "//br/pkg/logutil",
         "//br/pkg/metautil",
         "//br/pkg/mock/mockid",
-        "//br/pkg/restore/utils",
+        "//br/pkg/redact",
+        "//br/pkg/restore",
         "//br/pkg/rtree",
-        "//br/pkg/stream",
-        "//br/pkg/stream/crr/service",
         "//br/pkg/streamhelper/config",
         "//br/pkg/summary",
         "//br/pkg/task",
@@ -34,17 +32,11 @@ go_library(
         "//br/pkg/utils",
         "//br/pkg/version/build",
         "//pkg/config",
-        "//pkg/kv",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "//pkg/session",
         "//pkg/util",
-        "//pkg/util/gctuner",
         "//pkg/util/logutil",
-        "//pkg/util/memory",
         "//pkg/util/metricsutil",
-        "//pkg/util/redact",
-        "//pkg/util/size",
         "@com_github_gogo_protobuf//proto",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/brpb",
@@ -58,10 +50,6 @@ go_library(
 
 go_binary(
     name = "br",
-    cgo = select({
-        "@io_bazel_rules_go//go/platform:darwin": True,
-        "//conditions:default": False,
-    }),  #keep
     embed = [":br_lib"],
     visibility = ["//visibility:public"],
 )
@@ -72,11 +60,4 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":br_lib"],
     flaky = True,
-    shard_count = 3,
-    deps = [
-        "//pkg/testkit/testmain",
-        "//pkg/util/memory",
-        "@com_github_stretchr_testify//require",
-        "@org_uber_go_goleak//:goleak",
-    ],
 )

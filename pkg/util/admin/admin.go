@@ -20,21 +20,21 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/logutil/consistency"
-	decoder "github.com/pingcap/tidb/pkg/util/rowDecoder"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil/consistency"
+	decoder "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowDecoder"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -44,7 +44,7 @@ type RecordData struct {
 	Values []types.Datum
 }
 
-func getCount(exec sqlexec.RestrictedSQLExecutor, snapshot uint64, sql string, args ...any) (int64, error) {
+func getCount(exec sqlexec.RestrictedSQLExecutor, snapshot uint64, sql string, args ...interface{}) (int64, error) {
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnAdmin)
 	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionWithSnapshot(snapshot)}, sql, args...)
 	if err != nil {
@@ -70,10 +70,9 @@ const (
 // otherwise it returns an error and the corresponding index's offset.
 func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices []string) (byte, int, error) {
 	// Here we need check all indexes, includes invisible index
-	originOptUseInvisibleIdx := ctx.GetSessionVars().OptimizerUseInvisibleIndexes
 	ctx.GetSessionVars().OptimizerUseInvisibleIndexes = true
 	defer func() {
-		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = originOptUseInvisibleIdx
+		ctx.GetSessionVars().OptimizerUseInvisibleIndexes = false
 	}()
 
 	var snapshot uint64
@@ -89,7 +88,7 @@ func CheckIndicesCount(ctx sessionctx.Context, dbName, tableName string, indices
 	}
 
 	// Add `` for some names like `table name`.
-	exec := ctx.GetRestrictedSQLExecutor()
+	exec := ctx.(sqlexec.RestrictedSQLExecutor)
 	tblCnt, err := getCount(exec, snapshot, "SELECT COUNT(*) FROM %n.%n USE INDEX()", dbName, tableName)
 	if err != nil {
 		return 0, 0, errors.Trace(err)
@@ -140,16 +139,15 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 				if matchingIdx == nil {
 					return nil
 				}
-				k, _, err := matchingIdx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow.Values, idxRow.Handle, nil)
+				k, _, err := matchingIdx.GenIndexKey(sessCtx.GetSessionVars().StmtCtx, idxRow.Values, idxRow.Handle, nil)
 				if err != nil {
 					return nil
 				}
 				return k
 			},
-			Tbl:             t.Meta(),
-			Idx:             idx.Meta(),
-			EnableRedactLog: sessCtx.GetSessionVars().EnableRedactLog,
-			Storage:         sessCtx.GetStore(),
+			Tbl:  t.Meta(),
+			Idx:  idx.Meta(),
+			Sctx: sessCtx,
 		}
 	}
 
@@ -162,14 +160,14 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 					return false, errors.Errorf("Column %v define as not null, but can't find the value where handle is %v", col.Name, h1)
 				}
 				// NULL value is regarded as its default value.
-				colDefVal, err := table.GetColOriginDefaultValue(sessCtx.GetExprCtx(), col.ToInfo())
+				colDefVal, err := table.GetColOriginDefaultValue(sessCtx, col.ToInfo())
 				if err != nil {
 					return false, errors.Trace(err)
 				}
 				vals1[i] = colDefVal
 			}
 		}
-		isExist, h2, err := idx.Exist(sc.ErrCtx(), sc.TimeZone(), txn, vals1, h1)
+		isExist, h2, err := idx.Exist(sc, txn, vals1, h1)
 		if kv.ErrKeyExists.Equal(err) {
 			record1 := &consistency.RecordData{Handle: h1, Values: vals1}
 			record2 := &consistency.RecordData{Handle: h2, Values: vals1}
@@ -185,7 +183,7 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 
 		return true, nil
 	}
-	err := iterRecords(sessCtx, txn, t, startKey, cols, idx.Meta().Global, filterFunc)
+	err := iterRecords(sessCtx, txn, t, startKey, cols, filterFunc)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -194,8 +192,8 @@ func CheckRecordAndIndex(ctx context.Context, sessCtx sessionctx.Context, txn kv
 }
 
 func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder, error) {
-	dbName := ast.NewCIStr(sctx.GetSessionVars().CurrentDB)
-	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx.GetExprCtx(), dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
+	dbName := model.NewCIStr(sctx.GetSessionVars().CurrentDB)
+	exprCols, _, err := expression.ColumnInfos2ColumnsAndNames(sctx, dbName, t.Meta().Name, t.Meta().Cols(), t.Meta())
 	if err != nil {
 		return nil, err
 	}
@@ -205,7 +203,7 @@ func makeRowDecoder(t table.Table, sctx sessionctx.Context) (*decoder.RowDecoder
 	return decoder.NewRowDecoder(t, t.Cols(), decodeColsMap), nil
 }
 
-func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, isGlobalIndex bool, fn table.RecordIterFunc) error {
+func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Table, startKey kv.Key, cols []*table.Column, fn table.RecordIterFunc) error {
 	prefix := t.RecordPrefix()
 	keyUpperBound := prefix.PrefixNext()
 
@@ -235,11 +233,8 @@ func iterRecords(sessCtx sessionctx.Context, retriever kv.Retriever, t table.Tab
 		if err != nil {
 			return errors.Trace(err)
 		}
-		if isGlobalIndex {
-			handle = kv.NewPartitionHandle(tablecodec.DecodeTableID(it.Key()), handle)
-		}
 
-		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx.GetExprCtx(), handle, it.Value(), sessCtx.GetSessionVars().Location(), nil)
+		rowMap, err := rowDecoder.DecodeAndEvalRowWithMap(sessCtx, handle, it.Value(), sessCtx.GetSessionVars().Location(), nil)
 		if err != nil {
 			return errors.Trace(err)
 		}

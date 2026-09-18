@@ -20,8 +20,8 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/rand"
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,15 +30,14 @@ import (
 
 	"github.com/BurntSushi/toml"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/extstore"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/replayer"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -52,8 +51,6 @@ const (
 	ExtractTaskType = "taskType"
 	// ExtractPlanTaskSkipStats indicates skip stats for extract plan task
 	ExtractPlanTaskSkipStats = "SkipStats"
-	// ExtractTaskDirName indicates directory name for extract task
-	ExtractTaskDirName = "extract"
 )
 
 // ExtractType indicates type
@@ -65,7 +62,8 @@ const (
 )
 
 func taskTypeToString(t ExtractType) string {
-	if t == ExtractPlanType {
+	switch t {
+	case ExtractPlanType:
 		return "Plan"
 	}
 	return "Unknown"
@@ -79,10 +77,10 @@ type ExtractHandle struct {
 	worker *extractWorker
 }
 
-// newExtractHandler new extract handler
-func newExtractHandler(ctx context.Context, sctxs []sessionctx.Context) *ExtractHandle {
+// NewExtractHandler new extract handler
+func NewExtractHandler(sctxs []sessionctx.Context) *ExtractHandle {
 	h := &ExtractHandle{}
-	h.worker = newExtractWorker(ctx, sctxs[0], false)
+	h.worker = newExtractWorker(sctxs[0], false)
 	return h
 }
 
@@ -125,20 +123,16 @@ func NewExtractPlanTask(begin, end time.Time) *ExtractTask {
 	}
 }
 
-func newExtractWorker(
-	ctx context.Context,
-	sctx sessionctx.Context,
-	isBackgroundWorker bool,
-) *extractWorker {
+func newExtractWorker(sctx sessionctx.Context, isBackgroundWorker bool) *extractWorker {
 	return &extractWorker{
-		ctx:                ctx,
 		sctx:               sctx,
 		isBackgroundWorker: isBackgroundWorker,
 	}
 }
 
 func (w *extractWorker) extractTask(ctx context.Context, task *ExtractTask) (string, error) {
-	if task.ExtractType == ExtractPlanType {
+	switch task.ExtractType {
+	case ExtractPlanType:
 		return w.extractPlanTask(ctx, task)
 	}
 	return "", errors.New("unknown extract task")
@@ -158,14 +152,14 @@ func (w *extractWorker) extractPlanTask(ctx context.Context, task *ExtractTask) 
 		logutil.BgLogger().Error("package stmt summary records failed for extract plan task", zap.Error(err))
 		return "", err
 	}
-	return w.dumpExtractPlanPackage(ctx, task, p)
+	return w.dumpExtractPlanPackage(task, p)
 }
 
 func (w *extractWorker) collectRecords(ctx context.Context, task *ExtractTask) (map[stmtSummaryHistoryKey]*stmtSummaryHistoryRecord, error) {
 	w.Lock()
 	defer w.Unlock()
-	exec := w.sctx.GetRestrictedSQLExecutor()
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
+	exec := w.sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	sourceTable := "STATEMENTS_SUMMARY_HISTORY"
 	if !task.UseHistoryView {
 		sourceTable = "STATEMENTS_SUMMARY"
@@ -213,14 +207,14 @@ func (w *extractWorker) handleTableNames(tableNames string, record *stmtSummaryH
 		record.schemaName = dbName
 		// skip internal schema record
 		switch strings.ToLower(record.schemaName) {
-		case metadef.PerformanceSchemaName.L, metadef.InformationSchemaName.L, metadef.MetricSchemaName.L, "mysql":
+		case util.PerformanceSchemaName.L, util.InformationSchemaName.L, util.MetricSchemaName.L, "mysql":
 			return false, nil
 		}
-		exists := is.TableExists(ast.NewCIStr(dbName), ast.NewCIStr(tblName))
+		exists := is.TableExists(model.NewCIStr(dbName), model.NewCIStr(tblName))
 		if !exists {
 			return false, nil
 		}
-		t, err := is.TableByName(w.ctx, ast.NewCIStr(dbName), ast.NewCIStr(tblName))
+		t, err := is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
 		if err != nil {
 			return false, err
 		}
@@ -271,15 +265,15 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 	is := GetDomain(w.sctx).InfoSchema()
 	tne := &tableNameExtractor{
 		ctx:      ctx,
-		executor: w.sctx.GetRestrictedSQLExecutor(),
+		executor: w.sctx.(sqlexec.RestrictedSQLExecutor),
 		is:       is,
-		curDB:    ast.NewCIStr(""),
+		curDB:    model.NewCIStr(""),
 		names:    make(map[tableNamePair]struct{}),
 		cteNames: make(map[string]struct{}),
 	}
 	for v := range p.tables {
 		if v.IsView {
-			v, err := is.TableByName(w.ctx, ast.NewCIStr(v.DBName), ast.NewCIStr(v.TableName))
+			v, err := is.TableByName(model.NewCIStr(v.DBName), model.NewCIStr(v.TableName))
 			if err != nil {
 				return err
 			}
@@ -288,16 +282,13 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 			if err != nil {
 				return err
 			}
-			ast.Walk(node, tne)
+			node.Accept(tne)
 		}
 	}
 	if tne.err != nil {
 		return tne.err
 	}
-	r, err := tne.getTablesAndViews()
-	if err != nil {
-		return err
-	}
+	r := tne.getTablesAndViews()
 	for t := range r {
 		p.tables[t] = struct{}{}
 	}
@@ -305,8 +296,8 @@ func (w *extractWorker) handleIsView(ctx context.Context, p *extractPlanPackage)
 }
 
 func (w *extractWorker) decodeBinaryPlan(ctx context.Context, bPlan string) (string, error) {
-	exec := w.sctx.GetRestrictedSQLExecutor()
-	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStatsForegroundPriority)
+	exec := w.sctx.(sqlexec.RestrictedSQLExecutor)
+	ctx1 := kv.WithInternalSourceType(ctx, kv.InternalTxnStats)
 	rows, _, err := exec.ExecRestrictedSQL(ctx1, nil, fmt.Sprintf("SELECT tidb_decode_binary_plan('%s')", bPlan))
 	if err != nil {
 		return "", err
@@ -345,8 +336,8 @@ func (w *extractWorker) decodeBinaryPlan(ctx context.Context, bPlan string) (str
  |	 |-digest1.sql
  |	 |-...
 */
-func (w *extractWorker) dumpExtractPlanPackage(ctx context.Context, task *ExtractTask, p *extractPlanPackage) (name string, err error) {
-	f, name, err := GenerateExtractFile(ctx)
+func (w *extractWorker) dumpExtractPlanPackage(task *ExtractTask, p *extractPlanPackage) (name string, err error) {
+	f, name, err := GenerateExtractFile()
 	if err != nil {
 		return "", err
 	}
@@ -356,10 +347,10 @@ func (w *extractWorker) dumpExtractPlanPackage(ctx context.Context, task *Extrac
 			logutil.BgLogger().Error("dump extract plan task failed", zap.Error(err))
 		}
 		if err1 := zw.Close(); err1 != nil {
-			logutil.BgLogger().Warn("close zip writer failed", zap.String("file", name), zap.Error(err1))
+			logutil.BgLogger().Warn("close zip file failed", zap.String("file", name), zap.Error(err))
 		}
 		if err1 := f.Close(); err1 != nil {
-			logutil.BgLogger().Warn("close file failed", zap.String("file", name), zap.Error(err1))
+			logutil.BgLogger().Warn("close file failed", zap.String("file", name), zap.Error(err))
 		}
 	}()
 
@@ -462,7 +453,8 @@ func dumpExtractMeta(task *ExtractTask, zw *zip.Writer) error {
 	}
 	varMap := make(map[string]string)
 	varMap[ExtractTaskType] = taskTypeToString(task.ExtractType)
-	if task.ExtractType == ExtractPlanType {
+	switch task.ExtractType {
+	case ExtractPlanType:
 		varMap[ExtractPlanTaskSkipStats] = strconv.FormatBool(task.SkipStats)
 	}
 
@@ -497,22 +489,21 @@ type stmtSummaryHistoryRecord struct {
 }
 
 // GenerateExtractFile generates extract stmt file
-func GenerateExtractFile(ctx context.Context) (io.WriteCloser, string, error) {
+func GenerateExtractFile() (*os.File, string, error) {
 	path := GetExtractTaskDirName()
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
 	fileName, err := generateExtractStmtFile()
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	storage, err := extstore.GetGlobalExtStorage(ctx)
+	zf, err := os.Create(filepath.Join(path, fileName))
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	writer, err := storage.Create(ctx, filepath.Join(path, fileName), nil)
-	if err != nil {
-		return nil, "", errors.AddStack(err)
-	}
-	zf := replayer.NewFileWriter(ctx, writer)
-	return zf, fileName, nil
+	return zf, fileName, err
 }
 
 func generateExtractStmtFile() (string, error) {
@@ -530,5 +521,6 @@ func generateExtractStmtFile() (string, error) {
 
 // GetExtractTaskDirName get extract dir name
 func GetExtractTaskDirName() string {
-	return ExtractTaskDirName
+	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
+	return filepath.Join(tidbLogDir, "extract")
 }

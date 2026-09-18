@@ -20,17 +20,14 @@ import (
 	"runtime/trace"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/tables"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
 )
 
 // ReplaceExec represents a replace executor.
@@ -41,37 +38,30 @@ type ReplaceExec struct {
 
 // Close implements the Executor Close interface.
 func (e *ReplaceExec) Close() error {
-	if e.writeStats != nil {
-		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.writeStats)
-	}
 	e.setMessage()
 	if e.RuntimeStats() != nil && e.stats != nil {
 		defer e.Ctx().GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(e.ID(), e.stats)
 	}
 	if e.SelectExec != nil {
-		return exec.Close(e.SelectExec)
+		return e.SelectExec.Close()
 	}
 	return nil
 }
 
 // Open implements the Executor Open interface.
 func (e *ReplaceExec) Open(ctx context.Context) error {
-	e.writeStats = nil
-	if e.RuntimeStats() != nil {
-		e.writeStats = &execdetails.WriteRuntimeStats{}
-	}
 	e.memTracker = memory.NewTracker(e.ID(), -1)
 	e.memTracker.AttachTo(e.Ctx().GetSessionVars().StmtCtx.MemTracker)
 
 	if e.SelectExec != nil {
-		return exec.Open(ctx, e.SelectExec)
+		return e.SelectExec.Open(ctx)
 	}
 	e.initEvalBuffer()
 	return nil
 }
 
 // replaceRow removes all duplicate rows for one row, then inserts it.
-func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow, dupKeyCheck table.DupKeyCheckMode) error {
+func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow) error {
 	txn, err := e.Ctx().Txn(true)
 	if err != nil {
 		return err
@@ -114,7 +104,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow, dupKeyCh
 	}
 
 	// No duplicated rows now, insert the row.
-	err = e.addRecord(ctx, r.row, dupKeyCheck)
+	err = e.addRecord(ctx, r.row)
 	if err != nil {
 		return err
 	}
@@ -129,7 +119,7 @@ func (e *ReplaceExec) replaceRow(ctx context.Context, r toBeCheckedRow, dupKeyCh
 //  3. error: the error.
 func (e *ReplaceExec) removeIndexRow(ctx context.Context, txn kv.Transaction, r toBeCheckedRow) (rowUnchanged, foundDupKey bool, err error) {
 	for _, uk := range r.uniqueKeys {
-		handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, txn)
+		_, handle, err := tables.FetchDuplicatedHandle(ctx, uk.newKey, true, txn, e.Table.Meta().ID, uk.commonHandle)
 		if err != nil {
 			return false, false, err
 		}
@@ -170,6 +160,7 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	if err != nil {
 		return err
 	}
+	txnSize := txn.Size()
 
 	if e.collectRuntimeStatsEnabled() {
 		if snapshot := txn.GetSnapshot(); snapshot != nil {
@@ -188,18 +179,15 @@ func (e *ReplaceExec) exec(ctx context.Context, newRows [][]types.Datum) error {
 	if e.stats != nil {
 		e.stats.Prefetch = time.Since(prefetchStart)
 	}
-	sessionVars := e.Ctx().GetSessionVars()
-	sessionVars.StmtCtx.AddRecordRows(uint64(len(newRows)))
-	recordWriteCPUWork(e.writeStats, e.Table, len(newRows))
-	// TODO: seems we can optimize it to `DupKeyCheckSkip` because all conflict rows are deleted in previous steps.
-	dupKeyCheck := optimizeDupKeyCheckForNormalInsert(sessionVars, txn)
+	e.Ctx().GetSessionVars().StmtCtx.AddRecordRows(uint64(len(newRows)))
 	for _, r := range toBeCheckedRows {
-		err = e.replaceRow(ctx, r, dupKeyCheck)
+		err = e.replaceRow(ctx, r)
 		if err != nil {
 			return err
 		}
 	}
-	return txn.MayFlush()
+	e.memTracker.Consume(int64(txn.Size() - txnSize))
+	return nil
 }
 
 // Next implements the Executor Next interface.

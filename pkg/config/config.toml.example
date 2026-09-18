@@ -75,7 +75,7 @@ alter-primary-key = false
 
 # server-version is used to change the version string of TiDB in the following scenarios:
 # 1. the server version returned by builtin-function `VERSION()`.
-# 2. the server version filled in handshake packets of MySQL Connection Protocol, see https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase_packets_protocol_handshake_v10.html for more details.
+# 2. the server version filled in handshake packets of MySQL Connection Protocol, see https://dev.mysql.com/doc/internals/en/connection-phase-packets.html#packet-Protocol::Handshake for more details.
 # if server-version = "", the default value(original TiDB version string) is used.
 server-version = ""
 
@@ -94,13 +94,14 @@ new_collations_enabled_on_first_bootstrap = true
 # *If you want to start a TiDB service, NEVER enable this.*
 skip-register-to-dashboard = false
 
-# When enabled, usage data (for example, instance versions) will be reported to log periodically for user experience analytics.
-# If this config is set to `false`, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
+# When enabled, usage data (for example, instance versions) will be reported to PingCAP periodically for user experience analytics.
+# If this config is set to `false` on all TiDB servers, telemetry will be always disabled regardless of the value of the global variable `tidb_enable_telemetry`.
+# See PingCAP privacy policy for details: https://pingcap.com/en/privacy-policy/
 enable-telemetry = false
 
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # a warning like `Integer display width is deprecated and will be removed in a future release`.
-deprecate-integer-display-length = true
+deprecate-integer-display-length = false
 
 # enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
 # According to MySQL 8.0 Refman:
@@ -153,10 +154,6 @@ format = "text"
 # Stores slow query log into separated files.
 slow-query-file = "tidb-slow.log"
 
-# Stores general log into separated files.
-# If it equals to empty, the general log will be written to the server log.
-general-log-file = ""
-
 # Make tidb panic if the write log operation hang for 15s
 # timeout = 15
 
@@ -173,10 +170,6 @@ max-days = 0
 
 # Maximum number of old log files to retain. No clean up by default.
 max-backups = 0
-
-# Compression function for rotated files.
-# It can be empty or "gzip", empty means compression disabled.
-compression = ""
 
 [security]
 # Path of file that contains list of trusted SSL CAs for connection with mysql client.
@@ -405,11 +398,30 @@ store-liveness-timeout = "1s"
 ttl-refreshed-txn-size = 33554432
 
 # If the number of keys that one prewrite request of one region involves exceed this threshold, it will use `ResolveLock` instead of `ResolveLockLite`.
-resolve-lock-lite-threshold = 512
+resolve-lock-lite-threshold = 16
 
 [tikv-client.copr-cache]
 # The capacity in MB of the cache. Zero means disable coprocessor cache.
 capacity-mb = 1000.0
+
+[binlog]
+# enable to write binlog.
+# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
+# txn-total-size-limit should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
+enable = false
+
+# WriteTimeout specifies how long it will wait for writing binlog to pump.
+write-timeout = "15s"
+
+# If IgnoreError is true, when writing binlog meets error, TiDB would stop writing binlog,
+# but still provide service.
+ignore-error = false
+
+# use socket file to write binlog, for compatible with kafka version tidb-binlog.
+binlog-socket = ""
+
+# the strategy for sending binlog to pump, value can be "range" or "hash" now.
+strategy = "range"
 
 [pessimistic-txn]
 # max retry count for a statement in a pessimistic transaction.
@@ -434,12 +446,6 @@ allow-expression-index = false
 [isolation-read]
 # engines means allow the tidb server read data from which types of engines. options: "tikv", "tiflash", "tidb".
 engines = ["tikv", "tiflash", "tidb"]
-
-# Legacy RU v2 TiDB-side weights and statement RU v2 reporting.
-[ru-v2]
-# Statement RU v2 reporting: "result" publishes total, SQL-type and per-engine RU; "full" also publishes
-# raw units by engine/opclass and calculation status for calibration.
-report-mode = "result"
 
 # instance scope variables
 # These options are also available as a system variable for online configuration

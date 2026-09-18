@@ -2,7 +2,7 @@
 
 - Author: [Connor1996](https://github.com/Connor1996)
 - Tracking Issue:
-  - <https://github.com/pingcap/tidb/issues/43691>
+  - <https://github.com/ocean2811/tidbeaff0fbc576a/issues/43691>
 
 ## Motivation
 

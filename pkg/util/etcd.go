@@ -16,15 +16,14 @@ package util
 
 import (
 	"context"
-	"fmt"
 	"math"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.etcd.io/etcd/client/v3/concurrency"
 	"go.uber.org/zap"
@@ -47,7 +46,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 
 	var etcdSession *concurrency.Session
 	failedCnt := 0
-	for range retryCnt {
+	for i := 0; i < retryCnt; i++ {
 		if err = contextDone(ctx, err); err != nil {
 			return etcdSession, errors.Trace(err)
 		}
@@ -76,7 +75,7 @@ func NewSession(ctx context.Context, logPrefix string, etcdCli *clientv3.Client,
 			break
 		}
 		if failedCnt%logIntervalCnt == 0 {
-			logutil.BgLogger().Warn("failed to establish new session to etcd", zap.String("ownerInfo", logPrefix), zap.Error(err))
+			logutil.BgLogger().Warn("failed to new session to etcd", zap.String("ownerInfo", logPrefix), zap.Error(err))
 		}
 
 		time.Sleep(newSessionRetryInterval)
@@ -101,10 +100,4 @@ func contextDone(ctx context.Context, err error) error {
 	}
 
 	return nil
-}
-
-// FormatLeaseID formats lease id to hex string as what etcdctl does.
-// see https://github.com/etcd-io/etcd/blob/995027f5c1363404e86f7a858ea2833df01f0954/etcdctl/ctlv3/command/printer_simple.go#L118
-func FormatLeaseID(id clientv3.LeaseID) string {
-	return fmt.Sprintf("%016x", id)
 }

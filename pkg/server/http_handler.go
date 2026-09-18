@@ -15,13 +15,13 @@
 package server
 
 import (
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/server/handler"
-	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/store/helper"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler/optimizor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/helper"
 )
 
 // NewTikvHandlerTool checks and prepares for tikv handler.

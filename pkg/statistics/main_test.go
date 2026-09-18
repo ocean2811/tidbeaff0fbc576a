@@ -18,13 +18,13 @@ import (
 	"flag"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
-	"github.com/pingcap/tidb/pkg/testkit/testmain"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testdata"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testmain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testsetup"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/goleak"
 )
@@ -47,7 +47,6 @@ func TestMain(m *testing.M) {
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
@@ -87,8 +86,8 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 
 	s.count = 100000
 	samples := make([]*SampleItem, 10000)
-	for i := range samples {
-		samples[i] = &SampleItem{Value: types.Datum{}}
+	for i := 0; i < len(samples); i++ {
+		samples[i] = &SampleItem{}
 	}
 	start := 1000
 	samples[0].Value.SetInt64(0)
@@ -106,9 +105,10 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	}
 	sc := stmtctx.NewStmtCtx()
 
-	err := sortSampleItems(sc, samples)
+	var err error
+	s.samples, err = SortSampleItems(sc, samples)
 	require.NoError(t, err)
-	s.samples = samples
+
 	rc := &recordSet{
 		data:   make([]types.Datum, s.count),
 		count:  s.count,
@@ -128,7 +128,7 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 	for i := start; i < rc.count; i += 5 {
 		rc.data[i].SetInt64(rc.data[i].GetInt64() + 2)
 	}
-	require.NoError(t, types.SortDatums(sc.TypeCtx(), rc.data))
+	require.NoError(t, types.SortDatums(sc, rc.data))
 
 	s.rc = rc
 
@@ -138,7 +138,7 @@ func createTestStatisticsSamples(t *testing.T) *testStatisticsSamples {
 		cursor: 0,
 	}
 	pk.setFields(mysql.TypeLonglong)
-	for i := range rc.count {
+	for i := 0; i < rc.count; i++ {
 		pk.data[i].SetInt64(int64(i))
 	}
 	s.pk = pk

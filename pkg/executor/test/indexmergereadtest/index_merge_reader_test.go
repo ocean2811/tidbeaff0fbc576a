@@ -28,13 +28,35 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessmgr"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
 	"github.com/stretchr/testify/require"
 )
+
+func TestSingleTableRead(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id").Check(testkit.Rows("1 1 1 1 1",
+		"5 5 5 5 5"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ a from t1 where id < 2 or a > 4 order by a").Check(testkit.Rows("1",
+		"5"))
+	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ sum(a) from t1 where id < 2 or a > 4").Check(testkit.Rows("6"))
+	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ * from t1 where a < 2 or b > 4 order by a").Check(testkit.Rows("1 1 1 1 1",
+		"5 5 5 5 5"))
+	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ a from t1 where a < 2 or b > 4 order by a").Check(testkit.Rows("1",
+		"5"))
+	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(a) from t1 where a < 2 or b > 4").Check(testkit.Rows("6"))
+}
 
 func TestIndexMergePickAndExecTaskPanic(t *testing.T) {
 	store := testkit.CreateMockStore(t)
@@ -47,12 +69,85 @@ func TestIndexMergePickAndExecTaskPanic(t *testing.T) {
 	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id").Check(testkit.Rows("1 1 1 1 1",
 		"5 5 5 5 5"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergePickAndExecTaskPanic", "panic(\"pickAndExecTaskPanic\")"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePickAndExecTaskPanic", "panic(\"pickAndExecTaskPanic\")"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergePickAndExecTaskPanic"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePickAndExecTaskPanic"))
 	}()
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, t1a) */ * from t1 where id < 2 or a > 4 order by id")
 	require.Contains(t, err.Error(), "pickAndExecTaskPanic")
+}
+
+func TestJoin(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1, t2")
+	tk.MustExec("create table t1(id int primary key, a int, b int, c int, d int)")
+	tk.MustExec("create index t1a on t1(a)")
+	tk.MustExec("create index t1b on t1(b)")
+	tk.MustExec("create table t2(id int primary key, a int)")
+	tk.MustExec("create index t2a on t2(a)")
+	tk.MustExec("insert into t1 values(1,1,1,1,1),(2,2,2,2,2),(3,3,3,3,3),(4,4,4,4,4),(5,5,5,5,5)")
+	tk.MustExec("insert into t2 values(1,1),(5,5)")
+	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(t1.a) from t1 join t2 on t1.id = t2.id where t1.a < 2 or t1.b > 4").Check(testkit.Rows("6"))
+	tk.MustQuery("select /*+ use_index_merge(t1, t1a, t1b) */ sum(t1.a) from t1 join t2 on t1.id = t2.id where t1.a < 2 or t1.b > 5").Check(testkit.Rows("1"))
+}
+
+func TestIndexMergeReaderAndGeneratedColumn(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t0")
+	tk.MustExec("CREATE TABLE t0(c0 INT AS (1), c1 INT PRIMARY KEY)")
+	tk.MustExec("INSERT INTO t0(c1) VALUES (0)")
+	tk.MustExec("CREATE INDEX i0 ON t0(c0)")
+	tk.MustQuery("SELECT /*+ USE_INDEX_MERGE(t0, i0, PRIMARY)*/ t0.c0 FROM t0 WHERE t0.c1 OR t0.c0").Check(testkit.Rows("1"))
+	tk.MustQuery("SELECT t0.c0 FROM t0 WHERE t0.c1 OR t0.c0").Check(testkit.Rows("1"))
+}
+
+// issue 25045
+func TestIndexMergeReaderIssue25045(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(a int primary key, b int, c int, key(b), key(c));")
+	tk.MustExec("INSERT INTO t1 VALUES (10, 10, 10), (11, 11, 11)")
+	tk.MustQuery("explain format='brief' select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);").Check(testkit.Rows(
+		"IndexMerge 0.01 root  type: union",
+		"├─IndexRangeScan(Build) 10.00 cop[tikv] table:t1, index:c(c) range:[10,10], keep order:false, stats:pseudo",
+		"├─TableRangeScan(Build) 1.00 cop[tikv] table:t1 range:[10,10], keep order:false, stats:pseudo",
+		"└─Selection(Probe) 0.01 cop[tikv]  or(eq(test.t1.c, 10), and(eq(test.t1.b, 10), eq(test.t1.a, 10)))",
+		"  └─TableRowIDScan 11.00 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where c=10 or (b=10 and a=10);").Check(testkit.Rows("10 10 10"))
+}
+
+func TestIssue16910(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1, t2, t3;")
+	tk.MustExec("create table t1 (a int not null, b tinyint not null, index (a), index (b)) partition by range (a) (" +
+		"partition p0 values less than (10)," +
+		"partition p1 values less than (20)," +
+		"partition p2 values less than (30)," +
+		"partition p3 values less than (40)," +
+		"partition p4 values less than MAXVALUE);")
+	tk.MustExec("insert into t1 values(0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (20, 20), (21, 21), " +
+		"(22, 22), (23, 23), (24, 24), (25, 25), (30, 30), (31, 31), (32, 32), (33, 33), (34, 34), (35, 35), (36, 36), (40, 40), (50, 50), (80, 80), (90, 90), (100, 100);")
+	tk.MustExec("create table t2 (a int not null, b bigint not null, index (a), index (b)) partition by hash(a) partitions 10;")
+	tk.MustExec("insert into t2 values (0, 0), (1, 1), (2, 2), (3, 3), (4, 4), (5, 5), (6, 6), (7, 7), (8, 8), (9, 9), (10, 10), (11, 11), (12, 12), (13, 13), (14, 14), (15, 15), (16, 16), (17, 17), (18, 18), (19, 19), (20, 20), (21, 21), (22, 22), (23, 23);")
+	tk.MustQuery("select /*+ USE_INDEX_MERGE(t1, a, b) */ * from t1 partition (p0) join t2 partition (p1) on t1.a = t2.a where t1.a < 40 or t1.b < 30;").Check(testkit.Rows("1 1 1 1"))
+}
+
+func TestIndexMergeCausePanic(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("set @@tidb_enable_index_merge = 1;")
+	tk.MustExec("create table t (a int, b int, c int, primary key(a), key(b))")
+	tk.MustQuery("explain select /*+ inl_join(t2) */ * from t t1 join t t2 on t1.a = t2.a and t1.c = t2.c where t2.a = 1 or t2.b = 1")
 }
 
 func TestPartitionTableRandomIndexMerge(t *testing.T) {
@@ -70,7 +165,7 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 	tk.MustExec(`create table tnormal (a int, b int, key(a), key(b))`)
 
 	values := make([]string, 0, 32)
-	for range 32 {
+	for i := 0; i < 32; i++ {
 		values = append(values, fmt.Sprintf("(%v, %v)", rand.Intn(10), rand.Intn(10)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into t values %v", strings.Join(values, ", ")))
@@ -83,7 +178,7 @@ func TestPartitionTableRandomIndexMerge(t *testing.T) {
 		}
 		return a, b
 	}
-	for range 32 {
+	for i := 0; i < 32; i++ {
 		la, ra := randRange()
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
@@ -116,12 +211,12 @@ func TestPartitionTableRandomIndexMerge2(t *testing.T) {
 		return a, b
 	}
 	values := make([]string, 0, 10)
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		values = append(values, fmt.Sprintf("(%v, %v)", i, rand.Intn(10)))
 	}
 	tk.MustExec(fmt.Sprintf("insert into tpk values %v", strings.Join(values, ", ")))
 	tk.MustExec(fmt.Sprintf("insert into tnormal values %v", strings.Join(values, ", ")))
-	for range 32 {
+	for i := 0; i < 32; i++ {
 		la, ra := randRange()
 		lb, rb := randRange()
 		cond := fmt.Sprintf("(a between %v and %v) or (b between %v and %v)", la, ra, lb, rb)
@@ -147,7 +242,7 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	tk.MustExec("set @a = 10;")
 	tk.MustQuery("execute stmt1 using @a, @a;").Check(testkit.Rows("10"))
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{
-		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
 	})
 	explainStr := "explain for connection " + strconv.FormatUint(tk.Session().ShowProcess().ID, 10)
 	res := tk.MustQuery(explainStr)
@@ -164,26 +259,242 @@ func TestIndexMergeWithPreparedStmt(t *testing.T) {
 	require.True(t, re.MatchString(indexMergeLine))
 }
 
-func TestMVIndexMergePlanTree(t *testing.T) {
+func TestIndexMergeInTransaction(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_enable_index_merge=1")
-	tk.MustExec("drop table if exists t_mv_idx_only")
-	tk.MustExec("create table t_mv_idx_only (a int, b int, j json, index idx((cast(j as signed array)), a))")
 
-	tk.MustQuery("explain format='plan_tree' select /*+ use_index_merge(t_mv_idx_only, idx) */ a from t_mv_idx_only where 1 member of (j)").Check(testkit.Rows(
-		"Projection root  test.t_mv_idx_only.a",
-		"└─IndexMerge root  type: union",
-		"  └─IndexRangeScan(Build) cop[tikv] table:t_mv_idx_only, index:idx(cast(`j` as signed array), a) range:[1,1], keep order:false, stats:pseudo",
-	))
+	for i := 0; i < 2; i++ {
+		tk.MustExec("drop table if exists t1;")
+		tk.MustExec("create table t1(c1 int, c2 int, c3 int, pk int, key(c1), key(c2), key(c3), primary key(pk));")
+		if i == 1 {
+			tk.MustExec("set tx_isolation = 'READ-COMMITTED';")
+		}
+		tk.MustExec("begin;")
+		// Expect two IndexScan(c1, c2).
+		tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows(
+			"IndexMerge_9 1841.86 root  type: union",
+			"├─IndexRangeScan_5(Build) 3323.33 cop[tikv] table:t1, index:c1(c1) range:[-inf,10), keep order:false, stats:pseudo",
+			"├─IndexRangeScan_6(Build) 3323.33 cop[tikv] table:t1, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+			"└─Selection_8(Probe) 1841.86 cop[tikv]  lt(test.t1.c3, 10)",
+			"  └─TableRowIDScan_7 5542.21 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+		// Expect one IndexScan(c2) and one TableScan(pk).
+		tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10;").Check(testkit.Rows(
+			"IndexMerge_9 1106.67 root  type: union",
+			"├─TableRangeScan_5(Build) 3333.33 cop[tikv] table:t1 range:[-inf,10), keep order:false, stats:pseudo",
+			"├─IndexRangeScan_6(Build) 3323.33 cop[tikv] table:t1, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+			"└─Selection_8(Probe) 1106.67 cop[tikv]  lt(test.t1.c3, 10)",
+			"  └─TableRowIDScan_7 3330.01 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+		tk.MustQuery("explain select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where c1 < 10 and c2 < 10 and c3 < 10;").Check(testkit.Rows(
+			"IndexMerge_9 367.05 root  type: intersection",
+			"├─IndexRangeScan_5(Build) 3323.33 cop[tikv] table:t1, index:c1(c1) range:[-inf,10), keep order:false, stats:pseudo",
+			"├─IndexRangeScan_6(Build) 3323.33 cop[tikv] table:t1, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+			"├─IndexRangeScan_7(Build) 3323.33 cop[tikv] table:t1, index:c3(c3) range:[-inf,10), keep order:false, stats:pseudo",
+			"└─TableRowIDScan_8(Probe) 367.05 cop[tikv] table:t1 keep order:false, stats:pseudo"))
 
-	tk.MustQuery("explain format='plan_tree' select /*+ use_index_merge(t_mv_idx_only, idx) */ b from t_mv_idx_only where 1 member of (j)").Check(testkit.Rows(
-		"Projection root  test.t_mv_idx_only.b",
-		"└─IndexMerge root  type: union",
-		"  ├─IndexRangeScan(Build) cop[tikv] table:t_mv_idx_only, index:idx(cast(`j` as signed array), a) range:[1,1], keep order:false, stats:pseudo",
-		"  └─TableRowIDScan(Probe) cop[tikv] table:t_mv_idx_only keep order:false, stats:pseudo",
-	))
+		// Test with normal key.
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < -1 and c2 < 10) and c3 < 10;").Check(testkit.Rows())
+
+		tk.MustExec("insert into t1 values(1, 1, 1, 1);")
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
+		tk.MustQuery("select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
+		tk.MustQuery("select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;").Check(testkit.Rows())
+
+		tk.MustExec("update t1 set c3 = 100 where c3 = 1;")
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;").Check(testkit.Rows("1 1 100 1"))
+
+		tk.MustExec("delete from t1;")
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1, c1, c2, c3) */ * from t1 where (c1 < 10 and c2 < 10) and c3 > 10;").Check(testkit.Rows())
+
+		// Test with primary key, so the partialPlan is TableScan.
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < -1 and c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustExec("insert into t1 values(1, 1, 1, 1);")
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
+		tk.MustQuery("select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < 10) and c3 < 10;").Check(testkit.Rows("1 1 1 1"))
+		tk.MustExec("update t1 set c3 = 100 where c3 = 1;")
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < 10) and c3 > 10;").Check(testkit.Rows("1 1 100 1"))
+		tk.MustExec("delete from t1;")
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 10) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < -1) and c3 < 10;").Check(testkit.Rows())
+		tk.MustQuery("select /*+ use_index_merge(t1, c2, c3, primary) */ * from t1 where (pk < 10 and c2 < 10) and c3 > 10;").Check(testkit.Rows())
+
+		tk.MustExec("commit;")
+		if i == 1 {
+			tk.MustExec("set tx_isolation = 'REPEATABLE-READ';")
+		}
+	}
+
+	// Same with above, but select ... for update.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, pk int, key(c1), key(c2), key(c3), primary key(pk));")
+	tk.MustExec("begin;")
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;").Check(testkit.Rows(
+		"SelectLock_6 1841.86 root  for update 0",
+		"└─IndexMerge_11 1841.86 root  type: union",
+		"  ├─IndexRangeScan_7(Build) 3323.33 cop[tikv] table:t1, index:c1(c1) range:[-inf,10), keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan_8(Build) 3323.33 cop[tikv] table:t1, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+		"  └─Selection_10(Probe) 1841.86 cop[tikv]  lt(test.t1.c3, 10)",
+		"    └─TableRowIDScan_9 5542.21 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;").Check(testkit.Rows(
+		"SelectLock_6 1106.67 root  for update 0",
+		"└─IndexMerge_11 1106.67 root  type: union",
+		"  ├─TableRangeScan_7(Build) 3333.33 cop[tikv] table:t1 range:[-inf,10), keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan_8(Build) 3323.33 cop[tikv] table:t1, index:c2(c2) range:[-inf,10), keep order:false, stats:pseudo",
+		"  └─Selection_10(Probe) 1106.67 cop[tikv]  lt(test.t1.c3, 10)",
+		"    └─TableRowIDScan_9 3330.01 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+
+	// Test with normal key.
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values(1, 1, 1, 1);")
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;").Check(testkit.Rows("1 1 1 1"))
+	tk.MustExec("update t1 set c3 = 100 where c3 = 1;")
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;").Check(testkit.Rows())
+	tk.MustExec("delete from t1;")
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c2 < 10) and c3 < 10 for update;").Check(testkit.Rows())
+
+	// Test with primary key, so the partialPlan is TableScan.
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;").Check(testkit.Rows())
+	tk.MustExec("insert into t1 values(1, 1, 1, 1);")
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;").Check(testkit.Rows("1 1 1 1"))
+	tk.MustExec("update t1 set c3 = 100 where c3 = 1;")
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;").Check(testkit.Rows())
+	tk.MustExec("delete from t1;")
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 10 or c2 < 10) and c3 < 10 for update;").Check(testkit.Rows())
+	tk.MustExec("commit;")
+
+	// Test partition table.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1(c1 int, c2 int, c3 int, pk int, part int, key(c1), key(c2), key(c3), primary key(pk, part))
+			partition by range(part) (
+			partition p0 values less than (10),
+			partition p1 values less than (20),
+			partition p2 values less than (maxvalue))`)
+	tk.MustExec("begin;")
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < 20) and c3 < 20;").Check(testkit.Rows())
+
+	tk.MustExec("insert into t1 values(1, 1, 1, 1, 1);")
+	tk.MustExec("insert into t1 values(11, 11, 11, 11, 11);")
+	tk.MustExec("insert into t1 values(21, 21, 21, 21, 21);")
+	tk.MustExec("insert into t1 values(31, 31, 31, 31, 31);")
+
+	res := tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 20) and c3 < 20;").Sort()
+	res.Check(testkit.Rows("1 1 1 1 1", "11 11 11 11 11"))
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < -1) and c3 < 20;").Sort()
+	res.Check(testkit.Rows("1 1 1 1 1", "11 11 11 11 11"))
+
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 20) and c3 < 20;").Sort()
+	res.Check(testkit.Rows("1 1 1 1 1", "11 11 11 11 11"))
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < -1) and c3 < 20;").Sort()
+	res.Check(testkit.Rows("1 1 1 1 1", "11 11 11 11 11"))
+
+	tk.MustExec("update t1 set c3 = 100 where c3 = 1;")
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 20) and c3 < 20;")
+	res.Check(testkit.Rows("11 11 11 11 11"))
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < -1) and c3 < 20;")
+	res.Check(testkit.Rows("11 11 11 11 11"))
+
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 20) and c3 < 20;")
+	res.Check(testkit.Rows("11 11 11 11 11"))
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < -1) and c3 < 20;")
+	res.Check(testkit.Rows("11 11 11 11 11"))
+
+	tk.MustExec("delete from t1;")
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c2 < 20) and c3 < 20;")
+	res.Check(testkit.Rows())
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 20 or c2 < -1) and c3 < 20;")
+	res.Check(testkit.Rows())
+
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < -1 or c2 < 20) and c3 < 20;")
+	res.Check(testkit.Rows())
+	res = tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (pk < 20 or c2 < -1) and c3 < 20;")
+	res.Check(testkit.Rows())
+	tk.MustExec("commit;")
+}
+
+func TestIndexMergeReaderInTransIssue30685(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+
+	// This is a case generated by sqlgen to test if clustered index is ok.
+	// Detect the bugs in memIndexMergeReader.getMemRowsHandle().
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec(`create table t1 (col_30 decimal default 0 ,
+				      col_31 char(99) collate utf8_bin default 'sVgzHblmYYtEjVg' not null ,
+				      col_37 int unsigned default 377206828 ,
+				      primary key idx_16 ( col_37 ) , key idx_19 ( col_31) ) collate utf8mb4_general_ci ;`)
+	tk.MustExec("begin;")
+	tk.MustExec("insert ignore into t1 values (388021, '', 416235653);")
+	tk.MustQuery("select /*+ use_index_merge( t1 ) */ 1 from t1 where ( t1.col_31 in ( 'OiOXzpCs' , 'oaVv' ) or t1.col_37 <= 4059907010 ) and t1.col_30 ;").Check(testkit.Rows("1"))
+	tk.MustExec("commit;")
+
+	tk.MustExec("drop table if exists tbl_3;")
+	tk.MustExec(`create table tbl_3 ( col_30 decimal , col_31 char(99) , col_32 smallint ,
+				  col_33 tinyint unsigned not null , col_34 char(209) ,
+				  col_35 char(110) , col_36 int unsigned , col_37 int unsigned ,
+				  col_38 decimal(50,15) not null , col_39 char(104),
+				  primary key ( col_37 ) , unique key ( col_33,col_30,col_36,col_39 ) ,
+				  unique key ( col_32,col_35 ) , key ( col_31,col_38 ) ,
+				  key ( col_31,col_33,col_32,col_35,col_36 ) ,
+				  unique key ( col_38,col_34,col_33,col_31,col_30,col_36,col_35,col_37,col_39 ) ,
+				  unique key ( col_39,col_32 ) , unique key ( col_30,col_35,col_31,col_38 ) ,
+				  key ( col_38,col_32,col_33 ) )`)
+	tk.MustExec("begin;")
+	tk.MustExec("insert ignore into tbl_3 values ( 71,'Fipc',-6676,30,'','FgfK',2464927398,4084082400,5602.5868,'' );")
+	tk.MustQuery("select /*+ use_index_merge( tbl_3 ) */ 1 from tbl_3 where ( tbl_3.col_37 not in ( 1626615245 , 2433569159 ) or tbl_3.col_38 = 0.06 ) ;").Check(testkit.Rows("1"))
+	tk.MustExec("commit;")
+
+	// int + int compound type as clustered index pk.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 int, c2 int, c3 int, c4 int, primary key(c1, c2) /*T![clustered_index] CLUSTERED */, key(c3));")
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 values(1, 1, 1, 1);")
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < 10) and c4 < 10;").Check(testkit.Rows(
+		"UnionScan_6 1841.86 root  lt(test.t1.c4, 10), or(lt(test.t1.c1, -1), lt(test.t1.c3, 10))",
+		"└─IndexMerge_11 1841.86 root  type: union",
+		"  ├─TableRangeScan_7(Build) 3323.33 cop[tikv] table:t1 range:[-inf,-1), keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan_8(Build) 3323.33 cop[tikv] table:t1, index:c3(c3) range:[-inf,10), keep order:false, stats:pseudo",
+		"  └─Selection_10(Probe) 1841.86 cop[tikv]  lt(test.t1.c4, 10)",
+		"    └─TableRowIDScan_9 5542.21 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < 10) and c4 < 10;").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 10 or c3 < -1) and c4 < 10;").Check(testkit.Rows("1 1 1 1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < -1 or c3 < -1) and c4 < 10;").Check(testkit.Rows())
+	tk.MustExec("commit;")
+
+	// Single int type as clustered index pk.
+	tk.MustExec("drop table if exists t1;")
+	tk.MustExec("create table t1(c1 varchar(100), c2 int, c3 int, c4 int, primary key(c1) /*T![clustered_index] CLUSTERED */, key(c3));")
+
+	tk.MustExec("begin;")
+	tk.MustExec("insert into t1 values('b', 1, 1, 1);")
+	tk.MustQuery("explain select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < 10) and c4 < 10;").Check(testkit.Rows(
+		"UnionScan_6 1841.86 root  lt(test.t1.c4, 10), or(lt(test.t1.c1, \"a\"), lt(test.t1.c3, 10))",
+		"└─IndexMerge_11 1841.86 root  type: union",
+		"  ├─TableRangeScan_7(Build) 3323.33 cop[tikv] table:t1 range:[-inf,\"a\"), keep order:false, stats:pseudo",
+		"  ├─IndexRangeScan_8(Build) 3323.33 cop[tikv] table:t1, index:c3(c3) range:[-inf,10), keep order:false, stats:pseudo",
+		"  └─Selection_10(Probe) 1841.86 cop[tikv]  lt(test.t1.c4, 10)",
+		"    └─TableRowIDScan_9 5542.21 cop[tikv] table:t1 keep order:false, stats:pseudo"))
+
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < 10) and c4 < 10;").Check(testkit.Rows("b 1 1 1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 <= 'b' or c3 < -1) and c4 < 10;").Check(testkit.Rows("b 1 1 1"))
+	tk.MustQuery("select /*+ use_index_merge(t1) */ * from t1 where (c1 < 'a' or c3 < -1) and c4 < 10;").Check(testkit.Rows())
+	tk.MustExec("commit;")
 }
 
 func TestIndexMergeReaderMemTracker(t *testing.T) {
@@ -194,7 +505,7 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 
 	insertStr := "insert into t1 values(0, 0, 0)"
 	rowNum := 1000
-	for i := range rowNum {
+	for i := 0; i < rowNum; i++ {
 		insertStr += fmt.Sprintf(" ,(%d, %d, %d)", i, i, i)
 	}
 	insertStr += ";"
@@ -208,7 +519,7 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 	memUsage := memTracker.MaxConsumed()
 	require.Greater(t, memUsage, int64(0))
 
-	res := tk.MustQuery("explain analyze format = 'brief' select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
+	res := tk.MustQuery("explain analyze select /*+ use_index_merge(t1) */ * from t1 where c1 > 1 or c2 > 1")
 	require.Len(t, res.Rows(), 4)
 	// Parse "xxx KB" and check it's greater than 0.
 	memStr := res.Rows()[0][7].(string)
@@ -218,6 +529,27 @@ func TestIndexMergeReaderMemTracker(t *testing.T) {
 	bytes, err := strconv.ParseFloat(memStr[:len(memStr)-3], 32)
 	require.NoError(t, err)
 	require.Greater(t, bytes, 0.0)
+}
+
+func TestIndexMergeSplitTable(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("DROP TABLE IF EXISTS tab2;")
+	tk.MustExec("CREATE TABLE tab2(pk INTEGER PRIMARY KEY, col0 INTEGER, col1 FLOAT, col2 TEXT, col3 INTEGER, col4 FLOAT, col5 TEXT);")
+	tk.MustExec("CREATE INDEX idx_tab2_0 ON tab2 (col0 DESC,col3 DESC);")
+	tk.MustExec("CREATE UNIQUE INDEX idx_tab2_3 ON tab2 (col4,col0 DESC);")
+	tk.MustExec("CREATE INDEX idx_tab2_4 ON tab2 (col3,col1 DESC);")
+	tk.MustExec("INSERT INTO tab2 VALUES(0,146,632.63,'shwwd',703,412.47,'xsppr');")
+	tk.MustExec("INSERT INTO tab2 VALUES(1,81,536.29,'trhdh',49,726.3,'chuxv');")
+	tk.MustExec("INSERT INTO tab2 VALUES(2,311,541.72,'txrvb',493,581.92,'xtrra');")
+	tk.MustExec("INSERT INTO tab2 VALUES(3,669,293.27,'vcyum',862,415.14,'nbutk');")
+	tk.MustExec("INSERT INTO tab2 VALUES(4,681,49.46,'odzhp',106,324.65,'deudp');")
+	tk.MustExec("INSERT INTO tab2 VALUES(5,319,769.65,'aeqln',855,197.9,'apipa');")
+	tk.MustExec("INSERT INTO tab2 VALUES(6,610,302.62,'bixap',184,840.31,'vggit');")
+	tk.MustExec("INSERT INTO tab2 VALUES(7,253,453.21,'gjccm',107,104.5,'lvunv');")
+	tk.MustExec("SPLIT TABLE tab2 BY (5);")
+	tk.MustQuery("SELECT /*+ use_index_merge(tab2) */ pk FROM tab2 WHERE (col4 > 565.89 OR col0 > 68 ) and col0 > 10 order by 1;").Check(testkit.Rows("0", "1", "2", "3", "4", "5", "6", "7"))
 }
 
 func TestPessimisticLockOnPartitionForIndexMerge(t *testing.T) {
@@ -310,43 +642,43 @@ func TestIndexMergeIntersectionConcurrency(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, 1, 3000), (2, 1, 1)")
 	tk.MustExec("analyze table t1;")
 	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
-	res := tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Rows()
+	res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Rows()
 	require.Contains(t, res[1][0], "IndexMerge")
 
 	// Default is tidb_executor_concurrency.
 	res = tk.MustQuery("select @@tidb_executor_concurrency;").Sort().Rows()
 	defExecCon := res[0][0].(string)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionConcurrency", fmt.Sprintf("return(%s)", defExecCon)))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionConcurrency", fmt.Sprintf("return(%s)", defExecCon)))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionConcurrency"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionConcurrency"))
 	}()
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 
 	tk.MustExec("set tidb_executor_concurrency = 10")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionConcurrency", "return(10)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionConcurrency", "return(10)"))
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 	// workerCnt = min(part_num, concurrency)
 	tk.MustExec("set tidb_executor_concurrency = 20")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionConcurrency", "return(10)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionConcurrency", "return(10)"))
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_executor_concurrency = 2")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionConcurrency", "return(2)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionConcurrency", "return(2)"))
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 
 	tk.MustExec("set tidb_index_merge_intersection_concurrency = 9")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionConcurrency", "return(9)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionConcurrency", "return(9)"))
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_index_merge_intersection_concurrency = 21")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionConcurrency", "return(10)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionConcurrency", "return(10)"))
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 	tk.MustExec("set tidb_index_merge_intersection_concurrency = 3")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionConcurrency", "return(3)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionConcurrency", "return(3)"))
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 
 	// Concurrency only works for dynamic pruning partition table, so real concurrency is 1.
 	tk.MustExec("set tidb_partition_prune_mode = 'static'")
 	tk.MustExec("set tidb_index_merge_intersection_concurrency = 9")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionConcurrency", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionConcurrency", "return(1)"))
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 
 	// Concurrency only works for dynamic pruning partition table. so real concurrency is 1.
@@ -354,7 +686,7 @@ func TestIndexMergeIntersectionConcurrency(t *testing.T) {
 	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
 	tk.MustExec("insert into t1 values(1, 1, 3000), (2, 1, 1)")
 	tk.MustExec("set tidb_index_merge_intersection_concurrency = 9")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionConcurrency", "return(1)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionConcurrency", "return(1)"))
 	tk.MustQuery("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Check(testkit.Rows("1"))
 }
 
@@ -382,11 +714,11 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 		tk.MustExec("drop table if exists t1;")
 		tk.MustExec(tblSchema)
 
-		const queryCnt int = 5
-		const rowCnt int = 100
+		const queryCnt int = 10
+		const rowCnt int = 500
 		curRowCnt := 0
 		insertStr := "insert into t1 values"
-		for i := range rowCnt {
+		for i := 0; i < rowCnt; i++ {
 			if i != 0 {
 				insertStr += ", "
 			}
@@ -398,7 +730,7 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 
 		for _, concurrency := range execCon {
 			tk.MustExec(fmt.Sprintf("set tidb_executor_concurrency = %d", concurrency))
-			for i := range 2 {
+			for i := 0; i < 2; i++ {
 				sql := "select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024"
 				if i == 0 {
 					// Dynamic mode.
@@ -416,14 +748,14 @@ func TestIntersectionWithDifferentConcurrency(t *testing.T) {
 						tk.MustNotHavePlan(sql, "PartitionUnion")
 					}
 				}
-				for range queryCnt {
+				for i := 0; i < queryCnt; i++ {
 					c3 := rand.Intn(1024)
 					res := tk.MustQuery(fmt.Sprintf("select /*+ no_index_merge() */ c1 from t1 where c2 < 1024 and c3 > %d", c3)).Sort().Rows()
 					tk.MustQuery(fmt.Sprintf("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > %d", c3)).Sort().Check(res)
 				}
 
 				// In transaction
-				for range queryCnt {
+				for i := 0; i < queryCnt; i++ {
 					tk.MustExec("begin;")
 					r := rand.Intn(3)
 					if r == 0 {
@@ -455,14 +787,40 @@ func TestIntersectionWorkerPanic(t *testing.T) {
 	tk.MustExec("insert into t1 values(1, 1, 3000), (2, 1, 1)")
 	tk.MustExec("analyze table t1;")
 	tk.MustExec("set tidb_partition_prune_mode = 'dynamic'")
-	res := tk.MustQuery("explain format = 'brief' select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Rows()
+	res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024").Rows()
 	require.Contains(t, res[1][0], "IndexMerge")
 
 	// Test panic in intersection.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionWorkerPanic", `panic("testIndexMergeIntersectionWorkerPanic")`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionWorkerPanic", `panic("testIndexMergeIntersectionWorkerPanic")`))
 	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c2 < 1024 and c3 > 1024")
 	require.Contains(t, err.Error(), "testIndexMergeIntersectionWorkerPanic")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergeIntersectionWorkerPanic"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeIntersectionWorkerPanic"))
+}
+
+func TestIntersectionMemQuota(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(pk varchar(100) primary key, c1 int, c2 int, index idx1(c1), index idx2(c2))")
+
+	insertStr := "insert into t1 values"
+	for i := 0; i < 20; i++ {
+		if i != 0 {
+			insertStr += ", "
+		}
+		insertStr += fmt.Sprintf("('%s', %d, %d)", testutil.RandStringRunes(100), 1, 1)
+	}
+	tk.MustExec(insertStr)
+	res := tk.MustQuery("explain select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024").Rows()
+	require.Contains(t, res[1][0], "IndexMerge")
+
+	tk.MustExec("set global tidb_mem_oom_action='CANCEL'")
+	defer tk.MustExec("set global tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("set @@tidb_mem_quota_query = 4000")
+	err := tk.QueryToErr("select /*+ use_index_merge(t1, primary, idx1, idx2) */ c1 from t1 where c1 < 1024 and c2 < 1024")
+	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
 }
 
 func setupPartitionTableHelper(tk *testkit.TestKit) {
@@ -488,24 +846,38 @@ func TestIndexMergeProcessWorkerHang(t *testing.T) {
 	res := tk.MustQuery("explain " + sql).Rows()
 	require.Contains(t, res[1][0], "IndexMerge")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeMainReturnEarly", "return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeProcessWorkerUnionHang", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeMainReturnEarly", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeProcessWorkerUnionHang", "return(true)"))
 	err = tk.QueryToErr(sql)
 	require.Contains(t, err.Error(), "testIndexMergeMainReturnEarly")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergeMainReturnEarly"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergeProcessWorkerUnionHang"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeMainReturnEarly"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeProcessWorkerUnionHang"))
 
 	sql = "select /*+ use_index_merge(t1, c2, c3) */ c1 from t1 where c2 < 900 and c3 < 1000;"
 	res = tk.MustQuery("explain " + sql).Rows()
 	require.Contains(t, res[1][0], "IndexMerge")
 	require.Contains(t, res[1][4], "intersection")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeMainReturnEarly", "return()"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeProcessWorkerIntersectionHang", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeMainReturnEarly", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeProcessWorkerIntersectionHang", "return(true)"))
 	err = tk.QueryToErr(sql)
 	require.Contains(t, err.Error(), "testIndexMergeMainReturnEarly")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergeMainReturnEarly"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergeProcessWorkerIntersectionHang"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeMainReturnEarly"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeProcessWorkerIntersectionHang"))
+}
+
+func TestIndexMergePanic1(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustExec("use test")
+	tk.MustExec("drop table if exists t1")
+	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
+	tk.MustExec("insert into t1 values(1, 1, 1), (100, 100, 100)")
+
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeResultChCloseEarly", "return(true)"))
+	tk.MustExec("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c1 < 100 or c2 < 100")
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergeResultChCloseEarly"))
 }
 
 var indexMergePanicRunSQL = func(t *testing.T, tk *testkit.TestKit, fp string) {
@@ -525,66 +897,82 @@ var indexMergePanicRunSQL = func(t *testing.T, tk *testkit.TestKit, fp string) {
 	require.Contains(t, err.Error(), fp)
 }
 
-func TestIndexMergePanic(t *testing.T) {
+func TestIndexMergePanicPartialIndexWorker(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	setupPartitionTableHelper(tk)
 
-	// TestIndexMergePanicPartialIndexWorker
-	fp := "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartialIndexWorker"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+	fp := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePanicPartialIndexWorker"
+	for i := 0; i < 100; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable(fp))
+}
 
-	// TestIndexMergePanicPartialTableWorker
-	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartialTableWorker"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+func TestIndexMergePanicPartialTableWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePanicPartialTableWorker"
+	for i := 0; i < 100; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable(fp))
+}
 
-	// TestIndexMergePanicProcessWorkerUnion
-	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicProcessWorkerUnion"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+func TestIndexMergePanicPartialProcessWorkerUnion(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePanicProcessWorkerUnion"
+	for i := 0; i < 100; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable(fp))
+}
 
-	// TestIndexMergePanicProcessWorkerIntersection
-	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicProcessWorkerIntersection"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+func TestIndexMergePanicPartialProcessWorkerIntersection(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePanicProcessWorkerIntersection"
+	for i := 0; i < 100; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable(fp))
+}
 
-	// TestIndexMergePanicPartitionTableIntersectionWorker
-	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicPartitionTableIntersectionWorker"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+func TestIndexMergePanicPartitionTableIntersectionWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePanicPartitionTableIntersectionWorker"
+	for i := 0; i < 100; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable(fp))
+}
 
-	// TestIndexMergePanicTableScanWorker
-	fp = "github.com/pingcap/tidb/pkg/executor/testIndexMergePanicTableScanWorker"
-	require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
-	for range 100 {
+func TestIndexMergePanicTableScanWorker(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	setupPartitionTableHelper(tk)
+
+	fp := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePanicTableScanWorker"
+	for i := 0; i < 100; i++ {
+		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`panic("%s")`, fp)))
 		indexMergePanicRunSQL(t, tk, fp)
+		require.NoError(t, failpoint.Disable(fp))
 	}
-	require.NoError(t, failpoint.Disable(fp))
-
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1(c1 int, c2 bigint, c3 bigint, primary key(c1), key(c2), key(c3));")
-	tk.MustExec("insert into t1 values(1, 1, 1), (100, 100, 100)")
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergeResultChCloseEarly", "return(true)"))
-	tk.MustExec("select /*+ use_index_merge(t1, primary, c2, c3) */ c1 from t1 where c1 < 100 or c2 < 100")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergeResultChCloseEarly"))
 }
 
 func TestIndexMergeError(t *testing.T) {
@@ -592,7 +980,7 @@ func TestIndexMergeError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	setupPartitionTableHelper(tk)
 
-	packagePath := "github.com/pingcap/tidb/pkg/executor/"
+	packagePath := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/"
 	errFPPaths := []string{
 		packagePath + "testIndexMergeErrorPartialIndexWorker",
 		packagePath + "testIndexMergeErrorPartialTableWorker",
@@ -600,7 +988,7 @@ func TestIndexMergeError(t *testing.T) {
 	for _, fp := range errFPPaths {
 		fmt.Println("handling failpoint: ", fp)
 		require.NoError(t, failpoint.Enable(fp, fmt.Sprintf(`return("%s")`, fp)))
-		for range 100 {
+		for i := 0; i < 100; i++ {
 			indexMergePanicRunSQL(t, tk, fp)
 		}
 		require.NoError(t, failpoint.Disable(fp))
@@ -618,15 +1006,15 @@ func TestIndexMergeCoprGoroutinesLeak(t *testing.T) {
 	require.Contains(t, res[1][0], "IndexMerge")
 
 	// If got goroutines leak in coprocessor, ci will fail.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergePartialTableWorkerCoprLeak", `panic("testIndexMergePartialTableWorkerCoprLeak")`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePartialTableWorkerCoprLeak", `panic("testIndexMergePartialTableWorkerCoprLeak")`))
 	err = tk.QueryToErr(sql)
 	require.Contains(t, err.Error(), "testIndexMergePartialTableWorkerCoprLeak")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergePartialTableWorkerCoprLeak"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePartialTableWorkerCoprLeak"))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testIndexMergePartialIndexWorkerCoprLeak", `panic("testIndexMergePartialIndexWorkerCoprLeak")`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePartialIndexWorkerCoprLeak", `panic("testIndexMergePartialIndexWorkerCoprLeak")`))
 	err = tk.QueryToErr(sql)
 	require.Contains(t, err.Error(), "testIndexMergePartialIndexWorkerCoprLeak")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/testIndexMergePartialIndexWorkerCoprLeak"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testIndexMergePartialIndexWorkerCoprLeak"))
 }
 
 type valueStruct struct {
@@ -677,7 +1065,7 @@ func TestOrderByWithLimit(t *testing.T) {
 
 	valueSlice := make([]*valueStruct, 0, 500)
 	vals := make([]string, 0, 500)
-	for range 500 {
+	for i := 0; i < 500; i++ {
 		a := rand.Intn(32)
 		b := rand.Intn(32)
 		c := rand.Intn(32)
@@ -693,7 +1081,7 @@ func TestOrderByWithLimit(t *testing.T) {
 	tk.MustExec(fmt.Sprintf("insert into tcommonhash(a,b,c) values %s", valInserted))
 	tk.MustExec(fmt.Sprintf("insert into tpkhash(a,b,c) values %s", valInserted))
 
-	for i := range 10 {
+	for i := 0; i < 10; i++ {
 		if i%2 == 0 {
 			tk.MustExec("set tidb_partition_prune_mode = `static-only`")
 		} else {
@@ -781,7 +1169,7 @@ func TestProcessInfoRaceWithIndexScan(t *testing.T) {
 	tk.MustExec(insertStr)
 
 	tk.Session().SetSessionManager(&testkit.MockSessionManager{
-		PS: []*sessmgr.ProcessInfo{tk.Session().ShowProcess()},
+		PS: []*util.ProcessInfo{tk.Session().ShowProcess()},
 	})
 
 	wg := sync.WaitGroup{}
@@ -807,19 +1195,19 @@ func TestIndexMergeReaderIssue45279(t *testing.T) {
 	tk.MustExec("drop table if exists reproduce;")
 	tk.MustExec("CREATE TABLE reproduce (c1 int primary key, c2 int, c3 int, key ci2(c2), key ci3(c3));")
 	tk.MustExec("insert into reproduce values (1, 1, 1), (2, 2, 2), (3, 3, 3);")
-	tk.MustQuery("explain format = 'brief' select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);").Check(testkit.Rows(
-		"IndexMerge 33.99 root  type: union",
-		"├─TableRangeScan(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
-		"├─IndexRangeScan(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
-		"└─TableRowIDScan(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
+	tk.MustQuery("explain select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);").Check(testkit.Rows(
+		"IndexMerge_11 33.99 root  type: union",
+		"├─TableRangeScan_8(Build) 4.00 cop[tikv] table:reproduce range:[0,0], [1,1], [2,2], [3,3], keep order:false, stats:pseudo",
+		"├─IndexRangeScan_9(Build) 30.00 cop[tikv] table:reproduce, index:ci2(c2) range:[0,0], [1,1], [2,2], keep order:false, stats:pseudo",
+		"└─TableRowIDScan_10(Probe) 33.99 cop[tikv] table:reproduce keep order:false, stats:pseudo"))
 
 	// This function should return successfully
 	var ctx context.Context
 	ctx, executor.IndexMergeCancelFuncForTest = context.WithCancel(context.Background())
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/testCancelContext", "return()"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/testCancelContext", "return()"))
 	rs, _ := tk.ExecWithContext(ctx, "select * from reproduce where c1 in (0, 1, 2, 3) or c2 in (0, 1, 2);")
 	session.ResultSetToStringSlice(ctx, tk.Session(), rs)
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/checksum/testCancelContext")
+	failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/br/pkg/checksum/testCancelContext")
 }
 
 func TestIndexMergeLimitPushedAsIntersectionEmbeddedLimit(t *testing.T) {
@@ -828,12 +1216,12 @@ func TestIndexMergeLimitPushedAsIntersectionEmbeddedLimit(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c), index idx3(a, b, c))")
 	valsInsert := make([]string, 0, 1000)
-	for range 500 {
+	for i := 0; i < 500; i++ {
 		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", rand.Intn(100), rand.Intn(100), rand.Intn(100)))
 	}
 	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values " + strings.Join(valsInsert, ","))
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		valA, valB, valC, limit := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1
 		queryTableScan := fmt.Sprintf("select * from t use index() where a > %d and b > %d and c >= %d limit %d", valA, valB, valC, limit)
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a > %d and b > %d and c >= %d limit %d", valA, valB, valC, limit)
@@ -851,45 +1239,71 @@ func TestIndexMergeLimitNotPushedOnPartialSideButKeepOrder(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c), index idx3(a, b, c))")
-
-	// Create a smaller dataset to reduce test execution time
-	valsInsert := make([]string, 0, 50)
-	for i := 0; i < 50; i++ {
-		// Use deterministic values to reduce variability
-		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", i%10, i%8, i%15))
+	valsInsert := make([]string, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		valsInsert = append(valsInsert, fmt.Sprintf("(%v, %v, %v)", rand.Intn(100), rand.Intn(100), rand.Intn(100)))
 	}
+	tk.MustExec("analyze table t")
 	tk.MustExec("insert into t values " + strings.Join(valsInsert, ","))
-
-	// Use standard TiDB test approach: set analyze version and analyze
-	tk.MustExec("set @@tidb_analyze_version = 2")
-	tk.MustExec("analyze table t all columns")
-
-	failpoint.Enable("github.com/pingcap/tidb/pkg/planner/core/forceIndexMergeKeepOrder", `return(true)`)
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/planner/core/forceIndexMergeKeepOrder")
-
-	// Use limited iterations to reduce test time (previously 50)
-	for idx := range 10 {
-		valA, valB, valC, limit := idx%10, idx%8, idx%15, (idx%10)+2
+	failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/forceIndexMergeKeepOrder", `return(true)`)
+	defer failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/forceIndexMergeKeepOrder")
+	for i := 0; i < 100; i++ {
+		valA, valB, valC, limit := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d) t", valA, valB, valC, limit)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
 		queryWithNormalIndex := fmt.Sprintf("select * from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d", valA, valB, valC, valC+1, maxEle, limit)
 		tk.MustHavePlan(queryWithIndexMerge, "IndexMerge")
 		tk.MustHavePlan(queryWithIndexMerge, "Limit")
-		t.Logf("index: %d, queryWithIndexMerge: %s, queryWithNormalIndex: %s", idx, queryWithIndexMerge, queryWithNormalIndex)
 		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
 		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
 	}
-	for idx := range 10 {
-		valA, valB, valC, limit, offset := idx%10, idx%8, idx%15, (idx%10)+1, idx%3
+	for i := 0; i < 100; i++ {
+		valA, valB, valC, limit, offset := rand.Intn(100), rand.Intn(100), rand.Intn(50), rand.Intn(100)+1, rand.Intn(20)
 		maxEle := tk.MustQuery(fmt.Sprintf("select ifnull(max(c), 100) from (select c from t use index(idx3) where (a = %d or b = %d) and c >= %d order by c limit %d offset %d) t", valA, valB, valC, limit, offset)).Rows()[0][0]
 		queryWithIndexMerge := fmt.Sprintf("select /*+ USE_INDEX_MERGE(t, idx, idx2) */ c from t where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
 		queryWithNormalIndex := fmt.Sprintf("select c from t use index(idx3) where (a = %d or b = %d) and c >= %d and c < greatest(%d, %v) order by c limit %d offset %d", valA, valB, valC, valC+1, maxEle, limit, offset)
 		tk.MustHavePlan(queryWithIndexMerge, "IndexMerge")
 		tk.MustHavePlan(queryWithIndexMerge, "Limit")
-		t.Logf("index: %d, queryWithIndexMerge: %s, queryWithNormalIndex: %s", idx, queryWithIndexMerge, queryWithNormalIndex)
 		normalResult := tk.MustQuery(queryWithNormalIndex).Sort().Rows()
 		tk.MustQuery(queryWithIndexMerge).Sort().Check(normalResult)
 	}
+}
+
+func TestIndexMergeNoOrderLimitPushed(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index idx(a, c), index idx2(b, c))")
+	tk.MustExec("insert into t values(1, 1, 1), (2, 2, 2)")
+	sql := "select /*+ USE_INDEX_MERGE(t, idx, idx2) */ * from t where a = 1 or b = 1 limit 1"
+	tk.MustHavePlan(sql, "IndexMerge")
+	tk.MustHavePlan(sql, "Limit")
+	// 6 means that IndexMerge(embedded limit){Limit->PartialIndexScan, Limit->PartialIndexScan, FinalTableScan}
+	require.Equal(t, 6, len(tk.MustQuery("explain "+sql).Rows()))
+	// The result is not stable. So we just check that it can run successfully.
+	tk.MustQuery(sql)
+}
+
+func TestIndexMergeKeepOrderDirtyRead(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
+	tk.MustExec("insert into t values(1, 1, 1), (1, 2, -1), (2, 1, -2)")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(1, 1, -3)")
+	querySQL := "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2"
+	tk.MustHavePlan(querySQL, "Limit")
+	tk.MustHavePlan(querySQL, "IndexMerge")
+	tk.MustQuery(querySQL).Check(testkit.Rows("1 1 -3", "2 1 -2"))
+	tk.MustExec("rollback")
+	tk.MustExec("begin")
+	tk.MustExec("insert into t values(1, 2, 4)")
+	querySQL = "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c desc limit 2"
+	tk.MustHavePlan(querySQL, "Limit")
+	tk.MustHavePlan(querySQL, "IndexMerge")
+	tk.MustQuery(querySQL).Check(testkit.Rows("1 2 4", "1 1 1"))
+	tk.MustExec("rollback")
 }
 
 func TestIssues46005(t *testing.T) {
@@ -898,35 +1312,37 @@ func TestIssues46005(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("set tidb_index_lookup_size = 1024")
 	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
-	for i := range 1500 {
+	for i := 0; i < 1500; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t(a,b,c) values (1, 1, %d)", i))
 	}
 
 	tk.MustQuery("select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 1025")
 }
 
-func TestIssues70910(t *testing.T) {
+func TestIndexMergeIssue49605(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
-	tk.MustExec("create table t(a int, b int, c int, index idx1(a, c), index idx2(b, c))")
-	for rowID := 0; rowID < 3000; rowID += 500 {
-		vals := make([]string, 0, 500)
-		for i := rowID; i < rowID+500; i++ {
-			vals = append(vals, fmt.Sprintf("(1, 1, %d)", i))
-		}
-		tk.MustExec("insert into t(a,b,c) values " + strings.Join(vals, ","))
-	}
-
-	query := "select /*+ USE_INDEX_MERGE(t, idx1, idx2) */ * from t where a = 1 or b = 1 order by c limit 2000"
-	tk.MustHavePlan(query, "IndexMerge")
-	tk.MustNotHavePlan(query, "TopN")
-	// Issue #70910: the pushed-down limit must not be truncated to 1024 rows by
-	// the index merge union worker heap. The full 2000 rows must be returned.
-	rows := tk.MustQuery(query).Rows()
-	require.Equal(t, 2000, len(rows))
-	for i, row := range rows {
-		require.Equal(t, fmt.Sprintf("%d", i), fmt.Sprintf("%v", row[2]))
-	}
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE `t` (`a` mediumint(9) NOT NULL,`b` year(4) NOT NULL,`c` varbinary(62) NOT NULL,`d` text COLLATE utf8mb4_unicode_ci NOT NULL,`e` tinyint(4) NOT NULL DEFAULT '115',`f` smallint(6) DEFAULT '2675',`g` date DEFAULT '1981-09-17',`h` mediumint(8) unsigned NOT NULL,`i` varchar(384) CHARACTER SET gbk COLLATE gbk_bin DEFAULT NULL,UNIQUE KEY `idx_23` (`h`,`f`),PRIMARY KEY (`h`,`a`) /*T![clustered_index] CLUSTERED */,UNIQUE KEY `idx_25` (`h`,`i`(5),`e`)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (`h`) PARTITIONS 1;")
+	tk.MustExec("INSERT INTO `t` VALUES (2065948,1999,_binary '8jxN','rf',-54,-5656,'1987-07-03',259254,'7me坨'),(-8248164,2024,_binary 'zA5A','s)DAkX3',-93,-12983,'2027-12-18',299573,'LUf咲'),(-6131509,2023,_binary 'xdex#Y2','1th%h',-51,19149,'2013-10-28',428279,'矷莒X'),(7545837,1998,_binary 'PCVO','&(lJw6',30,4093,'1987-07-03',736235,'腏@TOIJ'),(-7449472,2029,_binary 'B7&jrl','EjbFfX!',80,-7590,'2011-11-03',765580,'堮ZQF_'),(-7176200,1988,_binary 'tiPglv7mX_#','CnCtNb',-25,NULL,'1987-07-03',842956,'Gq羣嗳殓'),(-115168,2036,_binary 'BqmX$-4It','!8#dvH',82,18787,'1991-09-20',921706,'椉2庘v'),(6665100,1987,_binary '4IJgk0fr4','(D',-73,28628,'1987-07-03',1149668,'摔玝S渉'),(-4065661,2021,_binary '8G%','xDO39xw#',-107,17356,'1970-12-20',1316239,'+0c35掬-阗'),(7622462,1990,_binary '&o+)s)D0','kjoS9Dzld',84,688,'1987-07-03',1403663,'$H鍿_M~'),(5269354,2018,_binary 'wq9hC8','s8XPrN+',-2,-31272,'2008-05-26',1534517,'y椁n躁Q'),(2065948,1982,_binary '8jxNjbksV','g$+i4dg',11,19800,'1987-07-03',1591457,'z^+H~薼A'),(4076971,2024,_binary '&!RrsH','7Mpvk',-63,-632,'2032-10-28',1611011,'鬰+EXmx'),(3522062,1981,_binary ')nq#!UiHKk8','j~wFe77ai',50,6951,'1987-07-03',1716854,'J'),(7859777,2012,_binary 'PBA5xgJ&G&','UM7o!u',18,-5978,'1987-07-03',1967012,'e)浢L獹'),(2065948,2028,_binary '8jxNjbk','JmsEki9t4',51,12002,'2017-12-23',1981288,'mp氏襚');")
+	tk.MustQuery("explain format='brief' SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;").Check(
+		testkit.Rows("Projection 2666.67 root  istrue(or(not(ge(test.t.i, j筧8)), not(eq(test.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(test.t.i)->Column#12",
+			"└─StreamAgg 2666.67 root  group by:test.t.i, funcs:max(test.t.e)->Column#10, funcs:firstrow(test.t.i)->test.t.i",
+			"  └─Sort 3333.33 root  test.t.i",
+			"    └─TableReader 3333.33 root  data:Selection",
+			"      └─Selection 3333.33 cop[tikv]  or(gt(test.t.h, 240817), and(ge(test.t.i, \"WVz\"), le(test.t.i, \"G#駧褉ZC領*lov\")))",
+			"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
+	tk.MustQuery("select count(*) from (SELECT /*+ AGG_TO_COP() STREAM_AGG()*/ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;").Check(
+		testkit.Rows("16"))
+	tk.MustQuery("explain format='brief' SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`;").Check(
+		testkit.Rows("Projection 2666.67 root  istrue(or(not(ge(test.t.i, j筧8)), not(eq(test.t.i, 暈lH忧ll6))))->Column#11, Column#10, quote(test.t.i)->Column#12",
+			"└─HashAgg 2666.67 root  group by:test.t.i, funcs:max(Column#15)->Column#10, funcs:firstrow(test.t.i)->test.t.i",
+			"  └─TableReader 2666.67 root  data:HashAgg",
+			"    └─HashAgg 2666.67 cop[tikv]  group by:test.t.i, funcs:max(test.t.e)->Column#15",
+			"      └─Selection 3333.33 cop[tikv]  or(gt(test.t.h, 240817), and(ge(test.t.i, \"WVz\"), le(test.t.i, \"G#駧褉ZC領*lov\")))",
+			"        └─TableFullScan 10000.00 cop[tikv] table:t, partition:p0 keep order:false, stats:pseudo"))
+	tk.MustQuery("select count(*) from (SELECT /*+ AGG_TO_COP() */ (NOT (`t`.`i`>=_UTF8MB4'j筧8') OR NOT (`t`.`i`=_UTF8MB4'暈lH忧ll6')) IS TRUE,MAX(`t`.`e`) AS `r0`,QUOTE(`t`.`i`) AS `r1` FROM `t` WHERE `t`.`h`>240817 OR `t`.`i` BETWEEN _UTF8MB4'WVz' AND _UTF8MB4'G#駧褉ZC領*lov' GROUP BY `t`.`i`) derived;").Check(
+		testkit.Rows("16"))
 }

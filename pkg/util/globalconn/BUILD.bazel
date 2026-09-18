@@ -6,12 +6,12 @@ go_library(
         "globalconn.go",
         "pool.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/globalconn",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/globalconn",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/logutil",
+        "@com_github_cznic_mathutil//:mathutil",
         "@com_github_ngaut_sync2//:sync2",
-        "@org_modernc_mathutil//:mathutil",
         "@org_uber_go_zap//:zap",
     ],
 )
@@ -26,7 +26,7 @@ go_test(
     flaky = True,
     deps = [
         ":globalconn",
+        "@com_github_cznic_mathutil//:mathutil",
         "@com_github_stretchr_testify//assert",
-        "@org_modernc_mathutil//:mathutil",
     ],
 )

@@ -15,7 +15,7 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 // Parameters may be const or ignored by the user, so different situations should be considered
@@ -38,6 +38,10 @@ type funcParam struct {
 
 func (re *funcParam) setStrVal(val string) {
 	re.defaultStrVal = val
+}
+
+func (re *funcParam) setIntVal(val int64) {
+	re.defaultIntVal = val
 }
 
 func (re *funcParam) setCol(newCol *chunk.Column) {
@@ -65,7 +69,7 @@ func (re *funcParam) getIntVal(id int) int64 {
 }
 
 // bool return value: return true when we get a const null parameter
-func buildStringParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided bool) (*funcParam, bool, error) {
+func buildStringParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided bool) (*funcParam, bool, error) {
 	var pa funcParam
 	var err error
 
@@ -74,12 +78,11 @@ func buildStringParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chun
 		return &pa, false, nil
 	}
 
-	// Check if this is a const value.
-	// funcParam will not be shared between evaluations, so we just need it to be const in one ctx.
-	if bf.args[idx].ConstLevel() >= ConstOnlyInContext {
+	// Check if this is a const value
+	if bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx) {
 		// Initialize the const
 		var isConstNull bool
-		pa.defaultStrVal, isConstNull, err = bf.args[idx].EvalString(ctx, chunk.Row{})
+		pa.defaultStrVal, isConstNull, err = bf.args[idx].EvalString(bf.ctx, chunk.Row{})
 		if isConstNull || err != nil {
 			return nil, isConstNull, err
 		}
@@ -92,13 +95,13 @@ func buildStringParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chun
 	}
 
 	// Get values from input
-	err = bf.args[idx].VecEvalString(ctx, input, pa.getCol())
+	err = bf.args[idx].VecEvalString(bf.ctx, input, pa.getCol())
 
 	return &pa, false, err
 }
 
 // bool return value: return true when we get a const null parameter
-func buildIntParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided bool, defaultIntVal int64) (*funcParam, bool, error) {
+func buildIntParam(bf *baseBuiltinFunc, idx int, input *chunk.Chunk, notProvided bool, defaultIntVal int64) (*funcParam, bool, error) {
 	var pa funcParam
 	var err error
 
@@ -108,11 +111,10 @@ func buildIntParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chunk.C
 	}
 
 	// Check if this is a const value
-	// funcParam will not be shared between evaluations, so we just need it to be const in one ctx.
-	if bf.args[idx].ConstLevel() >= ConstOnlyInContext {
+	if bf.args[idx].ConstItem(bf.ctx.GetSessionVars().StmtCtx) {
 		// Initialize the const
 		var isConstNull bool
-		pa.defaultIntVal, isConstNull, err = bf.args[idx].EvalInt(ctx, chunk.Row{})
+		pa.defaultIntVal, isConstNull, err = bf.args[idx].EvalInt(bf.ctx, chunk.Row{})
 		if isConstNull || err != nil {
 			return nil, isConstNull, err
 		}
@@ -125,7 +127,7 @@ func buildIntParam(ctx EvalContext, bf *baseBuiltinFunc, idx int, input *chunk.C
 	}
 
 	// Get values from input
-	err = bf.args[idx].VecEvalInt(ctx, input, pa.getCol())
+	err = bf.args[idx].VecEvalInt(bf.ctx, input, pa.getCol())
 
 	return &pa, false, err
 }

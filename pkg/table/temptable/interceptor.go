@@ -17,16 +17,16 @@ package temptable
 import (
 	"bytes"
 	"context"
-	"maps"
 	"math"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/store/driver/txn"
-	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver/txn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"golang.org/x/exp/maps"
 )
 
 var (
@@ -60,41 +60,41 @@ func NewTemporaryTableSnapshotInterceptor(is infoschema.InfoSchema, sessionData 
 }
 
 // OnGet intercepts Get operation for Snapshot
-func (i *TemporaryTableSnapshotInterceptor) OnGet(ctx context.Context, snap kv.Snapshot, k kv.Key, options ...kv.GetOption) (kv.ValueEntry, error) {
+func (i *TemporaryTableSnapshotInterceptor) OnGet(ctx context.Context, snap kv.Snapshot, k kv.Key) ([]byte, error) {
 	if tblID, ok := getKeyAccessedTableID(k); ok {
 		if tblInfo, ok := i.temporaryTableInfoByID(tblID); ok {
 			return getSessionKey(ctx, tblInfo, i.sessionData, k)
 		}
 	}
 
-	return snap.Get(ctx, k, options...)
+	return snap.Get(ctx, k)
 }
 
-func getSessionKey(ctx context.Context, tblInfo *model.TableInfo, sessionData kv.Retriever, k kv.Key) (kv.ValueEntry, error) {
+func getSessionKey(ctx context.Context, tblInfo *model.TableInfo, sessionData kv.Retriever, k kv.Key) ([]byte, error) {
 	if tblInfo.TempTableType == model.TempTableNone {
-		return kv.ValueEntry{}, errors.New("Cannot get normal table key from session")
+		return nil, errors.New("Cannot get normal table key from session")
 	}
 
 	if sessionData == nil || tblInfo.TempTableType == model.TempTableGlobal {
-		return kv.ValueEntry{}, kv.ErrNotExist
+		return nil, kv.ErrNotExist
 	}
 
 	val, err := sessionData.Get(ctx, k)
-	if err == nil && val.IsValueEmpty() {
-		return kv.ValueEntry{}, kv.ErrNotExist
+	if err == nil && len(val) == 0 {
+		return nil, kv.ErrNotExist
 	}
 	return val, err
 }
 
 // OnBatchGet intercepts BatchGet operation for Snapshot
-func (i *TemporaryTableSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapshot, keys []kv.Key, options ...kv.BatchGetOption) (map[string]kv.ValueEntry, error) {
+func (i *TemporaryTableSnapshotInterceptor) OnBatchGet(ctx context.Context, snap kv.Snapshot, keys []kv.Key) (map[string][]byte, error) {
 	keys, result, err := i.batchGetTemporaryTableKeys(ctx, keys)
 	if err != nil {
 		return nil, err
 	}
 
 	if len(keys) > 0 {
-		snapResult, err := snap.BatchGet(ctx, keys, options...)
+		snapResult, err := snap.BatchGet(ctx, keys)
 		if err != nil {
 			return nil, err
 		}
@@ -106,12 +106,12 @@ func (i *TemporaryTableSnapshotInterceptor) OnBatchGet(ctx context.Context, snap
 	}
 
 	if result == nil {
-		result = make(map[string]kv.ValueEntry)
+		result = make(map[string][]byte)
 	}
 	return result, nil
 }
 
-func (i *TemporaryTableSnapshotInterceptor) batchGetTemporaryTableKeys(ctx context.Context, keys []kv.Key) (snapKeys []kv.Key, result map[string]kv.ValueEntry, err error) {
+func (i *TemporaryTableSnapshotInterceptor) batchGetTemporaryTableKeys(ctx context.Context, keys []kv.Key) (snapKeys []kv.Key, result map[string][]byte, err error) {
 	for _, k := range keys {
 		tblID, ok := getKeyAccessedTableID(k)
 		if !ok {
@@ -135,7 +135,7 @@ func (i *TemporaryTableSnapshotInterceptor) batchGetTemporaryTableKeys(ctx conte
 		}
 
 		if result == nil {
-			result = make(map[string]kv.ValueEntry)
+			result = make(map[string][]byte)
 		}
 
 		result[string(k)] = val
@@ -183,7 +183,7 @@ func (i *TemporaryTableSnapshotInterceptor) iterTable(tblID int64, snap kv.Snaps
 }
 
 func (i *TemporaryTableSnapshotInterceptor) temporaryTableInfoByID(tblID int64) (*model.TableInfo, bool) {
-	if tbl, ok := i.is.TableByID(context.Background(), tblID); ok {
+	if tbl, ok := i.is.TableByID(tblID); ok {
 		tblInfo := tbl.Meta()
 		if tblInfo.TempTableType != model.TempTableNone {
 			return tblInfo, true

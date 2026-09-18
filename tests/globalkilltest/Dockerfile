@@ -12,12 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-FROM rockylinux:9@sha256:d7be1c094cc5845ee815d4632fe377514ee6ebcf8efaed6892889657e5ddaaa6
+FROM rockylinux:9
 
 RUN dnf update -y && dnf groupinstall 'Development Tools' -y
 RUN dnf install procps-ng mysql -y
 
-ENV GOLANG_VERSION 1.21.13
+ENV GOLANG_VERSION 1.21.5
 ENV ARCH amd64
 ENV GOLANG_DOWNLOAD_URL https://dl.google.com/go/go$GOLANG_VERSION.linux-$ARCH.tar.gz
 ENV GOPATH /go
@@ -27,8 +27,8 @@ RUN curl -fsSL "$GOLANG_DOWNLOAD_URL" -o golang.tar.gz \
     && tar -C /usr/local -xzf golang.tar.gz \
     && rm golang.tar.gz
 
-RUN mkdir -p /go/src/github.com/pingcap/tidb
-WORKDIR /go/src/github.com/pingcap/tidb
+RUN mkdir -p /go/src/github.com/ocean2811/tidbeaff0fbc576a
+WORKDIR /go/src/github.com/ocean2811/tidbeaff0fbc576a
 
 COPY go.mod .
 COPY go.sum .

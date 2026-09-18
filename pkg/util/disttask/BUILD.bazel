@@ -3,12 +3,9 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "disttask",
     srcs = ["idservice.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/disttask",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/disttask",
     visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/domain/infosync",
-        "//pkg/domain/serverinfo",
-    ],
+    deps = ["//pkg/domain/infosync"],
 )
 
 go_test(
@@ -17,8 +14,5 @@ go_test(
     srcs = ["idservice_test.go"],
     embed = [":disttask"],
     flaky = True,
-    deps = [
-        "//pkg/domain/serverinfo",
-        "@com_github_stretchr_testify//require",
-    ],
+    deps = ["@com_github_stretchr_testify//require"],
 )

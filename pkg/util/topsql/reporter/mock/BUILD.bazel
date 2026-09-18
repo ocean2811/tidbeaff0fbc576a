@@ -6,7 +6,7 @@ go_library(
         "pubsub.go",
         "server.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/topsql/reporter/mock",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/reporter/mock",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/logutil",

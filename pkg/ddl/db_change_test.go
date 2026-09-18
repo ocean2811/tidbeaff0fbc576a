@@ -23,32 +23,29 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util/callback"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/external"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"github.com/stretchr/testify/require"
 )
 
 // TestShowCreateTable tests the result of "show create table" when we are running "add index" or "add column".
 func TestShowCreateTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -76,8 +73,9 @@ func TestShowCreateTable(t *testing.T) {
 			"CREATE TABLE `t2` (\n  `a` int(11) DEFAULT NULL,\n  `b` varchar(10) COLLATE utf8mb4_general_ci DEFAULT NULL,\n  `c` varchar(1) COLLATE utf8mb4_general_ci DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci"},
 	}
 	prevState := model.StateNone
+	callback := &callback.TestDDLCallback{}
 	currTestCaseOffset := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
@@ -111,7 +109,12 @@ func TestShowCreateTable(t *testing.T) {
 			}
 			terror.Log(result.Close())
 		}
-	})
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	d.SetHook(callback)
 	for _, tc := range testCases {
 		tk.MustExec(tc.sql)
 		require.NoError(t, checkErr)
@@ -120,7 +123,7 @@ func TestShowCreateTable(t *testing.T) {
 
 // TestDropNotNullColumn is used to test issue #8654.
 func TestDropNotNullColumn(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -132,18 +135,21 @@ func TestDropNotNullColumn(t *testing.T) {
 	tk.MustExec("insert into t2 values(3, '11:22:33')")
 	tk.MustExec("create table t3 (id int, d json not null)")
 	tk.MustExec("insert into t3 values(4, d)")
-	tk.MustExec("create table t4 (id int, e varchar(256) default (REPLACE(UPPER(UUID()), '-', '')) not null)")
-	tk.MustExec("insert into t4 values(4, 3)")
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test")
 
 	var checkErr error
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	callback := &callback.TestDDLCallback{}
 	sqlNum := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
+		err := originalCallback.OnChanged(nil)
+		require.NoError(t, err)
 		if job.SchemaState == model.StateWriteOnly {
 			switch sqlNum {
 			case 0:
@@ -154,11 +160,11 @@ func TestDropNotNullColumn(t *testing.T) {
 				_, checkErr = tk1.Exec("insert into t2 set id = 3")
 			case 3:
 				_, checkErr = tk1.Exec("insert into t3 set id = 4")
-			case 4:
-				_, checkErr = tk1.Exec("insert into t4 set id = 5")
 			}
 		}
-	})
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
 	tk.MustExec("alter table t drop column a")
 	require.NoError(t, checkErr)
 	sqlNum++
@@ -170,15 +176,12 @@ func TestDropNotNullColumn(t *testing.T) {
 	sqlNum++
 	tk.MustExec("alter table t3 drop column d")
 	require.NoError(t, checkErr)
-	sqlNum++
-	tk.MustExec("alter table t4 drop column e")
-	require.NoError(t, checkErr)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+	d.SetHook(originalCallback)
 	tk.MustExec("drop table t, t1, t2, t3")
 }
 
 func TestTwoStates(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -189,9 +192,9 @@ func TestTwoStates(t *testing.T) {
 		execCases: cnt,
 		sqlInfos:  make([]*sqlInfo, 4),
 	}
-	for i := range testInfo.sqlInfos {
+	for i := 0; i < len(testInfo.sqlInfos); i++ {
 		sqlInfo := &sqlInfo{cases: make([]*stateCase, cnt)}
-		for j := range cnt {
+		for j := 0; j < cnt; j++ {
 			sqlInfo.cases[j] = new(stateCase)
 		}
 		testInfo.sqlInfos[i] = sqlInfo
@@ -210,7 +213,6 @@ func TestTwoStates(t *testing.T) {
 	testInfo.sqlInfos[3].sql = "replace into t values(5, 'e', 'N', '2017-07-05')"
 	testInfo.sqlInfos[3].cases[4].expectedCompileErr = "[planner:1136]Column count doesn't match value count at row 1"
 	alterTableSQL := "alter table t add column d3 enum('a', 'b') not null default 'a' after c3"
-	probeTableSQL := "create table t_states_failpoint_probe (a int)"
 	tk.MustExec(`create table t (
 		c1 int,
 		c2 varchar(64),
@@ -218,34 +220,19 @@ func TestTwoStates(t *testing.T) {
 		c4 timestamp on update current_timestamp,
 		key(c1, c2))`)
 	tk.MustExec("insert into t values(1, 'a', 'N', '2017-07-01')")
-	targetTableID := external.GetTableByName(t, tk, "test_db_state", "t").Meta().ID
 
+	callback := &callback.TestDDLCallback{}
 	prevState := model.StateNone
 	require.NoError(t, testInfo.parseSQLs(parser.New()))
 
 	times := 0
 	var checkErr error
-	afterWaitSchemaSyncedHookAvailable := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(*model.Job) {
-		afterWaitSchemaSyncedHookAvailable = true
-	})
-	tk.MustExec(probeTableSQL)
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
-	tk.MustExec("drop table t_states_failpoint_probe")
-	runStateChecks := func(state model.SchemaState) {
-		switch state {
-		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
-		default:
+	onJobUpdatedExportedFunc := func(job *model.Job) {
+		if job.SchemaState == prevState || checkErr != nil || times >= 3 {
 			return
 		}
-		if state == prevState || checkErr != nil || times >= 3 {
-			return
-		}
-		// The same schema state can be observed more than once; only count the
-		// first visit to each intermediate add-column state.
-		prevState = state
 		times++
-		switch state {
+		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			// This state we execute every sqlInfo one time using the first session and other information.
 			err := testInfo.compileSQL(0)
@@ -288,38 +275,12 @@ func TestTwoStates(t *testing.T) {
 			}
 		}
 	}
-	runWithFailpointHook := func() {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
-			if job.Type != model.ActionAddColumn || job.TableID != targetTableID {
-				return
-			}
-			runStateChecks(job.SchemaState)
-		})
-		tk.MustExec(alterTableSQL)
-		require.Equal(t, 3, times, "TestTwoStates requires failpoint-go-test.sh so afterWaitSchemaSynced is rewritten and the three intermediate add-column states are observable")
-	}
-	runWithoutFailpointHook := func() {
-		// Plain `go test` without failpoint source rewriting leaves InjectCall as
-		// a marker stub, so it cannot observe the internal
-		// delete-only/write-only/write-reorg transitions directly.
-		// For add-column SQL semantics, those intermediate states all share the
-		// same old-schema contract until the column becomes public, so we verify
-		// that contract once before the DDL completes and keep the final public
-		// state checks unchanged below.
-		require.NoError(t, testInfo.compileSQL(0))
-		require.NoError(t, testInfo.execSQL(0))
-		require.NoError(t, testInfo.compileSQL(1))
-		require.NoError(t, testInfo.compileSQL(2))
-		require.NoError(t, testInfo.execSQL(2))
-		require.NoError(t, testInfo.execSQL(1))
-		require.NoError(t, testInfo.compileSQL(3))
-		tk.MustExec(alterTableSQL)
-	}
-	if afterWaitSchemaSyncedHookAvailable {
-		runWithFailpointHook()
-	} else {
-		runWithoutFailpointHook()
-	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	d.SetHook(callback)
+	tk.MustExec(alterTableSQL)
 	require.NoError(t, testInfo.compileSQL(4))
 	require.NoError(t, testInfo.execSQL(4))
 	// Mock the server is in `write reorg` state.
@@ -328,7 +289,7 @@ func TestTwoStates(t *testing.T) {
 }
 
 type stateCase struct {
-	session            sessionapi.Session
+	session            session.Session
 	rawStmt            ast.StmtNode
 	stmt               sqlexec.Statement
 	expectedExecErr    string
@@ -379,7 +340,7 @@ func (t *testExecInfo) parseSQLs(p *parser.Parser) error {
 	for _, sqlInfo := range t.sqlInfos {
 		seVars := sqlInfo.cases[0].session.GetSessionVars()
 		charset, collation := seVars.GetCharsetInfo()
-		for j := range t.execCases {
+		for j := 0; j < t.execCases; j++ {
 			sqlInfo.cases[j].rawStmt, err = p.ParseOneStmt(sqlInfo.sql, charset, collation)
 			if err != nil {
 				return errors.Trace(err)
@@ -395,7 +356,7 @@ func (t *testExecInfo) compileSQL(idx int) (err error) {
 		compiler := executor.Compiler{Ctx: c.session}
 		se := c.session
 		ctx := context.TODO()
-		if err = se.PrepareTxnCtx(ctx, nil); err != nil {
+		if err = se.PrepareTxnCtx(ctx); err != nil {
 			return err
 		}
 		sctx := se.(sessionctx.Context)
@@ -452,7 +413,7 @@ type expectQuery struct {
 	rows []string
 }
 
-// https://github.com/pingcap/tidb/pull/6249 fixes the following two test cases.
+// https://github.com/ocean2811/tidbeaff0fbc576a/pull/6249 fixes the following two test cases.
 func TestWriteOnlyWriteNULL(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
@@ -821,6 +782,7 @@ func runTestInSchemaState(
 	// Make sure these SQLs use the plan of index scan.
 	tk.MustExec("drop stats t")
 
+	callback := &callback.TestDDLCallback{Do: dom}
 	prevState := model.StateNone
 	var checkErr error
 	se, err := session.CreateSession(store)
@@ -844,13 +806,16 @@ func runTestInSchemaState(
 		}
 	}
 	if isOnJobUpdated {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", cbFunc)
+		callback.OnJobUpdatedExported.Store(&cbFunc)
 	} else {
-		testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", cbFunc)
+		callback.OnJobRunBeforeExported = cbFunc
 	}
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	d.SetHook(callback)
 	tk.MustExec(alterTableSQL)
 	require.NoError(t, checkErr)
-	_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	d.SetHook(originalCallback)
 
 	if expectQuery != nil {
 		tk := testkit.NewTestKit(t, store)
@@ -874,23 +839,22 @@ func jobStateOrLastSubJobState(job *model.Job) model.SchemaState {
 }
 
 func TestShowIndex(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec(`create table t(c1 int primary key nonclustered, c2 int)`)
 
+	callback := &callback.TestDDLCallback{}
 	prevState := model.StateNone
 	showIndexSQL := `show index from t`
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if job.SchemaState == prevState || checkErr != nil {
 			return
 		}
 		switch job.SchemaState {
 		case model.StateDeleteOnly, model.StateWriteOnly, model.StateWriteReorganization:
-			tk := testkit.NewTestKit(t, store)
-			tk.MustExec("use test_db_state")
 			result, err1 := tk.Exec(showIndexSQL)
 			if err1 != nil {
 				checkErr = err1
@@ -898,21 +862,25 @@ func TestShowIndex(t *testing.T) {
 			}
 			rows := tk.ResultSetToResult(result, fmt.Sprintf("sql:%s", showIndexSQL))
 			got := fmt.Sprintf("%s", rows.Rows())
-			need := fmt.Sprintf("%s", testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO NO"))
+			need := fmt.Sprintf("%s", testkit.Rows("t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO"))
 			if got != need {
 				checkErr = fmt.Errorf("need %v, but got %v", need, got)
 			}
 		}
-	})
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	d.SetHook(callback)
 	alterTableSQL := `alter table t add index c2(c2)`
 	tk.MustExec(alterTableSQL)
 	require.NoError(t, checkErr)
 
 	tk.MustQuery(showIndexSQL).Check(testkit.Rows(
-		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO NO",
-		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES <nil> NO NO",
+		"t 0 PRIMARY 1 c1 A 0 <nil> <nil>  BTREE   YES <nil> NO",
+		"t 1 c2 1 c2 A 0 <nil> <nil> YES BTREE   YES <nil> NO",
 	))
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+	d.SetHook(originalCallback)
 
 	tk.MustExec(`create table tr(
 		id int, name varchar(50),
@@ -927,52 +895,27 @@ func TestShowIndex(t *testing.T) {
     	partition p5 values less than (2015)
    	);`)
 	tk.MustExec("create index idx1 on tr (purchased);")
-	tk.MustQuery("show index from tr;").Check(testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES <nil> NO NO"))
+	tk.MustQuery("show index from tr;").Check(testkit.Rows("tr 1 idx1 1 purchased A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 
 	tk.MustExec("drop table if exists tr")
 	tk.MustExec("create table tr(id int primary key clustered, v int, key vv(v))")
-	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES NO", "tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO NO"))
+	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES", "tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY YES", "vv NO"))
 
 	tk.MustExec("drop table if exists tr")
 	tk.MustExec("create table tr(id int primary key nonclustered, v int, key vv(v))")
-	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO NO"))
+	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
 
 	tk.MustExec("drop table if exists tr")
 	tk.MustExec("create table tr(id char(100) primary key clustered, v int, key vv(v))")
-	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES NO"))
+	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> YES"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY YES", "vv NO"))
 
 	tk.MustExec("drop table if exists tr")
 	tk.MustExec("create table tr(id char(100) primary key nonclustered, v int, key vv(v))")
-	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO NO"))
+	tk.MustQuery("show index from tr").Check(testkit.Rows("tr 1 vv 1 v A 0 <nil> <nil> YES BTREE   YES <nil> NO", "tr 0 PRIMARY 1 id A 0 <nil> <nil>  BTREE   YES <nil> NO"))
 	tk.MustQuery("select key_name, clustered from information_schema.tidb_indexes where table_name = 'tr' order by key_name").Check(testkit.Rows("PRIMARY NO", "vv NO"))
-}
-
-// Regression test for issue 70049. Ordinary indexes with an underscore-delimited
-// suffix must not be mistaken for temporary indexes created by modify column.
-func TestAlterIndexVisibility(t *testing.T) {
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	query := `select key_name, is_visible from information_schema.tidb_indexes
-		where table_schema = 'test' and table_name = '%s' order by key_name`
-	tk.MustExec("create table t_invisible (k int, key idx_k(k), key idx_k_1(k), key idx_k_copy(k))")
-	tk.MustExec("alter table t_invisible alter index idx_k invisible")
-	tk.MustQuery(fmt.Sprintf(query, "t_invisible")).Check(testkit.Rows(
-		"idx_k NO",
-		"idx_k_1 YES",
-		"idx_k_copy YES",
-	))
-
-	tk.MustExec("create table t_visible (k int, key idx_k(k) invisible, key idx_k_1(k) invisible, key idx_k_copy(k) invisible)")
-	tk.MustExec("alter table t_visible alter index idx_k visible")
-	tk.MustQuery(fmt.Sprintf(query, "t_visible")).Check(testkit.Rows(
-		"idx_k YES",
-		"idx_k_1 NO",
-		"idx_k_copy NO",
-	))
 }
 
 func TestParallelAlterIndex(t *testing.T) {
@@ -1137,7 +1080,7 @@ func TestParallelAddGeneratedColumnAndAlterModifyColumn(t *testing.T) {
 	tk.MustExec("use test_db_state")
 
 	sql1 := "ALTER TABLE t ADD COLUMN f INT GENERATED ALWAYS AS(a+1);"
-	sql2 := "ALTER TABLE t MODIFY COLUMN a char(16);"
+	sql2 := "ALTER TABLE t MODIFY COLUMN a tinyint;"
 
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
@@ -1230,63 +1173,6 @@ func TestParallelAlterAddIndex(t *testing.T) {
 	f := func(err1, err2 error) {
 		require.NoError(t, err1)
 		require.EqualError(t, err2, "[ddl:1061]index already exist index_b")
-	}
-	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
-}
-
-func TestParallelAlterAddVectorIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	tk.MustExec("use test_db_state")
-	tk.MustExec("create table tt (a int, b vector, c vector(3), d vector(4));")
-	tk.MustExec("alter table tt set tiflash replica 2 location labels 'a','b';")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/"+
-			"ddl/MockCheckColumnarIndexProcess"))
-	}()
-	tiflash := infosync.NewMockTiFlash()
-	infosync.SetMockTiFlash(tiflash)
-	defer func() {
-		tiflash.Lock()
-		tiflash.StatusServer.Close()
-		tiflash.Unlock()
-	}()
-	sql1 := "alter table tt add vector index vecIdx((vec_cosine_distance(c))) USING HNSW;"
-	sql2 := "alter table tt add vector index vecIdx1((vec_cosine_distance(c))) USING HNSW;"
-	f := func(err1, err2 error) {
-		require.NoError(t, err1)
-		require.EqualError(t, err2,
-			"[ddl:1061]DDL job rollback, error msg: vector index vecIdx function vec_cosine_distance already exist on column c")
-	}
-	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
-}
-
-func TestParallelAlterAddColumnarIndex(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, tiflashReplicaLease, mockstore.WithMockTiFlash(2))
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	tk.MustExec("use test_db_state")
-	tk.MustExec("create table tt (a int, b int, c vector(3), d vector(4));")
-	tk.MustExec("alter table tt set tiflash replica 2 location labels 'a','b';")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(1)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess"))
-	}()
-	tiflash := infosync.NewMockTiFlash()
-	infosync.SetMockTiFlash(tiflash)
-	defer func() {
-		tiflash.Lock()
-		tiflash.StatusServer.Close()
-		tiflash.Unlock()
-	}()
-	sql1 := "alter table tt add columnar index colIdx(b) USING INVERTED;"
-	sql2 := "alter table tt add columnar index colIdx1(b) USING INVERTED;"
-	f := func(err1, err2 error) {
-		require.NoError(t, err1)
-		require.EqualError(t, err2,
-			"[ddl:1061]DDL job rollback, error msg: inverted columnar index colIdx already exist on column b")
 	}
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
@@ -1424,19 +1310,19 @@ func TestParallelAlterAndDropSchema(t *testing.T) {
 	testControlParallelExecSQL(t, tk, store, dom, "", sql1, sql2, f)
 }
 
-func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage) (*testkit.TestKit, *testkit.TestKit, chan struct{}) {
+func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain) (*testkit.TestKit, *testkit.TestKit, chan struct{}, ddl.Callback) {
+	callback := &callback.TestDDLCallback{}
 	times := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		if times != 0 {
 			return
 		}
 		var qLen int
-		ctx := context.Background()
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(ctx, sess)
+			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
+			jobs, err := ddl.GetAllDDLJobs(sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 2 {
@@ -1445,7 +1331,10 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage) (*testkit
 			time.Sleep(5 * time.Millisecond)
 		}
 		times++
-	})
+	}
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	d.SetHook(callback)
 
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test_db_state")
@@ -1456,12 +1345,11 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage) (*testkit
 	// Make sure the sql1 is put into the DDLJobQueue.
 	go func() {
 		var qLen int
-		ctx := context.Background()
 		for {
 			sess := testkit.NewTestKit(t, store).Session()
-			err := sessiontxn.NewTxn(ctx, sess)
+			err := sessiontxn.NewTxn(context.Background(), sess)
 			require.NoError(t, err)
-			jobs, err := ddl.GetAllDDLJobs(ctx, sess)
+			jobs, err := ddl.GetAllDDLJobs(sess)
 			require.NoError(t, err)
 			qLen = len(jobs)
 			if qLen == 1 {
@@ -1471,7 +1359,7 @@ func prepareTestControlParallelExecSQL(t *testing.T, store kv.Storage) (*testkit
 			time.Sleep(5 * time.Millisecond)
 		}
 	}()
-	return tk1, tk2, ch
+	return tk1, tk2, ch, originalCallback
 }
 
 func testControlParallelExecSQL(t *testing.T, tk *testkit.TestKit, store kv.Storage, dom *domain.Domain, preSQL, sql1, sql2 string, f func(e1, e2 error)) {
@@ -1492,7 +1380,8 @@ func testControlParallelExecSQL(t *testing.T, tk *testkit.TestKit, store kv.Stor
 	 	partition p1 values less than (20)
 	 	);`)
 
-	tk1, tk2, ch := prepareTestControlParallelExecSQL(t, store)
+	tk1, tk2, ch, originalCallback := prepareTestControlParallelExecSQL(t, store, dom)
+	defer dom.DDL().SetHook(originalCallback)
 
 	var err1 error
 	var err2 error
@@ -1517,7 +1406,7 @@ func testControlParallelExecSQL(t *testing.T, tk *testkit.TestKit, store kv.Stor
 	f(err1, err2)
 }
 
-func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, sql string) {
+func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, dom *domain.Domain, sql string) {
 	tk1 := testkit.NewTestKit(t, store)
 	tk1.MustExec("use test_db_state")
 	tk2 := testkit.NewTestKit(t, store)
@@ -1526,14 +1415,19 @@ func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, sql string) {
 	var err2, err3 error
 	var wg util.WaitGroupWrapper
 
+	callback := &callback.TestDDLCallback{}
 	once := sync.Once{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		// sleep a while, let other job enqueue.
 		once.Do(func() {
 			time.Sleep(time.Millisecond * 10)
 		})
-	})
-	defer testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	d.SetHook(callback)
 	wg.Run(func() {
 		err2 = tk1.ExecToErr(sql)
 	})
@@ -1547,58 +1441,58 @@ func dbChangeTestParallelExecSQL(t *testing.T, store kv.Storage, sql string) {
 
 // TestCreateTableIfNotExists parallel exec create table if not exists xxx. No error returns is expected.
 func TestCreateTableIfNotExists(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	dbChangeTestParallelExecSQL(t, store, "create table if not exists test_not_exists(a int)")
+	dbChangeTestParallelExecSQL(t, store, dom, "create table if not exists test_not_exists(a int)")
 }
 
 // TestCreateDBIfNotExists parallel exec create database if not exists xxx. No error returns is expected.
 func TestCreateDBIfNotExists(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
-	dbChangeTestParallelExecSQL(t, store, "create database if not exists test_not_exists")
+	dbChangeTestParallelExecSQL(t, store, dom, "create database if not exists test_not_exists")
 }
 
 // TestDDLIfNotExists parallel exec some DDLs with `if not exists` clause. No error returns is expected.
 func TestDDLIfNotExists(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec("create table if not exists test_not_exists(a int)")
 	// ADD COLUMN
-	dbChangeTestParallelExecSQL(t, store, "alter table test_not_exists add column if not exists b int")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add column if not exists b int")
 	// ADD COLUMNS
-	dbChangeTestParallelExecSQL(t, store, "alter table test_not_exists add column if not exists (c11 int, d11 int)")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add column if not exists (c11 int, d11 int)")
 	// ADD INDEX
-	dbChangeTestParallelExecSQL(t, store, "alter table test_not_exists add index if not exists idx_b (b)")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_not_exists add index if not exists idx_b (b)")
 	// CREATE INDEX
-	dbChangeTestParallelExecSQL(t, store, "create index if not exists idx_b on test_not_exists (b)")
+	dbChangeTestParallelExecSQL(t, store, dom, "create index if not exists idx_b on test_not_exists (b)")
 }
 
 // TestDDLIfExists parallel exec some DDLs with `if exists` clause. No error returns is expected.
 func TestDDLIfExists(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
 	tk.MustExec("create table if not exists test_exists (a int key, b int)")
 	// DROP COLUMNS
-	dbChangeTestParallelExecSQL(t, store, "alter table test_exists drop column if exists c, drop column if exists d")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop column if exists c, drop column if exists d")
 	// DROP COLUMN
-	dbChangeTestParallelExecSQL(t, store, "alter table test_exists drop column if exists b") // only `a` exists now
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop column if exists b") // only `a` exists now
 	// CHANGE COLUMN
-	dbChangeTestParallelExecSQL(t, store, "alter table test_exists change column if exists a c int") // only, `c` exists now
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists change column if exists a c int") // only, `c` exists now
 	// MODIFY COLUMN
-	dbChangeTestParallelExecSQL(t, store, "alter table test_exists modify column if exists a bigint")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists modify column if exists a bigint")
 	// DROP INDEX
 	tk.MustExec("alter table test_exists add index idx_c (c)")
-	dbChangeTestParallelExecSQL(t, store, "alter table test_exists drop index if exists idx_c")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists drop index if exists idx_c")
 	// DROP PARTITION (ADD PARTITION tested in TestParallelAlterAddPartition)
 	tk.MustExec("create table test_exists_2 (a int key) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30))")
-	dbChangeTestParallelExecSQL(t, store, "alter table test_exists_2 drop partition if exists p1")
+	dbChangeTestParallelExecSQL(t, store, dom, "alter table test_exists_2 drop partition if exists p1")
 }
 
 // TestParallelDDLBeforeRunDDLJob tests a session to execute DDL with an outdated information schema.
@@ -1606,7 +1500,7 @@ func TestDDLIfExists(t *testing.T) {
 // In a cluster, TiDB "a" executes the DDL.
 // TiDB "b" fails to load schema, then TiDB "b" executes the DDL statement associated with the DDL statement executed by "a".
 func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
-	store := testkit.CreateMockStoreWithSchemaLease(t, 200*time.Millisecond)
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 200*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database test_db_state default charset utf8 default collate utf8_bin")
 	tk.MustExec("use test_db_state")
@@ -1619,16 +1513,20 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 	tk2 := testkit.NewTestKit(t, store)
 	tk2.MustExec("use test_db_state")
 
+	intercept := &callback.TestInterceptor{}
+
 	var sessionToStart sync.WaitGroup // sessionToStart is a waitgroup to wait for two session to get the same information schema
 	sessionToStart.Add(2)
 	firstDDLFinished := make(chan struct{})
 
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterGetSchemaAndTableByIdent", func(ctx sessionctx.Context) {
+	intercept.OnGetInfoSchemaExported = func(ctx sessionctx.Context, is infoschema.InfoSchema) infoschema.InfoSchema {
 		// The following code is for testing.
 		// Make sure the two sessions get the same information schema before executing DDL.
 		// After the first session executes its DDL, then the second session executes its DDL.
+		var info infoschema.InfoSchema
 		sessionToStart.Done()
 		sessionToStart.Wait()
+		info = is
 
 		// Make sure the two session have got the same information schema. And the first session can continue to go on,
 		// or the first session finished this SQL(seCnt = finishedCnt), then other sessions can continue to go on.
@@ -1636,7 +1534,11 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 		if currID != 1 {
 			<-firstDDLFinished
 		}
-	})
+
+		return info
+	}
+	d := dom.DDL()
+	d.(ddl.DDLForTest).SetInterceptor(intercept)
 
 	// Make sure the connection 1 executes a SQL before the connection 2.
 	// And the connection 2 executes a SQL with an outdated information schema.
@@ -1653,6 +1555,9 @@ func TestParallelDDLBeforeRunDDLJob(t *testing.T) {
 	})
 
 	wg.Wait()
+
+	intercept = &callback.TestInterceptor{}
+	d.(ddl.DDLForTest).SetInterceptor(intercept)
 }
 
 func TestParallelAlterSchemaCharsetAndCollate(t *testing.T) {
@@ -1722,7 +1627,7 @@ func TestWriteReorgForColumnTypeChange(t *testing.T) {
 }
 
 func TestCreateExpressionIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1740,10 +1645,16 @@ func TestCreateExpressionIndex(t *testing.T) {
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
+		err := originalCallback.OnChanged(nil)
+		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1774,14 +1685,16 @@ func TestCreateExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (10, 10), (0, 11), (0, 11)
 		}
-	})
+	}
 
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
 	tk.MustExec("alter table t add index idx((b+1))")
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
 	tk.MustQuery("select * from t order by a, b").Check(testkit.Rows("0 9", "0 11", "0 11", "1 7", "2 7", "5 7", "8 8", "10 10", "10 10"))
 
-	// https://github.com/pingcap/tidb/issues/39784
+	// https://github.com/ocean2811/tidbeaff0fbc576a/issues/39784
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t(name varchar(20))")
@@ -1791,7 +1704,7 @@ func TestCreateExpressionIndex(t *testing.T) {
 }
 
 func TestCreateUniqueExpressionIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1806,7 +1719,11 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 	// If waitReorg timeout, the worker may enter writeReorg more than 2 times.
 	reorgTime := 0
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
@@ -1886,7 +1803,9 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 7), (8, 8), (13, 9), (11, 10), (0, 11)
 		}
-	})
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
 	tk.MustExec("alter table t add unique index idx((a*b+1))")
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
@@ -1894,7 +1813,7 @@ func TestCreateUniqueExpressionIndex(t *testing.T) {
 }
 
 func TestDropExpressionIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -1908,10 +1827,16 @@ func TestDropExpressionIndex(t *testing.T) {
 	stateWriteReorganizationSQLs := []string{"insert into t values (10, 10)", "begin pessimistic;", "insert into t select * from t", "rollback", "insert into t set b = 11", "update t set b = 7 where a = 5", "delete from t where b = 6"}
 
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", func(job *model.Job) {
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{}
+	onJobUpdatedExportedFunc := func(job *model.Job) {
 		if checkErr != nil {
 			return
 		}
+		err := originalCallback.OnChanged(nil)
+		require.NoError(t, err)
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			for _, sql := range stateDeleteOnlySQLs {
@@ -1938,7 +1863,9 @@ func TestDropExpressionIndex(t *testing.T) {
 			}
 			// (1, 7), (2, 7), (5, 7), (8, 8), (0, 9), (10, 10), (0, 11)
 		}
-	})
+	}
+	callback.OnJobUpdatedExported.Store(&onJobUpdatedExportedFunc)
+	d.SetHook(callback)
 	tk.MustExec("alter table t drop index idx")
 	require.NoError(t, checkErr)
 	tk.MustExec("admin check table t")
@@ -1946,7 +1873,7 @@ func TestDropExpressionIndex(t *testing.T) {
 }
 
 func TestParallelRenameTable(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create database test2")
@@ -1963,7 +1890,11 @@ func TestParallelRenameTable(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	d2 := dom.DDL()
+	originalCallback := d2.GetHook()
+	defer d2.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{Do: dom}
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateNone:
 			if !firstDDL {
@@ -1989,7 +1920,9 @@ func TestParallelRenameTable(t *testing.T) {
 			}()
 			time.Sleep(10 * time.Millisecond)
 		}
-	})
+	}
+
+	d2.SetHook(callback)
 
 	// rename then add column
 	concurrentDDLQuery = "alter table t add column g int"
@@ -2055,7 +1988,7 @@ func TestParallelRenameTable(t *testing.T) {
 }
 
 func TestConcurrentSetDefaultValue(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -2071,8 +2004,12 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 	setdefaultSQLOffset := 0
 
 	var wg sync.WaitGroup
+	d := dom.DDL()
+	originalCallback := d.GetHook()
+	defer d.SetHook(originalCallback)
+	callback := &callback.TestDDLCallback{Do: dom}
 	skip := false
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	callback.OnJobRunBeforeExported = func(job *model.Job) {
 		switch job.SchemaState {
 		case model.StateDeleteOnly:
 			if skip {
@@ -2088,8 +2025,9 @@ func TestConcurrentSetDefaultValue(t *testing.T) {
 				wg.Done()
 			}()
 		}
-	})
+	}
 
+	d.SetHook(callback)
 	tk.MustExec("alter table t modify column a MEDIUMINT NULL DEFAULT '-8145111'")
 
 	wg.Wait()

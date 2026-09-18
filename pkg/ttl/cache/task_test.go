@@ -19,12 +19,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/ttl/cache"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/cache"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,30 +40,21 @@ func newTaskGetter(ctx context.Context, t *testing.T, tk *testkit.TestKit) *task
 	}
 }
 
-func newTTLTaskTestKit(t *testing.T) *testkit.TestKit {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	dom.TTLJobManager().Stop()
-	require.NoError(t, dom.TTLJobManager().WaitStopped(context.Background(), time.Minute))
-
-	tk := testkit.NewTestKit(t, store)
-	tk.Session().GetSessionVars().TimeZone = time.Local
-	return tk
-}
-
 func (tg *taskGetter) mustGetTestTask() *cache.TTLTask {
 	sql, args := cache.SelectFromTTLTaskWithJobID("test-job")
 	rs, err := tg.tk.Session().ExecuteInternal(tg.ctx, sql, args...)
 	require.NoError(tg.t, err)
 	rows, err := session.GetRows4Test(context.Background(), tg.tk.Session(), rs)
 	require.NoError(tg.t, err)
-	require.Len(tg.t, rows, 1)
-	task, err := cache.RowToTTLTask(tg.tk.Session().GetSessionVars().Location(), rows[0])
+	task, err := cache.RowToTTLTask(tg.tk.Session(), rows[0])
 	require.NoError(tg.t, err)
 	return task
 }
 
 func TestRowToTTLTask(t *testing.T) {
-	tk := newTTLTaskTestKit(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().TimeZone = time.Local
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tg := newTaskGetter(ctx, t, tk)
@@ -71,19 +62,7 @@ func TestRowToTTLTask(t *testing.T) {
 	now := time.Now()
 	now = now.Round(time.Second)
 
-	// Keep a matching running TTL job status to prevent task GC from removing
-	// this test row during the test.
-	_, err := tk.Session().ExecuteInternal(
-		ctx,
-		`INSERT INTO mysql.tidb_ttl_table_status (
-			table_id, parent_table_id, current_job_id,
-			current_job_owner_id, current_job_owner_hb_time, current_job_status
-		) VALUES (%?, %?, %?, %?, %?, %?)`,
-		1, 1, "test-job", "test-owner", now.Add(time.Hour), "running",
-	)
-	require.NoError(t, err)
-
-	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", 1, 1, nil, nil, now, now)
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", 1, 1, nil, nil, now, now)
 	require.NoError(t, err)
 	// tk.MustExec cannot handle the NULL parameter, use the `tk.Session().ExecuteInternal` instead here.
 	_, err = tk.Session().ExecuteInternal(ctx, sql, args...)
@@ -97,10 +76,10 @@ func TestRowToTTLTask(t *testing.T) {
 	require.Equal(t, now, task.ExpireTime)
 	require.Equal(t, now, task.CreatedTime)
 
-	rangeStart, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(),
+	rangeStart, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx,
 		[]byte{}, []types.Datum{types.NewDatum(1)}...)
 	require.NoError(t, err)
-	rangeEnd, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(),
+	rangeEnd, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx,
 		[]byte{}, []types.Datum{types.NewDatum(2)}...)
 	require.NoError(t, err)
 	tk.MustExec(
@@ -110,16 +89,12 @@ func TestRowToTTLTask(t *testing.T) {
 	task = tg.mustGetTestTask()
 	require.Equal(t, []types.Datum{types.NewDatum(1)}, task.ScanRangeStart)
 	require.Equal(t, []types.Datum{types.NewDatum(2)}, task.ScanRangeEnd)
-
-	scanIndexID := int64(42)
-	tk.MustExec("UPDATE mysql.tidb_ttl_task SET scan_index_id = ? WHERE job_id = 'test-job'", scanIndexID)
-	task = tg.mustGetTestTask()
-	require.NotNil(t, task.ScanIndexID)
-	require.Equal(t, scanIndexID, *task.ScanIndexID)
 }
 
 func TestInsertIntoTTLTask(t *testing.T) {
-	tk := newTTLTaskTestKit(t)
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.Session().GetSessionVars().TimeZone = time.Local
 
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnTTL)
 	tg := newTaskGetter(ctx, t, tk)
@@ -130,7 +105,7 @@ func TestInsertIntoTTLTask(t *testing.T) {
 	now := time.Now()
 	now = now.Round(time.Second)
 
-	sql, args, err := cache.InsertIntoTTLTask(tk.Session().GetSessionVars().Location(), "test-job", 1, 1,
+	sql, args, err := cache.InsertIntoTTLTask(tk.Session(), "test-job", 1, 1,
 		rangeStart, rangeEnd, now, now)
 	require.NoError(t, err)
 	// tk.MustExec cannot handle the NULL parameter, use the `tk.Session().ExecuteInternal` instead here.

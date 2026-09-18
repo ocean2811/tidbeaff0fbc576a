@@ -25,7 +25,7 @@ import (
 	"path/filepath"
 	"text/template"
 
-	. "github.com/pingcap/tidb/pkg/expression/generator/helper"
+	. "github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/generator/helper"
 )
 
 const header = `// Copyright 2019 PingCAP, Inc.
@@ -52,10 +52,10 @@ const newLine = "\n"
 const builtinOtherImports = `import (
 	"cmp"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
 )
 `
 
@@ -66,7 +66,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 		return err
 	}
 	defer b.bufAllocator.put(buf0)
-	if err := b.args[0].VecEval{{ .Input.TypeName }}(ctx, input, buf0); err != nil {
+	if err := b.args[0].VecEval{{ .Input.TypeName }}(b.ctx, input, buf0); err != nil {
 		return err
 	}
 	buf1, err := b.bufAllocator.get()
@@ -127,7 +127,7 @@ var builtinInTmpl = template.Must(template.New("builtinInTmpl").Parse(`
 {{ $InputFixed := ( .Input.Fixed ) }}
 {{ $UseHashKey := ( or (eq .Input.TypeName "Decimal") (eq .Input.TypeName "JSON") )}}
 {{ $InputTime := (eq .Input.TypeName "Time") }}
-func (b *{{.SigName}}) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *{{.SigName}}) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	{{- template "BufAllocator" . }}
 	{{- if $InputFixed }}
@@ -147,7 +147,7 @@ func (b *{{.SigName}}) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *c
 	}
 	{{- end }}
 	{{- if $InputInt }}
-		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag())
+		isUnsigned0 := mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag())
 	{{- end }}
 	var compareResult int
 	args := b.args[1:]
@@ -215,11 +215,11 @@ func (b *{{.SigName}}) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *c
 	{{- end }}
 
 	for j := 0; j < len(args); j++ {
-		if err := args[j].VecEval{{ .Input.TypeName }}(ctx, input, buf1); err != nil {
+		if err := args[j].VecEval{{ .Input.TypeName }}(b.ctx, input, buf1); err != nil {
 			return err
 		}
 		{{- if $InputInt }}
-			isUnsigned := mysql.HasUnsignedFlag(args[j].GetType(ctx).GetFlag())
+			isUnsigned := mysql.HasUnsignedFlag(args[j].GetType().GetFlag())
 		{{- end }}
 		{{- if $InputFixed }}
 			args1 := buf1.{{.Input.TypeNameInColumn}}s()
@@ -286,16 +286,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 )
 
 type inGener struct {
 	defaultGener
 }
 
-func (g inGener) gen() any {
+func (g inGener) gen() interface{} {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}

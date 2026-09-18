@@ -6,8 +6,9 @@ go_library(
         "fnv.go",
         "mvmap.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/mvmap",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mvmap",
     visibility = ["//visibility:public"],
+    deps = ["//pkg/util/mathutil"],
 )
 
 go_test(

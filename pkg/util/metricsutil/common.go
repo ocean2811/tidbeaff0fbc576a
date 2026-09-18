@@ -17,67 +17,72 @@ package metricsutil
 import (
 	"context"
 	"fmt"
-	"maps"
+	"strings"
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/tidb/br/pkg/task"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	domain_metrics "github.com/pingcap/tidb/pkg/domain/metrics"
-	executor_metrics "github.com/pingcap/tidb/pkg/executor/metrics"
-	infoschema_metrics "github.com/pingcap/tidb/pkg/infoschema/metrics"
-	"github.com/pingcap/tidb/pkg/keyspace"
-	"github.com/pingcap/tidb/pkg/metrics"
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core/metrics"
-	server_metrics "github.com/pingcap/tidb/pkg/server/metrics"
-	session_metrics "github.com/pingcap/tidb/pkg/session/metrics"
-	txninfo "github.com/pingcap/tidb/pkg/session/txninfo"
-	isolation_metrics "github.com/pingcap/tidb/pkg/sessiontxn/isolation/metrics"
-	statscache_metrics "github.com/pingcap/tidb/pkg/statistics/handle/cache/metrics"
-	statshandler_metrics "github.com/pingcap/tidb/pkg/statistics/handle/metrics"
-	kvstore "github.com/pingcap/tidb/pkg/store"
-	copr_metrics "github.com/pingcap/tidb/pkg/store/copr/metrics"
-	unimetrics "github.com/pingcap/tidb/pkg/store/mockstore/unistore/metrics"
-	ttlmetrics "github.com/pingcap/tidb/pkg/ttl/metrics"
-	"github.com/pingcap/tidb/pkg/util"
-	topsqlreporter_metrics "github.com/pingcap/tidb/pkg/util/topsql/reporter/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	domain_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/metrics"
+	executor_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/metrics"
+	infoschema_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/keyspace"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/metrics"
+	server_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/metrics"
+	session_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/session/metrics"
+	txninfo "github.com/ocean2811/tidbeaff0fbc576a/pkg/session/txninfo"
+	isolation_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation/metrics"
+	statshandler_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/metrics"
+	kvstore "github.com/ocean2811/tidbeaff0fbc576a/pkg/store"
+	copr_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/metrics"
+	unimetrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/metrics"
+	ttlmetrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	topsqlreporter_metrics "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/reporter/metrics"
+	tikvconfig "github.com/tikv/client-go/v2/config"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/opt"
-	"github.com/tikv/pd/client/pkg/caller"
 )
 
-var componentName = caller.Component("tidb-metrics-util")
-
-const keyspaceIDLabel = "keyspace_id"
-
-// RegisterMetrics registers metrics with keyspace metadata labels when available.
+// RegisterMetrics register metrics with const label 'keyspace_id' if keyspaceName set.
 func RegisterMetrics() error {
 	cfg := config.GetGlobalConfig()
-	if kerneltype.IsNextGen() {
-		metricscommon.SetConstLabels("keyspace_name", cfg.KeyspaceName)
+	if keyspace.IsKeyspaceNameEmpty(cfg.KeyspaceName) || strings.ToLower(cfg.Store) != "tikv" {
+		return registerMetrics(nil) // register metrics without label 'keyspace_id'.
 	}
-	return registerMetrics()
+
+	pdAddrs, _, _, err := tikvconfig.ParsePath("tikv://" + cfg.Path)
+	if err != nil {
+		return err
+	}
+
+	timeoutSec := time.Duration(cfg.PDClient.PDServerTimeout) * time.Second
+	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{
+		CAPath:   cfg.Security.ClusterSSLCA,
+		CertPath: cfg.Security.ClusterSSLCert,
+		KeyPath:  cfg.Security.ClusterSSLKey,
+	}, pd.WithCustomTimeoutOption(timeoutSec))
+	if err != nil {
+		return err
+	}
+	defer pdCli.Close()
+
+	keyspaceMeta, err := getKeyspaceMeta(pdCli, cfg.KeyspaceName)
+	if err != nil {
+		return err
+	}
+
+	return registerMetrics(keyspaceMeta)
 }
 
-// RegisterMetricsForBR registers metrics with keyspace metadata labels for BR.
-func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName string) error {
+// RegisterMetricsForBR register metrics with const label keyspace_id for BR.
+func RegisterMetricsForBR(pdAddrs []string, keyspaceName string) error {
 	if keyspace.IsKeyspaceNameEmpty(keyspaceName) {
-		return registerMetrics()
-	}
-
-	if kerneltype.IsNextGen() {
-		metricscommon.SetConstLabels("keyspace_name", keyspaceName)
+		return registerMetrics(nil) // register metrics without label 'keyspace_id'.
 	}
 
 	timeoutSec := 10 * time.Second
-	securityOpt := pd.SecurityOption{}
-	if tls.IsEnabled() {
-		securityOpt = tls.ToPDSecurityOption()
-	}
-	pdCli, err := pd.NewClient(componentName, pdAddrs, securityOpt,
-		opt.WithCustomTimeoutOption(timeoutSec), opt.WithInitMetricsOption(false))
+	pdCli, err := pd.NewClient(pdAddrs, pd.SecurityOption{},
+		pd.WithCustomTimeoutOption(timeoutSec))
 	if err != nil {
 		return err
 	}
@@ -87,11 +92,15 @@ func RegisterMetricsForBR(pdAddrs []string, tls task.TLSConfig, keyspaceName str
 	if err != nil {
 		return err
 	}
-	setKeyspaceIDConstLabel(keyspaceMeta.GetId())
-	return registerMetrics()
+
+	return registerMetrics(keyspaceMeta)
 }
 
-func initMetrics() {
+func registerMetrics(keyspaceMeta *keyspacepb.KeyspaceMeta) error {
+	if keyspaceMeta != nil {
+		metrics.SetConstLabels("keyspace_id", fmt.Sprint(keyspaceMeta.GetId()))
+	}
+
 	metrics.InitMetrics()
 	metrics.RegisterMetrics()
 
@@ -104,46 +113,14 @@ func initMetrics() {
 	server_metrics.InitMetricsVars()
 	session_metrics.InitMetricsVars()
 	statshandler_metrics.InitMetricsVars()
-	statscache_metrics.InitMetricsVars()
 	topsqlreporter_metrics.InitMetricsVars()
 	ttlmetrics.InitMetricsVars()
 	txninfo.InitMetricsVars()
 
-	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+	if config.GetGlobalConfig().Store == "unistore" {
 		unimetrics.RegisterMetrics()
 	}
-}
-
-func registerMetrics() error {
-	labels := cloneConstLabels()
-	maps.Copy(labels, config.GetGlobalConfig().GetKeyspaceObservabilityMetricLabels())
-	if len(labels) > 0 {
-		setConstLabels(labels)
-	}
-	initMetrics()
 	return nil
-}
-
-func cloneConstLabels() map[string]string {
-	labels := maps.Clone(metricscommon.GetConstLabels())
-	if labels == nil {
-		labels = make(map[string]string)
-	}
-	return labels
-}
-
-func setKeyspaceIDConstLabel(keyspaceID uint32) {
-	labels := cloneConstLabels()
-	labels[keyspaceIDLabel] = fmt.Sprint(keyspaceID)
-	setConstLabels(labels)
-}
-
-func setConstLabels(labels map[string]string) {
-	kv := make([]string, 0, len(labels)*2)
-	for k, v := range labels {
-		kv = append(kv, k, v)
-	}
-	metricscommon.SetConstLabels(kv...)
 }
 
 func getKeyspaceMeta(pdCli pd.Client, keyspaceName string) (*keyspacepb.KeyspaceMeta, error) {

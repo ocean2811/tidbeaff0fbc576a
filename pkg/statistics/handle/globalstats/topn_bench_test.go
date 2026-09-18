@@ -16,42 +16,42 @@ package globalstats
 
 import (
 	"fmt"
-	"math/rand"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 	"github.com/stretchr/testify/require"
+	"github.com/tiancaiamao/gp"
 )
 
-// prepareOverlappingTopNsAndHists builds a best-case fixture: every
-// partition draws from the same 500-key domain, so TopN merge finds
-// massive overlap and heap Pass 1 groups many values per pop.
-func prepareOverlappingTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*statistics.TopN, []*statistics.Histogram) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(tz)
-	// Seeded RNG so cross-branch benchstat comparisons aren't perturbed by
-	// per-run distribution drift.
-	rng := rand.New(rand.NewSource(20150401))
+// cmd: go test -run=^$ -bench=BenchmarkMergePartTopN2GlobalTopNWithHists -benchmem github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/globalstats
+func benchmarkMergePartTopN2GlobalTopNWithHists(partitions int, b *testing.B) {
+	loc := time.UTC
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
+	version := 1
+	isKilled := uint32(0)
+
 	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, partitions)
-	for i := range partitions {
-		// Construct TopN, should be key1 -> rand(0, 1000), key2 -> rand(0, 1000), key3 -> rand(0, 1000)...
-		topN := statistics.NewTopN(500)
+	for i := 0; i < partitions; i++ {
+		// Construct TopN, should be key1 -> 2, key2 -> 2, key3 -> 3.
+		topN := statistics.NewTopN(3)
 		{
-			for j := 1; j <= 500; j++ {
-				// Randomly skip some keys for some partitions.
-				if i%2 == 0 && j%2 == 0 {
-					continue
-				}
-				key, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(int64(j)))
+			key1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1))
+			require.NoError(b, err)
+			topN.AppendTopN(key1, 2)
+			key2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(2))
+			require.NoError(b, err)
+			topN.AppendTopN(key2, 2)
+			if i%2 == 0 {
+				key3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(3))
 				require.NoError(b, err)
-				topN.AppendTopN(key, uint64(rng.Intn(1000)))
+				topN.AppendTopN(key3, 3)
 			}
 		}
 		topNs = append(topNs, topN)
@@ -59,95 +59,102 @@ func prepareOverlappingTopNsAndHists(b *testing.B, partitions int, tz *time.Loca
 
 	// Prepare Hists.
 	hists := make([]*statistics.Histogram, 0, partitions)
-	for range partitions {
+	for i := 0; i < partitions; i++ {
 		// Construct Hist
-		h := statistics.NewHistogram(1, 500, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
-		for j := 1; j <= 500; j++ {
-			datum := types.NewIntDatum(int64(j))
-			h.AppendBucket(&datum, &datum, int64(10+j*10), 10)
-		}
+		h := statistics.NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
+		h.Bounds.AppendInt64(0, 1)
+		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 20})
+		h.Bounds.AppendInt64(0, 2)
+		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 30})
+		h.Bounds.AppendInt64(0, 3)
+		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 30})
+		h.Bounds.AppendInt64(0, 4)
+		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 40})
 		hists = append(hists, h)
 	}
 
-	return topNs, hists
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		// Benchmark merge 10 topN.
+		_, _, _, _ = MergePartTopN2GlobalTopN(loc, version, topNs, 10, hists, false, &isKilled)
+	}
 }
 
-// prepareSkewedTopNsAndHists builds a worst-case fixture: each partition
-// owns a disjoint 500-key range, so the TopN merge sees almost no
-// overlap across partitions and the bounded min-heap has to sift every
-// distinct value. Stress-tests sorting and per-bucket comparison cost.
-func prepareSkewedTopNsAndHists(b *testing.B, partitions int, tz *time.Location) ([]*statistics.TopN, []*statistics.Histogram) {
-	sc := stmtctx.NewStmtCtxWithTimeZone(tz)
-	rng := rand.New(rand.NewSource(20150401))
-	const perPart = 500
+// cmd: go test -run=^$ -bench=BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists -benchmem github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/globalstats
+func benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(partitions int, b *testing.B) {
+	loc := time.UTC
+	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
+	version := 1
+	isKilled := uint32(0)
 
+	// Prepare TopNs.
 	topNs := make([]*statistics.TopN, 0, partitions)
-	for i := range partitions {
-		topN := statistics.NewTopN(perPart)
-		base := int64(i) * perPart
-		for j := 1; j <= perPart; j++ {
-			key, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(base+int64(j)))
+	for i := 0; i < partitions; i++ {
+		// Construct TopN, should be key1 -> 2, key2 -> 2, key3 -> 3.
+		topN := statistics.NewTopN(3)
+		{
+			key1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(1))
 			require.NoError(b, err)
-			topN.AppendTopN(key, uint64(rng.Intn(1000)))
+			topN.AppendTopN(key1, 2)
+			key2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(2))
+			require.NoError(b, err)
+			topN.AppendTopN(key2, 2)
+			if i%2 == 0 {
+				key3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(3))
+				require.NoError(b, err)
+				topN.AppendTopN(key3, 3)
+			}
 		}
 		topNs = append(topNs, topN)
 	}
 
+	// Prepare Hists.
 	hists := make([]*statistics.Histogram, 0, partitions)
-	for i := range partitions {
-		h := statistics.NewHistogram(1, perPart, 0, 0, types.NewFieldType(mysql.TypeLong), chunk.InitialCapacity, 0)
-		base := int64(i) * perPart
-		for j := 1; j <= perPart; j++ {
-			datum := types.NewIntDatum(base + int64(j))
-			h.AppendBucket(&datum, &datum, int64(10+j*10), 10)
-		}
+	for i := 0; i < partitions; i++ {
+		// Construct Hist
+		h := statistics.NewHistogram(1, 10, 0, 0, types.NewFieldType(mysql.TypeTiny), chunk.InitialCapacity, 0)
+		h.Bounds.AppendInt64(0, 1)
+		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 20})
+		h.Bounds.AppendInt64(0, 2)
+		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 30})
+		h.Bounds.AppendInt64(0, 3)
+		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 30})
+		h.Bounds.AppendInt64(0, 4)
+		h.Buckets = append(h.Buckets, statistics.Bucket{Repeat: 10, Count: 40})
 		hists = append(hists, h)
 	}
-
-	return topNs, hists
-}
-
-var benchmarkSizes = []int{1, 2, 5, 10, 100, 1000, 2000, 5000, 8192}
-
-func benchmarkGlobalStatsMergeWith(b *testing.B, partitions int, prepare func(*testing.B, int, *time.Location) ([]*statistics.TopN, []*statistics.Histogram)) {
-	loc := time.UTC
-	killer := sqlkiller.SQLKiller{}
-	sc := stmtctx.NewStmtCtxWithTimeZone(loc)
-	topNs, hists := prepare(b, partitions, loc)
-
+	wrapper := NewStatsWrapper(hists, topNs)
+	const mergeConcurrency = 4
+	batchSize := len(wrapper.AllTopN) / mergeConcurrency
+	if batchSize < 1 {
+		batchSize = 1
+	} else if batchSize > MaxPartitionMergeBatchSize {
+		batchSize = MaxPartitionMergeBatchSize
+	}
+	gpool := gp.New(mergeConcurrency, 5*time.Minute)
+	defer gpool.Close()
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
-		if _, _, err := statistics.MergePartTopNAndHistToGlobal(
-			sc, &killer, topNs, hists, 100, 256, false,
-		); err != nil {
-			b.Fatalf("MergePartTopNAndHistToGlobal: %v", err)
-		}
+		// Benchmark merge 10 topN.
+		_, _, _, _ = MergeGlobalStatsTopNByConcurrency(gpool, mergeConcurrency, batchSize, wrapper, loc, version, 10, false, &isKilled)
 	}
 }
 
-// BenchmarkGlobalStatsMerge benchmarks MergePartTopNAndHistToGlobal on
-// an overlapping-key fixture (every partition shares the same 500-key
-// domain). Use benchstat to compare results across branches.
-//
-// cmd: go test -run=^$ -bench=BenchmarkGlobalStatsMerge -benchmem github.com/pingcap/tidb/pkg/statistics/handle/globalstats
-func BenchmarkGlobalStatsMerge(b *testing.B) {
+var benchmarkSizes = []int{100, 1000, 10000, 100000, 1000000, 10000000}
+var benchmarkConcurrencySizes = []int{100, 1000, 10000, 100000}
+
+func BenchmarkMergePartTopN2GlobalTopNWithHists(b *testing.B) {
 	for _, size := range benchmarkSizes {
 		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			benchmarkGlobalStatsMergeWith(b, size, prepareOverlappingTopNsAndHists)
+			benchmarkMergePartTopN2GlobalTopNWithHists(size, b)
 		})
 	}
 }
 
-// BenchmarkGlobalStatsMergeSkewed benchmarks
-// MergePartTopNAndHistToGlobal on a disjoint-key fixture (each
-// partition owns its own 500-key range). Stress-tests the Pass 1
-// k-way merge and the Pass 2 merge-walk with minimal grouping;
-// typically slower and more allocation-heavy than the overlapping
-// case.
-func BenchmarkGlobalStatsMergeSkewed(b *testing.B) {
-	for _, size := range benchmarkSizes {
+func BenchmarkMergeGlobalStatsTopNByConcurrencyWithHists(b *testing.B) {
+	for _, size := range benchmarkConcurrencySizes {
 		b.Run(fmt.Sprintf("Size%d", size), func(b *testing.B) {
-			benchmarkGlobalStatsMergeWith(b, size, prepareSkewedTopNsAndHists)
+			benchmarkMergeGlobalStatsTopNByConcurrencyWithHists(size, b)
 		})
 	}
 }

@@ -18,11 +18,11 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -229,10 +229,9 @@ func TestVectorizedDecimalErrOverflow(t *testing.T) {
 		input.AppendMyDecimal(1, dec2)
 		cols := []Expression{&Column{Index: 0, RetType: fts[0]}, &Column{Index: 1, RetType: fts[1]}}
 		baseFunc, err := funcs[tt.funcName].getFunction(ctx, cols)
-		require.True(t, baseFunc.vectorized() && baseFunc.isChildrenVectorized())
 		require.NoError(t, err)
 		result := chunk.NewColumn(eType2FieldType(types.ETDecimal), 1)
-		err = vecEvalType(ctx, baseFunc, types.ETDecimal, input, result)
+		err = baseFunc.vecEvalDecimal(input, result)
 		require.EqualError(t, err, tt.errStr)
 	}
 }

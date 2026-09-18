@@ -15,16 +15,14 @@ package ast
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
 )
 
 var (
 	_ StmtNode = &AnalyzeTableStmt{}
 	_ StmtNode = &DropStatsStmt{}
 	_ StmtNode = &LoadStatsStmt{}
-	_ StmtNode = &RefreshStatsStmt{}
-	_ StmtNode = &LockStatsStmt{}
-	_ StmtNode = &UnlockStatsStmt{}
 )
 
 // AnalyzeTableStmt is used to create table statistics.
@@ -32,19 +30,18 @@ type AnalyzeTableStmt struct {
 	stmtNode
 
 	TableNames     []*TableName
-	PartitionNames []CIStr
-	IndexNames     []CIStr
+	PartitionNames []model.CIStr
+	IndexNames     []model.CIStr
 	AnalyzeOpts    []AnalyzeOpt
 
 	// IndexFlag is true when we only analyze indices for a table.
-	IndexFlag       bool
-	Incremental     bool
-	NoWriteToBinLog bool
+	IndexFlag   bool
+	Incremental bool
 	// HistogramOperation is set in "ANALYZE TABLE ... UPDATE/DROP HISTOGRAM ..." statement.
 	HistogramOperation HistogramOperationType
 	// ColumnNames indicate the columns whose statistics need to be collected.
-	ColumnNames  []CIStr
-	ColumnChoice ColumnChoice
+	ColumnNames  []model.CIStr
+	ColumnChoice model.ColumnChoice
 }
 
 // AnalyzeOptType is the type for analyze options.
@@ -58,7 +55,6 @@ const (
 	AnalyzeOptCMSketchWidth
 	AnalyzeOptNumSamples
 	AnalyzeOptSampleRate
-	AnalyzeOptNDVRate
 )
 
 // AnalyzeOptionString stores the string form of analyze options.
@@ -69,7 +65,6 @@ var AnalyzeOptionString = map[AnalyzeOptionType]string{
 	AnalyzeOptCMSketchDepth: "CMSKETCH DEPTH",
 	AnalyzeOptNumSamples:    "SAMPLES",
 	AnalyzeOptSampleRate:    "SAMPLERATE",
-	AnalyzeOptNDVRate:       "NDVRATE",
 }
 
 // HistogramOperationType is the type for histogram operation.
@@ -95,15 +90,6 @@ func (hot HistogramOperationType) String() string {
 }
 
 // AnalyzeOpt stores the analyze option type and value.
-// A nil Value means the option was specified as DEFAULT: the persisted value
-// for the analyzed target is cleared and the analyze behaves as if the option
-// had never been persisted for it. A partition then falls back to the
-// table-level saved value if one exists, otherwise the system default applies.
-// The DEFAULT keyword is deliberately the only way to express a reset; no
-// literal "magic" value is reserved for it, because that cannot work uniformly
-// (0 TOPN is already a valid pinned value that disables TopN collection, and
-// the BUCKETS/TOPN defaults are system variables that a literal would pin
-// rather than follow).
 type AnalyzeOpt struct {
 	Type  AnalyzeOptionType
 	Value ValueExpr
@@ -111,14 +97,10 @@ type AnalyzeOpt struct {
 
 // Restore implements Node interface.
 func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("ANALYZE ")
-	if n.NoWriteToBinLog {
-		ctx.WriteKeyWord("NO_WRITE_TO_BINLOG ")
-	}
 	if n.Incremental {
-		ctx.WriteKeyWord("INCREMENTAL TABLE ")
+		ctx.WriteKeyWord("ANALYZE INCREMENTAL TABLE ")
 	} else {
-		ctx.WriteKeyWord("TABLE ")
+		ctx.WriteKeyWord("ANALYZE TABLE ")
 	}
 	for i, table := range n.TableNames {
 		if i != 0 {
@@ -152,11 +134,11 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 		}
 	}
 	switch n.ColumnChoice {
-	case AllColumns:
+	case model.AllColumns:
 		ctx.WriteKeyWord(" ALL COLUMNS")
-	case PredicateColumns:
+	case model.PredicateColumns:
 		ctx.WriteKeyWord(" PREDICATE COLUMNS")
-	case ColumnList:
+	case model.ColumnList:
 		ctx.WriteKeyWord(" COLUMNS ")
 		for i, columnName := range n.ColumnNames {
 			if i != 0 {
@@ -182,11 +164,7 @@ func (n *AnalyzeTableStmt) Restore(ctx *format.RestoreCtx) error {
 			if i != 0 {
 				ctx.WritePlain(",")
 			}
-			if opt.Value == nil {
-				ctx.WriteKeyWord(" DEFAULT ")
-			} else {
-				ctx.WritePlainf(" %v ", opt.Value.GetValue())
-			}
+			ctx.WritePlainf(" %v ", opt.Value.GetValue())
 			ctx.WritePlain(AnalyzeOptionString[opt.Type])
 		}
 	}
@@ -216,7 +194,7 @@ type DropStatsStmt struct {
 	stmtNode
 
 	Tables         []*TableName
-	PartitionNames []CIStr
+	PartitionNames []model.CIStr
 	IsGlobalStats  bool
 }
 
@@ -365,175 +343,4 @@ func (n *UnlockStatsStmt) Accept(v Visitor) (Node, bool) {
 		n.Tables[i] = node.(*TableName)
 	}
 	return v.Leave(n)
-}
-
-// RefreshStatsStmt is the statement node for refreshing statistics.
-// It is used to refresh the statistics of a table, database, or all databases.
-// For example:
-// REFRESH STATS table1, db1.*
-// REFRESH STATS *.*
-type RefreshStatsStmt struct {
-	stmtNode
-
-	RefreshObjects []*StatsObject
-	// RefreshMode is non-nil when a refresh strategy is explicitly specified.
-	RefreshMode *RefreshStatsMode
-	// IsClusterWide indicates whether the refresh operation is for the entire cluster.
-	IsClusterWide bool
-}
-
-// RefreshStatsMode represents the refresh strategy requested by the user.
-type RefreshStatsMode int
-
-const (
-	// RefreshStatsModeLite forces a lite statistics refresh.
-	// Same as lite-init-stats=true in the configuration file.
-	RefreshStatsModeLite RefreshStatsMode = iota
-
-	// RefreshStatsModeFull forces a full statistics refresh.
-	// Same as lite-init-stats=false in the configuration file.
-	RefreshStatsModeFull
-)
-
-func (n *RefreshStatsStmt) Restore(ctx *format.RestoreCtx) error {
-	ctx.WriteKeyWord("REFRESH STATS ")
-	for index, refreshObject := range n.RefreshObjects {
-		if index != 0 {
-			ctx.WritePlain(", ")
-		}
-		if err := refreshObject.Restore(ctx); err != nil {
-			return errors.Annotatef(err, "An error occurred while restore RefreshStatsStmt.RefreshObjects[%d]", index)
-		}
-	}
-	if n.RefreshMode != nil {
-		switch *n.RefreshMode {
-		case RefreshStatsModeLite:
-			ctx.WritePlain(" ")
-			ctx.WriteKeyWord("LITE")
-		case RefreshStatsModeFull:
-			ctx.WritePlain(" ")
-			ctx.WriteKeyWord("FULL")
-		default:
-			return errors.Errorf("invalid refresh stats mode: %d", *n.RefreshMode)
-		}
-	}
-	if n.IsClusterWide {
-		ctx.WritePlain(" ")
-		ctx.WriteKeyWord("CLUSTER")
-	}
-	return nil
-}
-
-func (n *RefreshStatsStmt) Accept(v Visitor) (Node, bool) {
-	newNode, skipChildren := v.Enter(n)
-	if skipChildren {
-		return v.Leave(newNode)
-	}
-	n = newNode.(*RefreshStatsStmt)
-	return v.Leave(n)
-}
-
-func (n *RefreshStatsStmt) Dedup() {
-	n.RefreshObjects = dedupStatsObjects(n.RefreshObjects)
-}
-
-// DedupFlushObjects removes duplicate or shadowed scoped objects for FLUSH STATS_DELTA.
-func (n *FlushStmt) DedupFlushObjects() {
-	n.FlushObjects = dedupStatsObjects(n.FlushObjects)
-}
-
-func dedupStatsObjects(objects []*StatsObject) []*StatsObject {
-	if len(objects) == 0 {
-		return objects
-	}
-
-	type tableKey struct {
-		dbName    string
-		tableName string
-	}
-
-	dbSeen := make(map[string]struct{})
-	tableSeen := make(map[tableKey]struct{})
-	result := make([]*StatsObject, 0, len(objects))
-
-	for _, obj := range objects {
-		switch obj.StatsObjectScope {
-		// Global scope supersedes everything else. Keep the first global target only.
-		case StatsObjectScopeGlobal:
-			return []*StatsObject{obj}
-		case StatsObjectScopeDatabase:
-			dbKey := obj.DBName.L
-			if _, exists := dbSeen[dbKey]; exists {
-				continue
-			}
-			dbSeen[dbKey] = struct{}{}
-
-			// Remove tables from the same database that might have been added earlier.
-			filtered := result[:0]
-			for _, existing := range result {
-				if existing.StatsObjectScope == StatsObjectScopeTable {
-					existingDBKey := existing.DBName.L
-					if existingDBKey != "" && existingDBKey == dbKey {
-						tblKey := tableKey{dbName: existingDBKey, tableName: existing.TableName.L}
-						delete(tableSeen, tblKey)
-						continue
-					}
-				}
-				filtered = append(filtered, existing)
-			}
-			result = append(filtered, obj)
-		case StatsObjectScopeTable:
-			dbKey := obj.DBName.L
-			if dbKey != "" {
-				if _, exists := dbSeen[dbKey]; exists {
-					continue
-				}
-			}
-			tblKey := tableKey{dbName: dbKey, tableName: obj.TableName.L}
-			if _, exists := tableSeen[tblKey]; exists {
-				continue
-			}
-			tableSeen[tblKey] = struct{}{}
-			result = append(result, obj)
-		}
-	}
-
-	return result
-}
-
-type StatsObjectScopeType int
-
-const (
-	// StatsObjectScopeTable is the scope of a table.
-	StatsObjectScopeTable StatsObjectScopeType = iota + 1
-	// StatsObjectScopeDatabase is the scope of a database.
-	StatsObjectScopeDatabase
-	// StatsObjectScopeGlobal is the scope of all databases.
-	StatsObjectScopeGlobal
-)
-
-type StatsObject struct {
-	StatsObjectScope StatsObjectScopeType
-	DBName           CIStr
-	TableName        CIStr
-}
-
-func (o *StatsObject) Restore(ctx *format.RestoreCtx) error {
-	switch o.StatsObjectScope {
-	case StatsObjectScopeTable:
-		if o.DBName.O != "" {
-			ctx.WriteName(o.DBName.O)
-			ctx.WritePlain(".")
-		}
-		ctx.WriteName(o.TableName.O)
-	case StatsObjectScopeDatabase:
-		ctx.WriteName(o.DBName.O)
-		ctx.WritePlain(".*")
-	case StatsObjectScopeGlobal:
-		ctx.WritePlain("*.*")
-	default:
-		// This should never happen.
-		return errors.Errorf("invalid stats object scope: %d", o.StatsObjectScope)
-	}
-	return nil
 }

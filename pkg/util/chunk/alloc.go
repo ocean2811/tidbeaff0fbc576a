@@ -16,9 +16,9 @@ package chunk
 
 import (
 	"math"
-	"sync"
 
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
 )
 
 // Allocator is an interface defined to reduce object allocation.
@@ -75,6 +75,10 @@ type columnList struct {
 	allocColumns []*Column
 }
 
+func (cList *columnList) add(col *Column) {
+	cList.freeColumns = append(cList.freeColumns, col)
+}
+
 // columnList Len Get the number of elements in the list
 func (cList *columnList) Len() int {
 	return len(cList.freeColumns) + len(cList.allocColumns)
@@ -97,7 +101,7 @@ func (a *allocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int)
 	}
 
 	// Init the chunk fields.
-	chk.capacity = min(capacity, maxChunkSize)
+	chk.capacity = mathutil.Min(capacity, maxChunkSize)
 	chk.requiredRows = maxChunkSize
 	// Allocate the chunk columns from the pool column allocator.
 	for _, f := range fields {
@@ -143,7 +147,7 @@ func checkColumnType(id int, col *Column) bool {
 		return false
 	}
 
-	if id == VarElemLen {
+	if id == varElemLen {
 		//Take up too much memory,
 		if cap(col.data) > MaxCachedLen {
 			return false
@@ -208,7 +212,7 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 		return
 	}
 	typeSize := col.typeSize()
-	if typeSize <= 0 && typeSize != VarElemLen {
+	if typeSize <= 0 && typeSize != varElemLen {
 		return
 	}
 
@@ -224,6 +228,11 @@ func (alloc *poolColumnAllocator) put(col *Column) {
 	}
 }
 
+// freeList is defined as a map, rather than a list, because when recycling chunk
+// columns, there could be duplicated one: some of the chunk columns are just the
+// reference to the others.
+type freeList map[*Column]struct{}
+
 func (cList *columnList) empty() bool {
 	return len(cList.freeColumns) == 0
 }
@@ -233,103 +242,3 @@ func (cList *columnList) push(col *Column) {
 		cList.allocColumns = append(cList.allocColumns, col)
 	}
 }
-
-var _ Allocator = &syncAllocator{}
-
-// syncAllocator uses a mutex to protect the allocator.
-type syncAllocator struct {
-	mu    sync.Mutex
-	alloc Allocator
-}
-
-// NewSyncAllocator creates the synchronized version of the `alloc`
-func NewSyncAllocator(alloc Allocator) Allocator {
-	return &syncAllocator{
-		alloc: alloc,
-	}
-}
-
-// Alloc implements `Allocator` for `*syncAllocator`
-func (s *syncAllocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.alloc.Alloc(fields, capacity, maxChunkSize)
-}
-
-// CheckReuseAllocSize implements `Allocator` for `*syncAllocator`
-func (s *syncAllocator) CheckReuseAllocSize() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	return s.alloc.CheckReuseAllocSize()
-}
-
-// Reset implements `Allocator` for `*syncAllocator`
-func (s *syncAllocator) Reset() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.alloc.Reset()
-}
-
-var _ Allocator = &reuseHookAllocator{}
-
-// reuseHookAllocator will run the function hook when it allocates the first chunk from reused part
-type reuseHookAllocator struct {
-	once sync.Once
-	f    func()
-
-	alloc Allocator
-}
-
-// NewReuseHookAllocator creates an allocator, which will call the function `f` when the first reused chunk is allocated.
-func NewReuseHookAllocator(alloc Allocator, f func()) Allocator {
-	return &reuseHookAllocator{
-		f:     f,
-		alloc: alloc,
-	}
-}
-
-// Alloc implements `Allocator` for `*reuseHookAllocator`
-func (r *reuseHookAllocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
-	if r.alloc.CheckReuseAllocSize() {
-		r.once.Do(r.f)
-	}
-
-	return r.alloc.Alloc(fields, capacity, maxChunkSize)
-}
-
-// CheckReuseAllocSize implements `Allocator` for `*reuseHookAllocator`
-func (r *reuseHookAllocator) CheckReuseAllocSize() bool {
-	return r.alloc.CheckReuseAllocSize()
-}
-
-// Reset implements `Allocator` for `*reuseHookAllocator`
-func (r *reuseHookAllocator) Reset() {
-	r.alloc.Reset()
-}
-
-var _ Allocator = emptyAllocator{}
-
-type emptyAllocator struct{}
-
-var defaultEmptyAllocator Allocator = emptyAllocator{}
-
-// NewEmptyAllocator creates an empty pool, which will always call `chunk.New` to create a new chunk
-func NewEmptyAllocator() Allocator {
-	return defaultEmptyAllocator
-}
-
-// Alloc implements `Allocator` for `*emptyAllocator`
-func (emptyAllocator) Alloc(fields []*types.FieldType, capacity, maxChunkSize int) *Chunk {
-	return New(fields, capacity, maxChunkSize)
-}
-
-// CheckReuseAllocSize implements `Allocator` for `*emptyAllocator`
-func (emptyAllocator) CheckReuseAllocSize() bool {
-	return false
-}
-
-// Reset implements `Allocator` for `*emptyAllocator`
-func (emptyAllocator) Reset() {}

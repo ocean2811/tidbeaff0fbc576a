@@ -8,24 +8,23 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/checksum"
-	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/mock"
-	"github.com/pingcap/tidb/pkg/distsql"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/backup"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/checksum"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/metautil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
 func getTableInfo(t *testing.T, mock *mock.Cluster, db, table string) *model.TableInfo {
 	info, err := mock.Domain.GetSnapshotInfoSchema(math.MaxUint64)
 	require.NoError(t, err)
-	cDBName := ast.NewCIStr(db)
-	cTableName := ast.NewCIStr(table)
-	tableInfo, err := info.TableByName(context.Background(), cDBName, cTableName)
+	cDBName := model.NewCIStr(db)
+	cTableName := model.NewCIStr(table)
+	tableInfo, err := info.TableByName(cDBName, cTableName)
 	require.NoError(t, err)
 	return tableInfo.Meta()
 }
@@ -44,7 +43,7 @@ func TestChecksumContextDone(t *testing.T) {
 	tk.MustExec("insert into t1 values (10, 10);")
 	tableInfo1 := getTableInfo(t, mock, "test", "t1")
 	exe, err := checksum.NewExecutorBuilder(tableInfo1, math.MaxUint64).
-		SetConcurrency(vardef.DefChecksumTableConcurrency).
+		SetConcurrency(variable.DefChecksumTableConcurrency).
 		Build()
 	require.NoError(t, err)
 
@@ -73,12 +72,12 @@ func TestChecksum(t *testing.T) {
 	tk.MustExec("insert into t1 values (10);")
 	tableInfo1 := getTableInfo(t, mock, "test", "t1")
 	exe1, err := checksum.NewExecutorBuilder(tableInfo1, math.MaxUint64).
-		SetConcurrency(vardef.DefChecksumTableConcurrency).
+		SetConcurrency(variable.DefChecksumTableConcurrency).
 		Build()
 	require.NoError(t, err)
 	require.NoError(t, exe1.Each(func(r *kv.Request) error {
 		require.True(t, r.NotFillCache)
-		require.Equal(t, vardef.DefChecksumTableConcurrency, r.Concurrency)
+		require.Equal(t, variable.DefChecksumTableConcurrency, r.Concurrency)
 		return nil
 	}))
 	require.Equal(t, 1, exe1.Len())
@@ -133,7 +132,7 @@ func TestChecksum(t *testing.T) {
 	require.NoError(t, exe3.Each(func(req *kv.Request) error {
 		if first {
 			first = false
-			ranges, err := distsql.BuildTableRanges(tableInfo3)
+			ranges, err := backup.BuildTableRanges(tableInfo3)
 			require.NoError(t, err)
 			require.Equalf(t, ranges[:1], req.KeyRanges.FirstPartitionRange(), "%v", req.KeyRanges.FirstPartitionRange())
 		}
@@ -142,8 +141,8 @@ func TestChecksum(t *testing.T) {
 
 	exe4, err := checksum.NewExecutorBuilder(tableInfo3, math.MaxUint64).Build()
 	require.NoError(t, err)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/br/pkg/checksum/checksumRetryErr", `1*return(true)`))
-	failpoint.Disable("github.com/pingcap/tidb/br/pkg/checksum/checksumRetryErr")
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/br/pkg/checksum/checksumRetryErr", `1*return(true)`))
+	failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/br/pkg/checksum/checksumRetryErr")
 	resp4, err := exe4.Execute(context.TODO(), mock.Storage.GetClient(), func() {})
 	require.NoError(t, err)
 	require.NotNil(t, resp4)

@@ -1,8 +1,8 @@
 # TiDB Design Documents
 
 - Author(s): [fengou1](http://github.com/fengou1)
-- Discussion PR: https://github.com/pingcap/tidb/issues/28763
-- Tracking Issue: https://github.com/pingcap/tidb/pull/27036
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/issues/28763
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/pull/27036
 
 ## Table of Contents
 
@@ -93,14 +93,14 @@ for each job `ActionCreateTables`, only one schema change, so one schema version
 The feature auto-enabled with batch size 128 to batch create the table. Users can disable the feature by specifying `--ddl-batch-size=0`. The max batch size depends on the txn message size, currently, it configures 8MB by default. 
 
 ## Test Design
-UT: see PRs https://github.com/pingcap/tidb/pull/28763, https://github.com/pingcap/tics/pull/4201, https://github.com/pingcap/tidb/pull/29380
+UT: see PRs https://github.com/ocean2811/tidbeaff0fbc576a/pull/28763, https://github.com/pingcap/tics/pull/4201, https://github.com/ocean2811/tidbeaff0fbc576a/pull/29380
 
 Integration test also covered among CDC, BR, TiDB, binlog, TiFlash etc.
 
 
 ### Compatibility Tests
 
-- Compatibility with binlog, please refer to https://github.com/pingcap/tidb-binlog/pull/1114.
+- Compatibility with binlog, please refer to https://github.com/ocean2811/tidbeaff0fbc576a-binlog/pull/1114.
 - Compatibility with CDC, a regression test made for cdc work with br test. since CDC has a whitelist for unrecognizing ddl job and pulling data from tikv directly so that we did not find regression issues.
 - Compatibility with TiFlash https://github.com/pingcap/tics/pull/4201.
 - Upgrade compatibility: BR + tidb without interface BatchCreateTableWithInfo, the restore falls back to old legacy way that creates table one by one.

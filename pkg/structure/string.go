@@ -19,7 +19,7 @@ import (
 	"strconv"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 )
 
 // Set sets the string value of the key.
@@ -34,7 +34,7 @@ func (t *TxStructure) Set(key []byte, value []byte) error {
 // Get gets the string value of a key.
 func (t *TxStructure) Get(key []byte) ([]byte, error) {
 	ek := t.EncodeStringDataKey(key)
-	value, err := kv.GetValue(context.TODO(), t.reader, ek)
+	value, err := t.reader.Get(context.TODO(), ek)
 	if kv.ErrNotExist.Equal(err) {
 		err = nil
 	}
@@ -65,34 +65,6 @@ func (t *TxStructure) Inc(key []byte, step int64) (int64, error) {
 		err = nil
 	}
 	return n, errors.Trace(err)
-}
-
-// Iterate iterates all keys in the same prefix.
-func (t *TxStructure) Iterate(key, upperBound []byte, fn func(k []byte, v []byte) error) error {
-	dataPrefix := t.EncodeStringDataKey(key)
-	upperBoundDataPrefix := t.EncodeStringDataKey(upperBound)
-	it, err := t.reader.Iter(dataPrefix, upperBoundDataPrefix)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	for it.Valid() {
-		k, err := t.decodeStringDataKey(it.Key())
-		if err != nil {
-			return errors.Trace(err)
-		}
-
-		if err = fn(k, it.Value()); err != nil {
-			return errors.Trace(err)
-		}
-
-		err = it.Next()
-		if err != nil {
-			return errors.Trace(err)
-		}
-	}
-
-	return nil
 }
 
 // Clear removes the string value of the key.

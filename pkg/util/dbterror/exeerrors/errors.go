@@ -15,9 +15,9 @@
 package exeerrors
 
 import (
-	mysql "github.com/pingcap/tidb/pkg/errno"
-	parser_mysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	mysql "github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	parser_mysql "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
 )
 
 // Error instances.
@@ -52,7 +52,6 @@ var (
 	ErrQueryInterrupted                     = dbterror.ClassExecutor.NewStd(mysql.ErrQueryInterrupted)
 	ErrMaxExecTimeExceeded                  = dbterror.ClassExecutor.NewStd(mysql.ErrMaxExecTimeExceeded)
 	ErrResourceGroupQueryRunawayInterrupted = dbterror.ClassExecutor.NewStd(mysql.ErrResourceGroupQueryRunawayInterrupted)
-	ErrQueryExecStopped                     = dbterror.ClassExecutor.NewStd(mysql.ErrQueryExecStopped)
 	ErrResourceGroupQueryRunawayQuarantine  = dbterror.ClassExecutor.NewStd(mysql.ErrResourceGroupQueryRunawayQuarantine)
 	ErrDynamicPrivilegeNotRegistered        = dbterror.ClassExecutor.NewStd(mysql.ErrDynamicPrivilegeNotRegistered)
 	ErrIllegalPrivilegeLevel                = dbterror.ClassExecutor.NewStd(mysql.ErrIllegalPrivilegeLevel)
@@ -61,9 +60,6 @@ var (
 	ErrInstanceScope                        = dbterror.ClassExecutor.NewStd(mysql.ErrInstanceScope)
 	ErrSettingNoopVariable                  = dbterror.ClassExecutor.NewStd(mysql.ErrSettingNoopVariable)
 	ErrLazyUniquenessCheckFailure           = dbterror.ClassExecutor.NewStd(mysql.ErrLazyUniquenessCheckFailure)
-	ErrMemoryExceedForQuery                 = dbterror.ClassExecutor.NewStd(mysql.ErrMemoryExceedForQuery)
-	ErrMemoryExceedForInstance              = dbterror.ClassExecutor.NewStd(mysql.ErrMemoryExceedForInstance)
-	ErrDeleteNotFoundColumn                 = dbterror.ClassExecutor.NewStd(mysql.ErrDeleteNotFoundColumn)
 
 	ErrBRIEBackupFailed               = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEBackupFailed)
 	ErrBRIERestoreFailed              = dbterror.ClassExecutor.NewStd(mysql.ErrBRIERestoreFailed)
@@ -71,6 +67,7 @@ var (
 	ErrBRIEExportFailed               = dbterror.ClassExecutor.NewStd(mysql.ErrBRIEExportFailed)
 	ErrBRJobNotFound                  = dbterror.ClassExecutor.NewStd(mysql.ErrBRJobNotFound)
 	ErrCTEMaxRecursionDepth           = dbterror.ClassExecutor.NewStd(mysql.ErrCTEMaxRecursionDepth)
+	ErrNotSupportedWithSem            = dbterror.ClassOptimizer.NewStd(mysql.ErrNotSupportedWithSem)
 	ErrPluginIsNotLoaded              = dbterror.ClassExecutor.NewStd(mysql.ErrPluginIsNotLoaded)
 	ErrSetPasswordAuthPlugin          = dbterror.ClassExecutor.NewStd(mysql.ErrSetPasswordAuthPlugin)
 	ErrFuncNotEnabled                 = dbterror.ClassExecutor.NewStdErr(mysql.ErrNotSupportedYet, parser_mysql.Message("%-.32s is not supported. To enable this experimental feature, set '%-.32s' in the configuration file.", nil))
@@ -79,16 +76,10 @@ var (
 	ErrPasswordExpireAnonymousUser    = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordExpireAnonymousUser)
 	ErrMustChangePassword             = dbterror.ClassExecutor.NewStd(mysql.ErrMustChangePassword)
 
-	// Dual-password (MySQL 8.0 RETAIN CURRENT PASSWORD / DISCARD OLD PASSWORD) errors.
-	ErrSecondPasswordCannotBeEmpty            = dbterror.ClassExecutor.NewStd(mysql.ErrSecondPasswordCannotBeEmpty)
-	ErrPasswordCannotBeRetainedOnPluginChange = dbterror.ClassExecutor.NewStd(mysql.ErrPasswordCannotBeRetainedOnPluginChange)
-	ErrCurrentPasswordCannotBeRetained        = dbterror.ClassExecutor.NewStd(mysql.ErrCurrentPasswordCannotBeRetained)
-
 	ErrWrongStringLength            = dbterror.ClassDDL.NewStd(mysql.ErrWrongStringLength)
 	ErrUnsupportedFlashbackTmpTable = dbterror.ClassDDL.NewStdErr(mysql.ErrUnsupportedDDLOperation, parser_mysql.Message("Recover/flashback table is not supported on temporary tables", nil))
 	ErrTruncateWrongInsertValue     = dbterror.ClassTable.NewStdErr(mysql.ErrTruncatedWrongValue, parser_mysql.Message("Incorrect %-.32s value: '%-.128s' for column '%.192s' at row %d", nil))
 	ErrExistsInHistoryPassword      = dbterror.ClassExecutor.NewStd(mysql.ErrExistsInHistoryPassword)
-	ErrUserNameNeedPrefix           = dbterror.ClassDDL.NewStdErr(mysql.ErrUsername, parser_mysql.Message("User name must start with `%s.` (use `%s.%s` instead)", nil))
 
 	ErrWarnTooFewRecords              = dbterror.ClassExecutor.NewStd(mysql.ErrWarnTooFewRecords)
 	ErrWarnTooManyRecords             = dbterror.ClassExecutor.NewStd(mysql.ErrWarnTooManyRecords)
@@ -104,11 +95,8 @@ var (
 	ErrInvalidOptionVal               = dbterror.ClassExecutor.NewStd(mysql.ErrInvalidOptionVal)
 	ErrDuplicateOption                = dbterror.ClassExecutor.NewStd(mysql.ErrDuplicateOption)
 	ErrLoadDataUnsupportedOption      = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataUnsupportedOption)
-	ErrLoadDataDuplicateKeyConflict   = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataDuplicateKeyConflict)
 	ErrLoadDataJobNotFound            = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataJobNotFound)
 	ErrLoadDataInvalidOperation       = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataInvalidOperation)
 	ErrLoadDataLocalUnsupportedOption = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataLocalUnsupportedOption)
 	ErrLoadDataPreCheckFailed         = dbterror.ClassExecutor.NewStd(mysql.ErrLoadDataPreCheckFailed)
-
-	ErrMaxKeysReadExceeded = dbterror.ClassExecutor.NewStd(mysql.ErrMaxKeysReadExceeded)
 )

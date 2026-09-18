@@ -21,11 +21,11 @@ import (
 	"github.com/pingcap/badger"
 	"github.com/pingcap/badger/options"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/config"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/pd"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/lockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/pd"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/mvcc"
 )
 
 const (
@@ -110,7 +110,7 @@ func setupStandAlongInnerServer(bundle *mvcc.DBBundle, safePoint *tikv.SafePoint
 
 	store.StartDeadlockDetection(false)
 
-	return tikv.NewServer(rm, pdClient, store, innerServer), nil
+	return tikv.NewServer(rm, store, innerServer), nil
 }
 
 func createDB(subPath string, safePoint *tikv.SafePoint, conf *config.Engine) (*badger.DB, error) {

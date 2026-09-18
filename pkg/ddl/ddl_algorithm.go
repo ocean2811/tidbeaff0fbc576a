@@ -17,8 +17,8 @@ package ddl
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
 )
 
 // AlterAlgorithm is used to store supported alter algorithm.

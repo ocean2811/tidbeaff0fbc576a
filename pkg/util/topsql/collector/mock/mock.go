@@ -19,11 +19,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/topsql/collector"
-	"github.com/pingcap/tidb/pkg/util/topsql/stmtstats"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/collector"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/stmtstats"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -75,13 +75,6 @@ func (c *TopSQLCollector) Collect(stats []collector.SQLCPUTimeRecord) {
 			zap.String("sql", c.sqlMap[string(stmt.SQLDigest)]),
 			zap.Bool("has-plan", len(c.planMap[string(stmt.PlanDigest)]) > 0))
 	}
-}
-
-// BindProcessCPUTimeUpdater implements TopSQLReporter.
-func (*TopSQLCollector) BindProcessCPUTimeUpdater(_ collector.ProcessCPUTimeUpdater) {}
-
-// BindKeyspaceName implements TopSQLReporter.
-func (c *TopSQLCollector) BindKeyspaceName(_ []byte) {
 }
 
 // CollectStmtStatsMap implements stmtstats.Collector.

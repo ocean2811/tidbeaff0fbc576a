@@ -25,6 +25,7 @@ import (
 	"io"
 	"math"
 	"net/http"
+	"net/url"
 	"slices"
 	"strconv"
 	"strings"
@@ -33,22 +34,20 @@ import (
 	"github.com/pingcap/errors"
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/metadef"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	derr "github.com/pingcap/tidb/pkg/store/driver/error"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/placement"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	derr "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver/error"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/pdapi"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 	"github.com/tikv/client-go/v2/tikvrpc"
 	"github.com/tikv/client-go/v2/txnkv/txnlock"
-	pd "github.com/tikv/pd/client/http"
 	"go.uber.org/zap"
 )
 
@@ -67,13 +66,13 @@ type Storage interface {
 	SupportDeleteRange() (supported bool)
 	Name() string
 	Describe() string
-	ShowStatus(ctx context.Context, key string) (any, error)
+	ShowStatus(ctx context.Context, key string) (interface{}, error)
 	GetMemCache() kv.MemManager
 	GetRegionCache() *tikv.RegionCache
 	SendReq(bo *tikv.Backoffer, req *tikvrpc.Request, regionID tikv.RegionVerID, timeout time.Duration) (*tikvrpc.Response, error)
 	GetLockResolver() *txnlock.LockResolver
 	GetSafePointKV() tikv.SafePointKV
-	UpdateTxnSafePointCache(txnSafePoint uint64, now time.Time)
+	UpdateSPCache(cachedSP uint64, cachedTime time.Time)
 	SetOracle(oracle oracle.Oracle)
 	SetTiKVClient(client tikv.Client)
 	GetTiKVClient() tikv.Client
@@ -81,21 +80,12 @@ type Storage interface {
 	GetMinSafeTS(txnScope string) uint64
 	GetLockWaits() ([]*deadlockpb.WaitForEntry, error)
 	GetCodec() tikv.Codec
-	GetPDHTTPClient() pd.Client
-	GetOption(any) (any, bool)
-	SetOption(any, any)
-	GetClusterID() uint64
-	GetKeyspace() string
 }
 
 // Helper is a middleware to get some information from tikv/pd. It can be used for TiDB's http api or mem table.
 type Helper struct {
 	Store       Storage
 	RegionCache *tikv.RegionCache
-	// pdHTTPCli is used to send http request to PD.
-	// This field is lazy initialized in `TryGetPDHTTPClient`,
-	// and should be tagged with the caller ID before using.
-	pdHTTPCli pd.Client
 }
 
 // NewHelper gets a Helper from Storage
@@ -104,30 +94,6 @@ func NewHelper(store Storage) *Helper {
 		Store:       store,
 		RegionCache: store.GetRegionCache(),
 	}
-}
-
-// TryGetPDHTTPClient tries to get a PD HTTP client if it's available.
-func (h *Helper) TryGetPDHTTPClient() (pd.Client, error) {
-	if h.pdHTTPCli != nil {
-		return h.pdHTTPCli, nil
-	}
-	cli := h.Store.GetPDHTTPClient()
-	if cli == nil {
-		return nil, errors.New("pd http client unavailable")
-	}
-	h.pdHTTPCli = cli.WithCallerID("tidb-store-helper")
-	return h.pdHTTPCli, nil
-}
-
-// GetRegions fetches regions for the current store. In keyspace-aware mode, it
-// restricts the scan to the current keyspace to avoid mixing regions from other keyspaces.
-func (h *Helper) GetRegions(ctx context.Context) (*pd.RegionsInfo, error) {
-	pdCli, err := h.TryGetPDHTTPClient()
-	if err != nil {
-		return nil, err
-	}
-	startKey, endKey := h.Store.GetCodec().EncodeRegionRange(nil, nil)
-	return pdCli.GetRegionsByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), -1)
 }
 
 // MaxBackoffTimeoutForMvccGet is a derived value from previous implementation possible experiencing value 5000ms.
@@ -310,6 +276,27 @@ func (h *Helper) GetMvccByStartTs(startTS uint64, startKey, endKey kv.Key) (*Mvc
 	}
 }
 
+// StoreHotRegionInfos records all hog region stores.
+// it's the response of PD.
+type StoreHotRegionInfos struct {
+	AsPeer   map[uint64]*HotRegionsStat `json:"as_peer"`
+	AsLeader map[uint64]*HotRegionsStat `json:"as_leader"`
+}
+
+// HotRegionsStat records echo store's hot region.
+// it's the response of PD.
+type HotRegionsStat struct {
+	RegionsStat []RegionStat `json:"statistics"`
+}
+
+// RegionStat records each hot region's statistics
+// it's the response of PD.
+type RegionStat struct {
+	RegionID  uint64  `json:"region_id"`
+	FlowBytes float64 `json:"flow_bytes"`
+	HotDegree int     `json:"hot_degree"`
+}
+
 // RegionMetric presents the final metric output entry.
 type RegionMetric struct {
 	FlowBytes    uint64 `json:"flow_bytes"`
@@ -317,45 +304,29 @@ type RegionMetric struct {
 	Count        int    `json:"region_count"`
 }
 
-// Constants that used to distinguish the hot region info request.
-const (
-	HotRead  = "read"
-	HotWrite = "write"
-)
-
 // ScrapeHotInfo gets the needed hot region information by the url given.
-func (h *Helper) ScrapeHotInfo(ctx context.Context, rw string, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
-	regionMetrics, err := h.FetchHotRegion(ctx, rw)
+func (h *Helper) ScrapeHotInfo(rw string, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
+	regionMetrics, err := h.FetchHotRegion(rw)
 	if err != nil {
 		return nil, err
 	}
-	return h.FetchRegionTableIndex(regionMetrics, is, filter)
+	return h.FetchRegionTableIndex(regionMetrics, allSchemas)
 }
 
 // FetchHotRegion fetches the hot region information from PD's http api.
-func (h *Helper) FetchHotRegion(ctx context.Context, rw string) (map[uint64]RegionMetric, error) {
-	pdCli, err := h.TryGetPDHTTPClient()
-	if err != nil {
-		return nil, err
-	}
-	var regionResp *pd.StoreHotPeersInfos
-	switch rw {
-	case HotRead:
-		regionResp, err = pdCli.GetHotReadRegions(ctx)
-	case HotWrite:
-		regionResp, err = pdCli.GetHotWriteRegions(ctx)
-	}
-	if err != nil {
+func (h *Helper) FetchHotRegion(rw string) (map[uint64]RegionMetric, error) {
+	var regionResp StoreHotRegionInfos
+	if err := h.requestPD("FetchHotRegion", "GET", rw, nil, &regionResp); err != nil {
 		return nil, err
 	}
 	metricCnt := 0
 	for _, hotRegions := range regionResp.AsLeader {
-		metricCnt += len(hotRegions.Stats)
+		metricCnt += len(hotRegions.RegionsStat)
 	}
 	metric := make(map[uint64]RegionMetric, metricCnt)
 	for _, hotRegions := range regionResp.AsLeader {
-		for _, region := range hotRegions.Stats {
-			metric[region.RegionID] = RegionMetric{FlowBytes: uint64(region.ByteRate), MaxHotDegree: region.HotDegree}
+		for _, region := range hotRegions.RegionsStat {
+			metric[region.RegionID] = RegionMetric{FlowBytes: uint64(region.FlowBytes), MaxHotDegree: region.HotDegree}
 		}
 	}
 	return metric, nil
@@ -401,9 +372,10 @@ type HotTableIndex struct {
 }
 
 // FetchRegionTableIndex constructs a map that maps a table to its hot region information by the given raw hot RegionMetric metrics.
-func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) ([]HotTableIndex, error) {
+func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, allSchemas []*model.DBInfo) ([]HotTableIndex, error) {
 	hotTables := make([]HotTableIndex, 0, len(metrics))
 	for regionID, regionMetric := range metrics {
+		regionMetric := regionMetric
 		t := HotTableIndex{RegionID: regionID, RegionMetric: &regionMetric}
 		region, err := h.RegionCache.LocateRegionByID(tikv.NewBackofferWithVars(context.Background(), 500, nil), regionID)
 		if err != nil {
@@ -415,7 +387,7 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infos
 		if err != nil {
 			return nil, err
 		}
-		f := h.FindTableIndexOfRegion(is, hotRange)
+		f := h.FindTableIndexOfRegion(allSchemas, hotRange)
 		if f != nil {
 			t.DbName = f.DBName
 			t.TableName = f.TableName
@@ -430,11 +402,10 @@ func (h *Helper) FetchRegionTableIndex(metrics map[uint64]RegionMetric, is infos
 }
 
 // FindTableIndexOfRegion finds what table is involved in this hot region. And constructs the new frame item for future use.
-func (*Helper) FindTableIndexOfRegion(is infoschema.SchemaAndTable, hotRange *RegionFrameRange) *FrameItem {
-	for _, dbInfo := range is.AllSchemas() {
-		tblInfos, _ := is.SchemaTableInfos(context.Background(), dbInfo.Name)
-		for _, tbl := range tblInfos {
-			if f := findRangeInTable(hotRange, dbInfo, tbl); f != nil {
+func (*Helper) FindTableIndexOfRegion(allSchemas []*model.DBInfo, hotRange *RegionFrameRange) *FrameItem {
+	for _, db := range allSchemas {
+		for _, tbl := range db.Tables {
+			if f := findRangeInTable(hotRange, db, tbl); f != nil {
 				return f
 			}
 		}
@@ -539,7 +510,7 @@ func NewFrameItemFromRegionKey(key []byte) (frame *FrameItem, err error) {
 		} else {
 			_, _, frame.IndexValues, err = tablecodec.DecodeIndexKey(key)
 		}
-		logutil.BgLogger().Warn("decode region key failed", zap.String("key", redact.Key(key)), zap.Error(err))
+		logutil.BgLogger().Warn("decode region key failed", zap.ByteString("key", key), zap.Error(err))
 		// Ignore decode errors.
 		err = nil
 		return
@@ -622,6 +593,81 @@ func (r *RegionFrameRange) GetIndexFrame(tableID, indexID int64, dbName, tableNa
 	return nil
 }
 
+// RegionPeer stores information of one peer.
+type RegionPeer struct {
+	ID        int64 `json:"id"`
+	StoreID   int64 `json:"store_id"`
+	IsLearner bool  `json:"is_learner"`
+}
+
+// RegionEpoch stores the information about its epoch.
+type RegionEpoch struct {
+	ConfVer int64 `json:"conf_ver"`
+	Version int64 `json:"version"`
+}
+
+// RegionPeerStat stores one field `DownSec` which indicates how long it's down than `RegionPeer`.
+type RegionPeerStat struct {
+	Peer    RegionPeer `json:"peer"`
+	DownSec int64      `json:"down_seconds"`
+}
+
+// RegionInfo stores the information of one region.
+type RegionInfo struct {
+	ID              int64            `json:"id"`
+	StartKey        string           `json:"start_key"`
+	EndKey          string           `json:"end_key"`
+	Epoch           RegionEpoch      `json:"epoch"`
+	Peers           []RegionPeer     `json:"peers"`
+	Leader          RegionPeer       `json:"leader"`
+	DownPeers       []RegionPeerStat `json:"down_peers"`
+	PendingPeers    []RegionPeer     `json:"pending_peers"`
+	WrittenBytes    uint64           `json:"written_bytes"`
+	ReadBytes       uint64           `json:"read_bytes"`
+	ApproximateSize int64            `json:"approximate_size"`
+	ApproximateKeys int64            `json:"approximate_keys"`
+
+	ReplicationStatus *ReplicationStatus `json:"replication_status,omitempty"`
+}
+
+// RegionsInfo stores the information of regions.
+type RegionsInfo struct {
+	Count   int64        `json:"count"`
+	Regions []RegionInfo `json:"regions"`
+}
+
+// NewRegionsInfo returns RegionsInfo
+func NewRegionsInfo() *RegionsInfo {
+	return &RegionsInfo{
+		Regions: make([]RegionInfo, 0),
+	}
+}
+
+// Merge merged 2 regionsInfo into one
+func (r *RegionsInfo) Merge(other *RegionsInfo) *RegionsInfo {
+	newRegionsInfo := &RegionsInfo{
+		Regions: make([]RegionInfo, 0, r.Count+other.Count),
+	}
+	m := make(map[int64]RegionInfo, r.Count+other.Count)
+	for _, region := range r.Regions {
+		m[region.ID] = region
+	}
+	for _, region := range other.Regions {
+		m[region.ID] = region
+	}
+	for _, region := range m {
+		newRegionsInfo.Regions = append(newRegionsInfo.Regions, region)
+	}
+	newRegionsInfo.Count = int64(len(newRegionsInfo.Regions))
+	return newRegionsInfo
+}
+
+// ReplicationStatus represents the replication mode status of the region.
+type ReplicationStatus struct {
+	State   string `json:"state"`
+	StateID int64  `json:"state_id"`
+}
+
 // TableInfo stores the information of a table or an index
 type TableInfo struct {
 	DB          *model.DBInfo
@@ -633,13 +679,13 @@ type TableInfo struct {
 }
 
 type withKeyRange interface {
-	GetStartKey() string
-	GetEndKey() string
+	getStartKey() string
+	getEndKey() string
 }
 
 // isIntersecting returns true if x and y intersect.
 func isIntersecting(x, y withKeyRange) bool {
-	return isIntersectingKeyRange(x, y.GetStartKey(), y.GetEndKey())
+	return isIntersectingKeyRange(x, y.getStartKey(), y.getEndKey())
 }
 
 // isIntersectingKeyRange returns true if [startKey, endKey) intersect with x.
@@ -649,48 +695,46 @@ func isIntersectingKeyRange(x withKeyRange, startKey, endKey string) bool {
 
 // isBehind returns true is x is behind y
 func isBehind(x, y withKeyRange) bool {
-	return isBehindKeyRange(x, y.GetStartKey(), y.GetEndKey())
+	return isBehindKeyRange(x, y.getStartKey(), y.getEndKey())
 }
 
 // IsBefore returns true is x is before [startKey, endKey)
 func isBeforeKeyRange(x withKeyRange, startKey, _ string) bool {
-	return x.GetEndKey() != "" && x.GetEndKey() <= startKey
+	return x.getEndKey() != "" && x.getEndKey() <= startKey
 }
 
 // IsBehind returns true is x is behind [startKey, endKey)
 func isBehindKeyRange(x withKeyRange, _, endKey string) bool {
-	return endKey != "" && x.GetStartKey() >= endKey
+	return endKey != "" && x.getStartKey() >= endKey
 }
 
-// TableInfoWithKeyRange stores table or index information with its key range.
+func (r *RegionInfo) getStartKey() string { return r.StartKey }
+func (r *RegionInfo) getEndKey() string   { return r.EndKey }
+
+// TableInfoWithKeyRange stores table or index informations with its key range.
 type TableInfoWithKeyRange struct {
 	*TableInfo
 	StartKey string
 	EndKey   string
 }
 
-// GetStartKey implements `withKeyRange` interface.
-func (t TableInfoWithKeyRange) GetStartKey() string { return t.StartKey }
+func (t TableInfoWithKeyRange) getStartKey() string { return t.StartKey }
+func (t TableInfoWithKeyRange) getEndKey() string   { return t.EndKey }
 
-// GetEndKey implements `withKeyRange` interface.
-func (t TableInfoWithKeyRange) GetEndKey() string { return t.EndKey }
-
-// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table with the specified codec.
-// It is exported only for test.
-func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
-	return newTableInfoWithKeyRange(db, table, nil, nil, regionKeyCodec)
+// NewTableWithKeyRange constructs TableInfoWithKeyRange for given table, it is exported only for test.
+func NewTableWithKeyRange(db *model.DBInfo, table *model.TableInfo) TableInfoWithKeyRange {
+	return newTableInfoWithKeyRange(db, table, nil, nil)
 }
 
-// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index with the specified codec.
-// It is exported only for test.
-func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
-	return newTableInfoWithKeyRange(db, table, nil, index, regionKeyCodec)
+// NewIndexWithKeyRange constructs TableInfoWithKeyRange for given index, it is exported only for test.
+func NewIndexWithKeyRange(db *model.DBInfo, table *model.TableInfo, index *model.IndexInfo) TableInfoWithKeyRange {
+	return newTableInfoWithKeyRange(db, table, nil, index)
 }
 
 // FilterMemDBs filters memory databases in the input schemas.
 func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo) {
 	for _, dbInfo := range oldSchemas {
-		if metadef.IsMemDB(dbInfo.Name.L) {
+		if util.IsMemDB(dbInfo.Name.L) {
 			continue
 		}
 		schemas = append(schemas, dbInfo)
@@ -701,11 +745,11 @@ func (*Helper) FilterMemDBs(oldSchemas []*model.DBInfo) (schemas []*model.DBInfo
 // GetRegionsTableInfo returns a map maps region id to its tables or indices.
 // Assuming tables or indices key ranges never intersect.
 // Regions key ranges can intersect.
-func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) map[int64][]TableInfo {
-	tables := h.GetTablesInfoWithKeyRange(is, filter)
+func (h *Helper) GetRegionsTableInfo(regionsInfo *RegionsInfo, schemas []*model.DBInfo) map[int64][]TableInfo {
+	tables := h.GetTablesInfoWithKeyRange(schemas)
 
-	regions := make([]*pd.RegionInfo, 0, len(regionsInfo.Regions))
-	for i := range regionsInfo.Regions {
+	regions := make([]*RegionInfo, 0, len(regionsInfo.Regions))
+	for i := 0; i < len(regionsInfo.Regions); i++ {
 		regions = append(regions, &regionsInfo.Regions[i])
 	}
 
@@ -713,7 +757,7 @@ func (h *Helper) GetRegionsTableInfo(regionsInfo *pd.RegionsInfo, is infoschema.
 	return tableInfos
 }
 
-func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partition *model.PartitionDefinition, index *model.IndexInfo, regionKeyCodec tikv.Codec) TableInfoWithKeyRange {
+func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partition *model.PartitionDefinition, index *model.IndexInfo) TableInfoWithKeyRange {
 	var sk, ek []byte
 	if partition == nil && index == nil {
 		sk, ek = tablecodec.GetTableHandleKeyRange(table.ID)
@@ -724,9 +768,8 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 	} else {
 		sk, ek = tablecodec.GetTableIndexKeyRange(partition.ID, index.ID)
 	}
-	encodedSk, encodedEk := regionKeyCodec.EncodeRegionRange(sk, ek)
-	startKey := bytesKeyToHex(encodedSk)
-	endKey := bytesKeyToHex(encodedEk)
+	startKey := bytesKeyToHex(codec.EncodeBytes(nil, sk))
+	endKey := bytesKeyToHex(codec.EncodeBytes(nil, ek))
 	return TableInfoWithKeyRange{
 		&TableInfo{
 			DB:          db,
@@ -742,53 +785,44 @@ func newTableInfoWithKeyRange(db *model.DBInfo, table *model.TableInfo, partitio
 }
 
 // GetTablesInfoWithKeyRange returns a slice containing tableInfos with key ranges of all tables in schemas.
-func (h *Helper) GetTablesInfoWithKeyRange(is infoschema.SchemaAndTable, filter func([]*model.DBInfo) []*model.DBInfo) []TableInfoWithKeyRange {
+func (*Helper) GetTablesInfoWithKeyRange(schemas []*model.DBInfo) []TableInfoWithKeyRange {
 	tables := []TableInfoWithKeyRange{}
-	dbInfos := is.AllSchemas()
-	if filter != nil {
-		dbInfos = filter(dbInfos)
-	}
-	regionKeyCodec := tikv.NewCodecV1(tikv.ModeTxn)
-	if h.Store != nil {
-		regionKeyCodec = h.Store.GetCodec()
-	}
-	for _, db := range dbInfos {
-		tableInfos, _ := is.SchemaTableInfos(context.Background(), db.Name)
-		for _, table := range tableInfos {
+	for _, db := range schemas {
+		for _, table := range db.Tables {
 			if table.Partition != nil {
 				for i := range table.Partition.Definitions {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil, regionKeyCodec))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], nil))
 				}
 			} else {
-				tables = append(tables, newTableInfoWithKeyRange(db, table, nil, nil, regionKeyCodec))
+				tables = append(tables, newTableInfoWithKeyRange(db, table, nil, nil))
 			}
 			for _, index := range table.Indices {
 				if table.Partition == nil || index.Global {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, nil, index, regionKeyCodec))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, nil, index))
 					continue
 				}
 				for i := range table.Partition.Definitions {
-					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], index, regionKeyCodec))
+					tables = append(tables, newTableInfoWithKeyRange(db, table, &table.Partition.Definitions[i], index))
 				}
 			}
 		}
 	}
 	slices.SortFunc(tables, func(i, j TableInfoWithKeyRange) int {
-		return cmp.Compare(i.StartKey, j.StartKey)
+		return cmp.Compare(i.getStartKey(), j.getStartKey())
 	})
 	return tables
 }
 
 // ParseRegionsTableInfos parses the tables or indices in regions according to key range.
-func (*Helper) ParseRegionsTableInfos(regionsInfo []*pd.RegionInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
+func (*Helper) ParseRegionsTableInfos(regionsInfo []*RegionInfo, tables []TableInfoWithKeyRange) map[int64][]TableInfo {
 	tableInfos := make(map[int64][]TableInfo, len(regionsInfo))
 
 	if len(tables) == 0 || len(regionsInfo) == 0 {
 		return tableInfos
 	}
 	// tables is sorted in GetTablesInfoWithKeyRange func
-	slices.SortFunc(regionsInfo, func(i, j *pd.RegionInfo) int {
-		return cmp.Compare(i.StartKey, j.StartKey)
+	slices.SortFunc(regionsInfo, func(i, j *RegionInfo) int {
+		return cmp.Compare(i.getStartKey(), j.getStartKey())
 	})
 
 	idx := 0
@@ -814,13 +848,178 @@ func bytesKeyToHex(key []byte) string {
 	return strings.ToUpper(hex.EncodeToString(key))
 }
 
+// GetRegionsInfo gets the region information of current store by using PD's api.
+func (h *Helper) GetRegionsInfo() (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GetRegions", "GET", pdapi.Regions, nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
+// GetStoreRegionsInfo gets the region in given store.
+func (h *Helper) GetStoreRegionsInfo(storeID uint64) (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GetStoreRegions", "GET", pdapi.StoreRegions+"/"+strconv.FormatUint(storeID, 10), nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
+// GetRegionInfoByID gets the region information of the region ID by using PD's api.
+func (h *Helper) GetRegionInfoByID(regionID uint64) (*RegionInfo, error) {
+	var regionInfo RegionInfo
+	err := h.requestPD("GetRegionByID", "GET", pdapi.RegionByID+"/"+strconv.FormatUint(regionID, 10), nil, &regionInfo)
+	return &regionInfo, err
+}
+
+// GetRegionsInfoByRange scans region by key range
+func (h *Helper) GetRegionsInfoByRange(sk, ek []byte) (*RegionsInfo, error) {
+	var regionsInfo RegionsInfo
+	err := h.requestPD("GetRegionByRange", "GET", fmt.Sprintf("%v?key=%s&end_key=%s&limit=-1", pdapi.ScanRegions,
+		url.QueryEscape(string(sk)), url.QueryEscape(string(ek))), nil, &regionsInfo)
+	return &regionsInfo, err
+}
+
+// GetRegionByKey gets regioninfo by key
+func (h *Helper) GetRegionByKey(k []byte) (*RegionInfo, error) {
+	var regionInfo RegionInfo
+	err := h.requestPD("GetRegionByKey", "GET", fmt.Sprintf("%v/%v", pdapi.RegionKey, url.QueryEscape(string(k))), nil, &regionInfo)
+	return &regionInfo, err
+}
+
+// request PD API, decode the response body into res
+func (h *Helper) requestPD(apiName, method, uri string, body io.Reader, res interface{}) error {
+	etcd, ok := h.Store.(kv.EtcdBackend)
+	if !ok {
+		return errors.WithStack(errors.New("not implemented"))
+	}
+	pdHosts, err := etcd.EtcdAddrs()
+	if err != nil {
+		return err
+	}
+	if len(pdHosts) == 0 {
+		return errors.New("pd unavailable")
+	}
+	for _, host := range pdHosts {
+		err = requestPDForOneHost(host, apiName, method, uri, body, res)
+		if err == nil {
+			break
+		}
+		// Try to request from another PD node when some nodes may down.
+	}
+	return err
+}
+
+func requestPDForOneHost(host, apiName, method, uri string, body io.Reader, res interface{}) error {
+	urlVar := fmt.Sprintf("%s://%s%s", util.InternalHTTPSchema(), host, uri)
+	logutil.BgLogger().Debug("RequestPD URL", zap.String("url", urlVar))
+	req, err := http.NewRequest(method, urlVar, body)
+	if err != nil {
+		logutil.BgLogger().Warn("requestPDForOneHost new request failed",
+			zap.String("url", urlVar), zap.Error(err))
+		return errors.Trace(err)
+	}
+	start := time.Now()
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		metrics.PDAPIRequestCounter.WithLabelValues(apiName, "network error").Inc()
+		logutil.BgLogger().Warn("requestPDForOneHost do request failed",
+			zap.String("url", urlVar), zap.Error(err))
+		return errors.Trace(err)
+	}
+	metrics.PDAPIExecutionHistogram.WithLabelValues(apiName).Observe(time.Since(start).Seconds())
+	metrics.PDAPIRequestCounter.WithLabelValues(apiName, resp.Status).Inc()
+	defer func() {
+		err = resp.Body.Close()
+		if err != nil {
+			logutil.BgLogger().Warn("requestPDForOneHost close body failed",
+				zap.String("url", urlVar), zap.Error(err))
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		logFields := []zap.Field{
+			zap.String("url", urlVar),
+			zap.String("status", resp.Status),
+		}
+
+		bs, readErr := io.ReadAll(resp.Body)
+		if readErr != nil {
+			logFields = append(logFields, zap.NamedError("readBodyError", err))
+		} else {
+			logFields = append(logFields, zap.ByteString("body", bs))
+		}
+
+		logutil.BgLogger().Warn("requestPDForOneHost failed with non 200 status", logFields...)
+		return errors.Errorf("PD request failed with status: '%s'", resp.Status)
+	}
+
+	err = json.NewDecoder(resp.Body).Decode(res)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	return nil
+}
+
+// StoresStat stores all information get from PD's api.
+type StoresStat struct {
+	Count  int         `json:"count"`
+	Stores []StoreStat `json:"stores"`
+}
+
+// StoreStat stores information of one store.
+type StoreStat struct {
+	Store  StoreBaseStat   `json:"store"`
+	Status StoreDetailStat `json:"status"`
+}
+
+// StoreBaseStat stores the basic information of one store.
+type StoreBaseStat struct {
+	ID             int64        `json:"id"`
+	Address        string       `json:"address"`
+	State          int64        `json:"state"`
+	StateName      string       `json:"state_name"`
+	Version        string       `json:"version"`
+	Labels         []StoreLabel `json:"labels"`
+	StatusAddress  string       `json:"status_address"`
+	GitHash        string       `json:"git_hash"`
+	StartTimestamp int64        `json:"start_timestamp"`
+}
+
+// StoreLabel stores the information of one store label.
+type StoreLabel struct {
+	Key   string `json:"key"`
+	Value string `json:"value"`
+}
+
+// StoreDetailStat stores the detail information of one store.
+type StoreDetailStat struct {
+	Capacity        string    `json:"capacity"`
+	Available       string    `json:"available"`
+	LeaderCount     int64     `json:"leader_count"`
+	LeaderWeight    float64   `json:"leader_weight"`
+	LeaderScore     float64   `json:"leader_score"`
+	LeaderSize      int64     `json:"leader_size"`
+	RegionCount     int64     `json:"region_count"`
+	RegionWeight    float64   `json:"region_weight"`
+	RegionScore     float64   `json:"region_score"`
+	RegionSize      int64     `json:"region_size"`
+	StartTs         time.Time `json:"start_ts"`
+	LastHeartbeatTs time.Time `json:"last_heartbeat_ts"`
+	Uptime          string    `json:"uptime"`
+}
+
+// GetStoresStat gets the TiKV store information by accessing PD's api.
+func (h *Helper) GetStoresStat() (*StoresStat, error) {
+	var storesStat StoresStat
+	err := h.requestPD("GetStoresStat", "GET", pdapi.Stores, nil, &storesStat)
+	return &storesStat, err
+}
+
 // GetPDAddr return the PD Address.
 func (h *Helper) GetPDAddr() ([]string, error) {
 	etcd, ok := h.Store.(kv.EtcdBackend)
 	if !ok {
 		return nil, errors.New("not implemented")
 	}
-	pdAddrs, err := etcd.GetPDAddrs()
+	pdAddrs, err := etcd.EtcdAddrs()
 	if err != nil {
 		return nil, err
 	}
@@ -830,11 +1029,21 @@ func (h *Helper) GetPDAddr() ([]string, error) {
 	return pdAddrs, nil
 }
 
-// GetPDRegionStats get the RegionStats by tableID from PD by HTTP API.
-func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexStats bool) (*pd.RegionStats, error) {
-	pdCli, err := h.TryGetPDHTTPClient()
+// PDRegionStats is the json response from PD.
+type PDRegionStats struct {
+	Count            int            `json:"count"`
+	EmptyCount       int            `json:"empty_count"`
+	StorageSize      int64          `json:"storage_size"`
+	StorageKeys      int64          `json:"storage_keys"`
+	StoreLeaderCount map[uint64]int `json:"store_leader_count"`
+	StorePeerCount   map[uint64]int `json:"store_peer_count"`
+}
+
+// GetPDRegionStats get the RegionStats by tableID.
+func (h *Helper) GetPDRegionStats(tableID int64, stats *PDRegionStats, noIndexStats bool) error {
+	pdAddrs, err := h.GetPDAddr()
 	if err != nil {
-		return nil, err
+		return errors.Trace(err)
 	}
 
 	var startKey, endKey []byte
@@ -845,9 +1054,173 @@ func (h *Helper) GetPDRegionStats(ctx context.Context, tableID int64, noIndexSta
 		startKey = tablecodec.EncodeTablePrefix(tableID)
 		endKey = kv.Key(startKey).PrefixNext()
 	}
-	startKey, endKey = h.Store.GetCodec().EncodeRegionRange(startKey, endKey)
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
 
-	return pdCli.GetRegionStatusByKeyRange(ctx, pd.NewKeyRange(startKey, endKey), false)
+	statURL := fmt.Sprintf("%s://%s/pd/api/v1/stats/region?start_key=%s&end_key=%s",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		url.QueryEscape(string(startKey)),
+		url.QueryEscape(string(endKey)))
+
+	resp, err := util.InternalHTTPClient().Get(statURL)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			return errors.Errorf("GetPDRegionStats %d: %s", resp.StatusCode, err)
+		}
+		return errors.Errorf("GetPDRegionStats %d: %s", resp.StatusCode, string(body))
+	}
+	dec := json.NewDecoder(resp.Body)
+
+	return dec.Decode(stats)
+}
+
+// DeletePlacementRule is to delete placement rule for certain group.
+func (h *Helper) DeletePlacementRule(group string, ruleID string) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	deleteURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule/%v/%v",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		group,
+		ruleID,
+	)
+
+	req, err := http.NewRequest("DELETE", deleteURL, nil)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	resp, err := util.InternalHTTPClient().Do(req)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("DeletePlacementRule returns error")
+	}
+	return nil
+}
+
+// SetPlacementRule is a helper function to set placement rule.
+func (h *Helper) SetPlacementRule(rule placement.Rule) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	m, _ := json.Marshal(rule)
+
+	postURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rule",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+	)
+	buf := bytes.NewBuffer(m)
+	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", buf)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+	if resp.StatusCode != http.StatusOK {
+		return errors.New("SetPlacementRule returns error")
+	}
+	return nil
+}
+
+// GetGroupRules to get all placement rule in a certain group.
+func (h *Helper) GetGroupRules(group string) ([]placement.Rule, error) {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	getURL := fmt.Sprintf("%s://%s/pd/api/v1/config/rules/group/%s",
+		util.InternalHTTPSchema(),
+		pdAddrs[0],
+		group,
+	)
+
+	resp, err := util.InternalHTTPClient().Get(getURL)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, errors.New("GetGroupRules returns error")
+	}
+
+	buf := new(bytes.Buffer)
+	_, err = buf.ReadFrom(resp.Body)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	var rules []placement.Rule
+	err = json.Unmarshal(buf.Bytes(), &rules)
+	if err != nil {
+		return nil, errors.Trace(err)
+	}
+
+	return rules, nil
+}
+
+// PostAccelerateSchedule sends `regions/accelerate-schedule` request.
+func (h *Helper) PostAccelerateSchedule(tableID int64) error {
+	pdAddrs, err := h.GetPDAddr()
+	if err != nil {
+		return errors.Trace(err)
+	}
+	startKey := tablecodec.GenTableRecordPrefix(tableID)
+	endKey := tablecodec.EncodeTablePrefix(tableID + 1)
+	startKey = codec.EncodeBytes([]byte{}, startKey)
+	endKey = codec.EncodeBytes([]byte{}, endKey)
+
+	postURL := fmt.Sprintf("%s://%s/pd/api/v1/regions/accelerate-schedule",
+		util.InternalHTTPSchema(),
+		pdAddrs[0])
+
+	input := map[string]string{
+		"start_key": url.QueryEscape(string(startKey)),
+		"end_key":   url.QueryEscape(string(endKey)),
+	}
+	v, err := json.Marshal(input)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	resp, err := util.InternalHTTPClient().Post(postURL, "application/json", bytes.NewBuffer(v))
+	if err != nil {
+		return errors.Trace(err)
+	}
+	defer func() {
+		if err = resp.Body.Close(); err != nil {
+			logutil.BgLogger().Error("err", zap.Error(err))
+		}
+	}()
+	return nil
 }
 
 // GetTiFlashTableIDFromEndKey computes tableID from pd rule's endKey.
@@ -901,9 +1274,9 @@ func ComputeTiFlashStatus(reader *bufio.Reader, regionReplica *map[int64]int) er
 	return nil
 }
 
-// CollectTiFlashStatusWithCtx queries sync status of one table from a TiFlash store.
-// `regionReplica` is a map from RegionID to count of TiFlash replicas in this region.
-func CollectTiFlashStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
+// CollectTiFlashStatus query sync status of one table from TiFlash store.
+// `regionReplica` is a map from RegionID to count of TiFlash Replicas in this region.
+func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
 	// The new query schema is like: http://<host>/tiflash/sync-status/keyspace/<keyspaceID>/table/<tableID>.
 	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
 	// The query URL is like: http://<host>/sync-status/keyspace/<NullspaceID>/table/<tableID>
@@ -915,11 +1288,7 @@ func CollectTiFlashStatusWithCtx(ctx context.Context, statusAddress string, keys
 		keyspaceID,
 		tableID,
 	)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	resp, err := util.InternalHTTPClient().Do(req)
+	resp, err := util.InternalHTTPClient().Get(statURL)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -936,163 +1305,4 @@ func CollectTiFlashStatusWithCtx(ctx context.Context, statusAddress string, keys
 		return errors.Trace(err)
 	}
 	return nil
-}
-
-// CollectTiFlashStatus queries sync status of one table from a TiFlash store.
-// `regionReplica` is a map from RegionID to count of TiFlash replicas in this region.
-func CollectTiFlashStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, regionReplica *map[int64]int) error {
-	return CollectTiFlashStatusWithCtx(context.Background(), statusAddress, keyspaceID, tableID, regionReplica)
-}
-
-// SyncTableSchemaToTiFlash query sync schema of one table to TiFlash store.
-func SyncTableSchemaToTiFlash(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64) error {
-	// The new query schema is like: http://<host>/tiflash/sync-schema/keyspace/<keyspaceID>/table/<tableID>.
-	// For TiDB forward compatibility, we define the Nullspace as the "keyspace" of the old table.
-	// The query URL is like: http://<host>/sync-schema/keyspace/<NullspaceID>/table/<tableID>
-	statURL := fmt.Sprintf("%s://%s/tiflash/sync-schema/keyspace/%d/table/%d",
-		util.InternalHTTPSchema(),
-		statusAddress,
-		keyspaceID,
-		tableID,
-	)
-	resp, err := util.InternalHTTPClient().Get(statURL)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	err = resp.Body.Close()
-	if err != nil {
-		logutil.BgLogger().Error("close body failed", zap.Error(err))
-	}
-	return nil
-}
-
-// ColumnarStatusResp is the response from the TiKV's status API
-type ColumnarStatusResp struct {
-	Ready            uint `json:"ready"`
-	VectorIndexReady uint `json:"vector-index-ready"`
-	FtsIndexReady    uint `json:"fts-index-ready"`
-	Total            uint `json:"total"`
-	// HasFtsIndexReady reports whether the JSON payload contains "fts-index-ready".
-	HasFtsIndexReady bool `json:"-"`
-}
-
-// StorageClassStatusResp is returned by TiKV's storage-class status endpoint.
-type StorageClassStatusResp struct {
-	Ready uint64 `json:"ready"`
-	Total uint64 `json:"total"`
-}
-
-// CollectStorageClassStatusWithCtx collects a physical table's status from one
-// TiKV store. The target remains SQL-facing IA or STANDARD on the wire. A ready
-// replica currently matches the target and has no pending or transiting record
-// in its local schema worker. Independent Raft/apply work is not tracked.
-// The counters are a point-in-time observation without a schema-version proof.
-func CollectStorageClassStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, target string) (StorageClassStatusResp, error) {
-	statURL := fmt.Sprintf("%s://%s/kvengine/storage_class_status?keyspace_id=%d&table_id=%d&target=%s",
-		util.InternalHTTPSchema(), statusAddress, keyspaceID, tableID, target)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
-	if err != nil {
-		return StorageClassStatusResp{}, errors.Trace(err)
-	}
-	resp, err := util.InternalHTTPClient().Do(req)
-	if err != nil {
-		return StorageClassStatusResp{}, errors.Trace(err)
-	}
-	defer func() { terror.Log(resp.Body.Close()) }()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return StorageClassStatusResp{}, errors.Trace(err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return StorageClassStatusResp{}, errors.Errorf("TiKV storage class status API returned status %d: %s", resp.StatusCode, string(body))
-	}
-	var wireStatus struct {
-		Ready *uint64 `json:"ready"`
-		Total *uint64 `json:"total"`
-	}
-	if err := json.Unmarshal(body, &wireStatus); err != nil {
-		return StorageClassStatusResp{}, errors.Trace(err)
-	}
-	if wireStatus.Ready == nil || wireStatus.Total == nil {
-		return StorageClassStatusResp{}, errors.New("TiKV storage class status response must contain ready and total")
-	}
-	if *wireStatus.Ready > *wireStatus.Total {
-		return StorageClassStatusResp{}, errors.Errorf(
-			"TiKV storage class status response has ready %d greater than total %d",
-			*wireStatus.Ready,
-			*wireStatus.Total,
-		)
-	}
-	return StorageClassStatusResp{
-		Ready: *wireStatus.Ready,
-		Total: *wireStatus.Total,
-	}, nil
-}
-
-// CollectColumnarStatusWithCtx collects the columnar status from the TiKV status API.
-func CollectColumnarStatusWithCtx(ctx context.Context, statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
-	statURL := fmt.Sprintf("%s://%s/kvengine/columnar_status?keyspace_id=%d&table_id=%d",
-		util.InternalHTTPSchema(),
-		statusAddress,
-		keyspaceID,
-		tableID,
-	)
-	if indexID != nil {
-		statURL += fmt.Sprintf("&index_id=%d", *indexID)
-	}
-	var columnarStatus ColumnarStatusResp
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, statURL, nil)
-	if err != nil {
-		return columnarStatus, errors.Trace(err)
-	}
-	resp, err := util.InternalHTTPClient().Do(req)
-	if err != nil {
-		return columnarStatus, errors.Trace(err)
-	}
-
-	defer func() {
-		err = resp.Body.Close()
-		if err != nil {
-			logutil.BgLogger().Error("close body failed", zap.Error(err))
-		}
-	}()
-
-	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(resp.Body)
-		return columnarStatus, errors.Errorf("TiKV columnar status API returned status %d: %s", resp.StatusCode, string(body))
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return columnarStatus, errors.Trace(err)
-	}
-	type columnarStatusPayload struct {
-		Ready            uint  `json:"ready"`
-		VectorIndexReady uint  `json:"vector-index-ready"`
-		FtsIndexReady    *uint `json:"fts-index-ready"`
-		Total            uint  `json:"total"`
-	}
-	var payload columnarStatusPayload
-	err = json.Unmarshal(body, &payload)
-	if err != nil {
-		return columnarStatus, errors.Trace(err)
-	}
-	columnarStatus.Ready = payload.Ready
-	columnarStatus.VectorIndexReady = payload.VectorIndexReady
-	columnarStatus.Total = payload.Total
-	if payload.FtsIndexReady != nil {
-		columnarStatus.HasFtsIndexReady = true
-		columnarStatus.FtsIndexReady = *payload.FtsIndexReady
-	}
-	if columnarStatus.Ready != columnarStatus.Total {
-		logutil.BgLogger().Info("columnar status not ready", zap.Uint("ready", columnarStatus.Ready), zap.Uint("total", columnarStatus.Total))
-	}
-
-	return columnarStatus, nil
-}
-
-// CollectColumnarStatus collects the columnar status from the TiKV status API.
-func CollectColumnarStatus(statusAddress string, keyspaceID tikv.KeyspaceID, tableID int64, indexID *int64) (ColumnarStatusResp, error) {
-	return CollectColumnarStatusWithCtx(context.Background(), statusAddress, keyspaceID, tableID, indexID)
 }

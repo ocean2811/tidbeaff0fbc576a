@@ -17,13 +17,13 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
 	// import parser_driver
-	_ "github.com/pingcap/tidb/pkg/parser/test_driver"
-	. "github.com/pingcap/tidb/pkg/parser/types"
+	_ "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/test_driver"
+	. "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/types"
 	"github.com/stretchr/testify/require"
 )
 

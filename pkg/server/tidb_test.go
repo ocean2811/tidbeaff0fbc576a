@@ -22,12 +22,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/server/internal"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/arena"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/arena"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -48,7 +48,7 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t(a int not null primary key, b int not null)")
 	dml := "insert into t values"
-	for i := range 50 {
+	for i := 0; i < 50; i++ {
 		dml += fmt.Sprintf("(%v, 0)", i)
 		if i != 49 {
 			dml += ","
@@ -59,7 +59,7 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 	require.Equal(t, "ON", tk.MustQuery("show variables like 'tidb_rc_read_check_ts'").Rows()[0][1])
 
 	ctx := context.Background()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/server/fetchNextErr", "return(\"secondNextAndRetConflict\")"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/server/fetchNextErr", "return(\"secondNextAndRetConflict\")"))
 	err := cc.handleQuery(ctx, "select * from t limit 20")
 	require.NoError(t, err)
 
@@ -70,15 +70,15 @@ func TestRcReadCheckTSConflict(t *testing.T) {
 	require.Equal(t, "4096", tk.MustQuery("show variables like 'tidb_max_chunk_size'").Rows()[0][1])
 	err = cc.handleQuery(ctx, "select * from t t1 join t t2")
 	require.NoError(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/server/fetchNextErr"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/server/fetchNextErr"))
 
 	tk.MustExec("drop table t")
 }
 
 func TestRcReadCheckTSConflictExtra(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/CallOnStmtRetry", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation/CallOnStmtRetry", "return"))
 	defer func() {
-		defer require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/sessiontxn/isolation/CallOnStmtRetry"))
+		defer require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/isolation/CallOnStmtRetry"))
 	}()
 	store := testkit.CreateMockStore(t)
 

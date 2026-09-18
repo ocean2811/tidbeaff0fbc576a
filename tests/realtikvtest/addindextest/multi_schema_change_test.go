@@ -16,50 +16,48 @@ package addindextest
 
 import (
 	"testing"
-
-	"github.com/pingcap/tidb/tests/realtikvtest/testutils"
 )
 
+func initCompCtx(t *testing.T) *suiteContext {
+	ctx := initTest(t)
+	initCompCtxParams(ctx)
+	return ctx
+}
 func TestMultiSchemaChangeCreateNonUniqueIndex(t *testing.T) {
-	enableFastAddIndexFailpoints(t)
 	var colIDs = [][]int{
 		{1, 4, 7},
 		{2, 5, 8},
 		{3, 6, 9},
 	}
-	ctx := testutils.InitCompCtx(t)
-	ctx.CompCtx.IsMultiSchemaChange = true
-	testutils.TestOneColFrame(ctx, colIDs, testutils.AddIndexNonUnique)
+	ctx := initCompCtx(t)
+	ctx.CompCtx.isMultiSchemaChange = true
+	testOneColFrame(ctx, colIDs, addIndexNonUnique)
 }
 
 func TestMultiSchemaChangeCreateUniqueIndex(t *testing.T) {
-	enableFastAddIndexFailpoints(t)
 	var colIDs = [][]int{
 		{1, 6, 8},
 		{2, 19},
 		{11},
 	}
-	ctx := testutils.InitCompCtx(t)
-	ctx.CompCtx.IsMultiSchemaChange = true
-	testutils.TestOneColFrame(ctx, colIDs, testutils.AddIndexUnique)
+	ctx := initCompCtx(t)
+	ctx.CompCtx.isMultiSchemaChange = true
+	testOneColFrame(ctx, colIDs, addIndexUnique)
 }
 
 func TestMultiSchemaChangeCreatePrimaryKey(t *testing.T) {
-	enableFastAddIndexFailpoints(t)
-	ctx := testutils.InitCompCtx(t)
-	ctx.CompCtx.IsMultiSchemaChange = true
-	testutils.TestOneIndexFrame(ctx, 0, testutils.AddIndexPK)
+	ctx := initCompCtx(t)
+	ctx.CompCtx.isMultiSchemaChange = true
+	testOneIndexFrame(ctx, 0, addIndexPK)
 }
 
 func TestMultiSchemaChangeCreateGenColIndex(t *testing.T) {
-	enableFastAddIndexFailpoints(t)
-	ctx := testutils.InitCompCtx(t)
-	ctx.CompCtx.IsMultiSchemaChange = true
-	testutils.TestOneIndexFrame(ctx, 29, testutils.AddIndexGenCol)
+	ctx := initCompCtx(t)
+	ctx.CompCtx.isMultiSchemaChange = true
+	testOneIndexFrame(ctx, 29, addIndexGenCol)
 }
 
 func TestMultiSchemaChangeMultiColsIndex(t *testing.T) {
-	enableFastAddIndexFailpoints(t)
 	var coliIDs = [][]int{
 		{1},
 		{2},
@@ -70,7 +68,7 @@ func TestMultiSchemaChangeMultiColsIndex(t *testing.T) {
 		{14},
 		{18},
 	}
-	ctx := testutils.InitCompCtx(t)
-	ctx.CompCtx.IsMultiSchemaChange = true
-	testutils.TestTwoColsFrame(ctx, coliIDs, coljIDs, testutils.AddIndexMultiCols)
+	ctx := initCompCtx(t)
+	ctx.CompCtx.isMultiSchemaChange = true
+	testTwoColsFrame(ctx, coliIDs, coljIDs, addIndexMultiCols)
 }

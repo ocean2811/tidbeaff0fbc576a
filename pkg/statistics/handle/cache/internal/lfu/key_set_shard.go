@@ -15,7 +15,7 @@
 package lfu
 
 import (
-	"github.com/pingcap/tidb/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
 )
 
 const keySetCnt = 256
@@ -26,7 +26,7 @@ type keySetShard struct {
 
 func newKeySetShard() *keySetShard {
 	result := keySetShard{}
-	for i := range keySetCnt {
+	for i := 0; i < keySetCnt; i++ {
 		result.resultKeySet[i] = keySet{
 			set: make(map[int64]*statistics.Table),
 		}

@@ -15,8 +15,9 @@
 package expression
 
 import (
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/opcode"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/opcode"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
 )
 
 // UnCacheableFunctions stores functions which can not be cached to plan cache.
@@ -33,6 +34,7 @@ var UnCacheableFunctions = map[string]struct{}{
 	ast.Like:                 {},
 
 	// functions below are incompatible with (non-prep) plan cache, we'll fix them one by one later.
+	ast.JSONExtract:      {}, // cannot pass TestFuncJSON
 	ast.JSONObject:       {},
 	ast.JSONArray:        {},
 	ast.Coalesce:         {},
@@ -50,8 +52,6 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.FoundRows: {},
 	ast.Rand:      {},
 	ast.UUID:      {},
-	ast.UUIDv4:    {},
-	ast.UUIDv7:    {},
 	ast.Sleep:     {},
 	ast.RowFunc:   {},
 	ast.Values:    {},
@@ -64,7 +64,6 @@ var unFoldableFunctions = map[string]struct{}{
 	ast.LastVal:   {},
 	ast.SetVal:    {},
 	ast.AnyValue:  {},
-	ast.EmbedText: {},
 }
 
 // DisableFoldFunctions stores functions which prevent child scope functions from being constant folded.
@@ -90,70 +89,60 @@ var TryFoldFunctions = map[string]struct{}{
 // IllegalFunctions4GeneratedColumns stores functions that is illegal for generated columns.
 // See https://github.com/mysql/mysql-server/blob/5.7/mysql-test/suite/gcol/inc/gcol_blocked_sql_funcs_main.inc for details
 var IllegalFunctions4GeneratedColumns = map[string]struct{}{
-	ast.Benchmark:            {},
-	ast.ConnectionID:         {},
-	ast.Curdate:              {},
-	ast.CurrentDate:          {},
-	ast.CurrentResourceGroup: {},
-	ast.CurrentRole:          {},
-	ast.CurrentTime:          {},
-	ast.CurrentTimestamp:     {},
-	ast.CurrentUser:          {},
-	ast.Curtime:              {},
-	ast.Database:             {},
-	ast.FoundRows:            {},
-	ast.GetLock:              {},
-	ast.GetVar:               {},
-	ast.IsFreeLock:           {},
-	ast.IsUsedLock:           {},
-	ast.JSONMerge:            {},
-	// DDL selectively allows EMBED_TEXT only for validated STORED generated columns.
-	ast.EmbedText:            {},
-	ast.LastInsertId:         {},
-	ast.LoadFile:             {},
-	ast.LocalTime:            {},
-	ast.LocalTimestamp:       {},
-	ast.NameConst:            {},
-	ast.Now:                  {},
-	ast.Rand:                 {},
-	ast.RandomBytes:          {},
-	ast.ReleaseAllLocks:      {},
-	ast.ReleaseLock:          {},
-	ast.RowCount:             {},
-	ast.RowFunc:              {},
-	ast.Schema:               {},
-	ast.SessionUser:          {},
-	ast.SetVar:               {},
-	ast.Sleep:                {},
-	ast.Sysdate:              {},
-	ast.SystemUser:           {},
-	ast.TiDBBoundedStaleness: {},
-	ast.TiDBCurrentTso:       {},
-	ast.TiDBIsDDLOwner:       {},
-	ast.TiDBRowChecksum:      {},
-	ast.TiDBVersion:          {},
-	ast.UnixTimestamp:        {},
-	ast.User:                 {},
-	ast.UTCDate:              {},
-	ast.UTCTime:              {},
-	ast.UTCTimestamp:         {},
-	ast.UUID:                 {},
-	ast.UUIDv4:               {},
-	ast.UUIDv7:               {},
-	ast.UUIDShort:            {},
-	ast.Values:               {},
-	ast.Version:              {},
+	ast.ConnectionID:     {},
+	ast.LoadFile:         {},
+	ast.LastInsertId:     {},
+	ast.Rand:             {},
+	ast.UUID:             {},
+	ast.UUIDShort:        {},
+	ast.Curdate:          {},
+	ast.CurrentDate:      {},
+	ast.Curtime:          {},
+	ast.CurrentTime:      {},
+	ast.CurrentTimestamp: {},
+	ast.LocalTime:        {},
+	ast.LocalTimestamp:   {},
+	ast.Now:              {},
+	ast.UnixTimestamp:    {},
+	ast.UTCDate:          {},
+	ast.UTCTime:          {},
+	ast.UTCTimestamp:     {},
+	ast.Benchmark:        {},
+	ast.CurrentUser:      {},
+	ast.Database:         {},
+	ast.FoundRows:        {},
+	ast.GetLock:          {},
+	ast.IsFreeLock:       {},
+	ast.IsUsedLock:       {},
+	ast.MasterPosWait:    {},
+	ast.NameConst:        {},
+	ast.ReleaseLock:      {},
+	ast.RowFunc:          {},
+	ast.RowCount:         {},
+	ast.Schema:           {},
+	ast.SessionUser:      {},
+	ast.Sleep:            {},
+	ast.Sysdate:          {},
+	ast.SystemUser:       {},
+	ast.User:             {},
+	ast.Values:           {},
+	ast.Encrypt:          {},
+	ast.Version:          {},
+	ast.JSONMerge:        {},
+	ast.SetVar:           {},
+	ast.GetVar:           {},
+	ast.ReleaseAllLocks:  {},
 }
 
 // IsDeferredFunctions checks whether the function is in DeferredFunctions.
 // DeferredFunctions stores functions which are foldable but should be deferred as well when plan cache is enabled.
 // Note that, these functions must be foldable at first place, i.e, they are not in `unFoldableFunctions`.
-func IsDeferredFunctions(ctx BuildContext, fn string) bool {
+func IsDeferredFunctions(ctx sessionctx.Context, fn string) bool {
 	_, ok := deferredFunctions[fn]
 	if ok {
 		return ok
 	}
-	if fn == ast.Sysdate && ctx.GetSysdateIsNow() {
+	if fn == ast.Sysdate && ctx.GetSessionVars().SysdateIsNow {
 		return true
 	}
 	return ok
@@ -256,14 +245,11 @@ var mutableEffectsFunctions = map[string]struct{}{
 	ast.Rand:        {},
 	ast.RandomBytes: {},
 	ast.UUID:        {},
-	ast.UUIDv4:      {},
-	ast.UUIDv7:      {},
 	ast.UUIDShort:   {},
 	ast.Sleep:       {},
 	ast.SetVar:      {},
 	ast.GetVar:      {},
 	ast.AnyValue:    {},
-	ast.EmbedText:   {},
 }
 
 // some functions do NOT have right implementations, but may have noop ones(like with any inputs, always return 1)
@@ -294,7 +280,6 @@ var booleanFunctions = map[string]struct{}{
 	ast.IsIPv4Compat:       {},
 	ast.IsIPv4Mapped:       {},
 	ast.IsIPv6:             {},
-	ast.JSONSchemaValid:    {},
 	ast.JSONValid:          {},
 	ast.RegexpLike:         {},
 }

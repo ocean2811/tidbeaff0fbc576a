@@ -17,8 +17,8 @@ package loaddatatest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/goleak"
@@ -33,15 +33,12 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
-	cleanupFix56408Store := prepareFix56408Store()
 
 	opts := []goleak.Option{
 		goleak.Cleanup(func(_ int) {
-			cleanupFix56408Store()
 			view.Stop()
 		}),
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),

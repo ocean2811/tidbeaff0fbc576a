@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/util/etcd"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/timeutil"
 	"go.uber.org/zap"
 )
 
@@ -41,7 +41,8 @@ type mockManager struct {
 	ctx          context.Context
 	wg           sync.WaitGroup
 	cancel       context.CancelFunc
-	listener     Listener
+	beOwnerHook  func()
+	retireHook   func()
 	campaignDone chan struct{}
 	resignDone   chan struct{}
 }
@@ -77,40 +78,33 @@ func (m *mockManager) ID() string {
 
 // IsOwner implements Manager.IsOwner interface.
 func (m *mockManager) IsOwner() bool {
-	logutil.BgLogger().Debug("owner manager checks owner",
-		zap.String("ownerKey", m.key), zap.String("ID", m.id))
-	return MockGlobalStateEntry.OwnerKey(m.storeID, m.key).IsOwner(m.id)
+	logutil.BgLogger().Debug("owner manager checks owner", zap.String("category", "ddl"),
+		zap.String("ID", m.id), zap.String("ownerKey", m.key))
+	return util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).IsOwner(m.id)
 }
 
 func (m *mockManager) toBeOwner() {
-	ok := MockGlobalStateEntry.OwnerKey(m.storeID, m.key).SetOwner(m.id)
+	ok := util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).SetOwner(m.id)
 	if ok {
-		logutil.BgLogger().Info("owner manager gets owner",
-			zap.String("ownerKey", m.key), zap.String("ID", m.id))
-		if m.listener != nil {
-			m.listener.OnBecomeOwner()
+		logutil.BgLogger().Debug("owner manager gets owner", zap.String("category", "ddl"),
+			zap.String("ID", m.id), zap.String("ownerKey", m.key))
+		if m.beOwnerHook != nil {
+			m.beOwnerHook()
 		}
 	}
 }
 
 // RetireOwner implements Manager.RetireOwner interface.
 func (m *mockManager) RetireOwner() {
-	ok := MockGlobalStateEntry.OwnerKey(m.storeID, m.key).UnsetOwner(m.id)
-	if ok {
-		logutil.BgLogger().Info("owner manager retire owner",
-			zap.String("ownerKey", m.key), zap.String("ID", m.id))
-		if m.listener != nil {
-			m.listener.OnRetireOwner()
-		}
-	}
+	util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).UnsetOwner(m.id)
 }
 
-// Close implements Manager.Close interface.
-func (m *mockManager) Close() {
+// Cancel implements Manager.Cancel interface.
+func (m *mockManager) Cancel() {
 	m.cancel()
 	m.wg.Wait()
-	logutil.BgLogger().Info("owner manager is canceled",
-		zap.String("ownerKey", m.key), zap.String("ID", m.id))
+	logutil.BgLogger().Info("owner manager is canceled", zap.String("category", "ddl"),
+		zap.String("ID", m.id), zap.String("ownerKey", m.key))
 }
 
 // GetOwnerID implements Manager.GetOwnerID interface.
@@ -135,18 +129,18 @@ func (*mockManager) SetOwnerOpValue(_ context.Context, op OpType) error {
 func (m *mockManager) CampaignOwner(_ ...int) error {
 	m.wg.Add(1)
 	go func() {
-		logutil.BgLogger().Debug("owner manager campaign owner",
-			zap.String("ownerKey", m.key), zap.String("ID", m.id))
+		logutil.BgLogger().Debug("owner manager campaign owner", zap.String("category", "ddl"),
+			zap.String("ID", m.id), zap.String("ownerKey", m.key))
 		defer m.wg.Done()
 		for {
 			select {
 			case <-m.campaignDone:
 				m.RetireOwner()
-				logutil.BgLogger().Debug("owner manager campaign done", zap.String("ID", m.id))
+				logutil.BgLogger().Debug("owner manager campaign done", zap.String("category", "ddl"), zap.String("ID", m.id))
 				return
 			case <-m.ctx.Done():
 				m.RetireOwner()
-				logutil.BgLogger().Debug("owner manager is cancelled", zap.String("ID", m.id))
+				logutil.BgLogger().Debug("owner manager is cancelled", zap.String("category", "ddl"), zap.String("ID", m.id))
 				return
 			case <-m.resignDone:
 				m.RetireOwner()
@@ -156,8 +150,8 @@ func (m *mockManager) CampaignOwner(_ ...int) error {
 				m.toBeOwner()
 				//nolint: errcheck
 				timeutil.Sleep(m.ctx, 1*time.Second) // Speed up domain.Close()
-				logutil.BgLogger().Debug("owner manager tick", zap.String("ID", m.id),
-					zap.String("ownerKey", m.key), zap.String("currentOwner", MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
+				logutil.BgLogger().Debug("owner manager tick", zap.String("category", "ddl"), zap.String("ID", m.id),
+					zap.String("ownerKey", m.key), zap.String("currentOwner", util.MockGlobalStateEntry.OwnerKey(m.storeID, m.key).GetOwner()))
 			}
 		}
 	}()
@@ -170,13 +164,14 @@ func (m *mockManager) ResignOwner(_ context.Context) error {
 	return nil
 }
 
-// SetListener implements Manager.SetListener interface.
-func (m *mockManager) SetListener(listener Listener) {
-	m.listener = listener
+// RequireOwner implements Manager.RequireOwner interface.
+func (*mockManager) RequireOwner(context.Context) error {
+	return nil
 }
 
-func (*mockManager) ForceToBeOwner(context.Context) error {
-	return nil
+// SetBeOwnerHook implements Manager.SetBeOwnerHook interface.
+func (m *mockManager) SetBeOwnerHook(hook func()) {
+	m.beOwnerHook = hook
 }
 
 // CampaignCancel implements Manager.CampaignCancel interface
@@ -184,17 +179,10 @@ func (m *mockManager) CampaignCancel() {
 	m.campaignDone <- struct{}{}
 }
 
-func (m *mockManager) BreakCampaignLoop() {
-	// in uni-store which mostly used in test, there is no need to make sure the
-	// campaign session is created once, so we can just call Close, but it DOES violate
-	// the contract of Manager interface.
-	m.Close()
-}
-
 func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {
 	checkIsOwner := func(m *ownerManager, checkTrue bool) error {
 		// 5s
-		for range 100 {
+		for i := 0; i < 100; i++ {
 			if m.IsOwner() == checkTrue {
 				break
 			}
@@ -219,7 +207,7 @@ func mockDelOwnerKey(mockCal, ownerKey string, m *ownerManager) error {
 		needCheckOwner = true
 	}
 
-	err := etcd.DeleteKeyFromEtcd(ownerKey, m.etcdCli, 1, keyOpDefaultTimeout)
+	err := util.DeleteKeyFromEtcd(ownerKey, m.etcdCli, 1, keyOpDefaultTimeout)
 	if err != nil {
 		return errors.Trace(err)
 	}

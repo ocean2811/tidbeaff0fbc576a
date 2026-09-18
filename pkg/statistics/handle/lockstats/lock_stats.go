@@ -19,12 +19,10 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/session/syssession"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics/handle/logutil"
-	"github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	statslogutil "github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -34,24 +32,23 @@ const (
 	lockedStatus   = "locked"
 	unlockedStatus = "unlocked"
 
-	insertSQL            = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
-	updateMetaVersionSQL = "UPDATE mysql.stats_meta SET version = %? WHERE table_id = %?"
+	insertSQL = "INSERT INTO mysql.stats_table_locked (table_id) VALUES (%?) ON DUPLICATE KEY UPDATE table_id = %?"
 )
 
 // statsLockImpl implements the util.StatsLock interface.
 type statsLockImpl struct {
-	pool syssession.Pool
+	pool util.SessionPool
 }
 
 // NewStatsLock creates a new StatsLock.
-func NewStatsLock(pool syssession.Pool) types.StatsLock {
+func NewStatsLock(pool util.SessionPool) util.StatsLock {
 	return &statsLockImpl{pool: pool}
 }
 
 // LockTables add locked tables id to store.
 // - tables: tables that will be locked.
 // Return the message of skipped tables and error.
-func (sl *statsLockImpl) LockTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
+func (sl *statsLockImpl) LockTables(tables map[int64]*util.StatsLockTable) (skipped string, err error) {
 	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
 		skipped, err = AddLockedTables(sctx, tables)
 		return err
@@ -81,7 +78,7 @@ func (sl *statsLockImpl) LockPartitions(
 // RemoveLockedTables remove tables from table locked records.
 // - tables: tables of which will be unlocked.
 // Return the message of skipped tables and error.
-func (sl *statsLockImpl) RemoveLockedTables(tables map[int64]*types.StatsLockTable) (skipped string, err error) {
+func (sl *statsLockImpl) RemoveLockedTables(tables map[int64]*util.StatsLockTable) (skipped string, err error) {
 	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
 		skipped, err = RemoveLockedTables(sctx, tables)
 		return err
@@ -109,7 +106,7 @@ func (sl *statsLockImpl) RemoveLockedPartitions(
 // queryLockedTables query locked tables from store.
 func (sl *statsLockImpl) queryLockedTables() (tables map[int64]struct{}, err error) {
 	err = util.CallWithSCtx(sl.pool, func(sctx sessionctx.Context) error {
-		tables, err = QueryLockedTables(util.StatsCtx, sctx)
+		tables, err = QueryLockedTables(sctx)
 		return err
 	})
 	return
@@ -131,16 +128,21 @@ func (sl *statsLockImpl) GetTableLockedAndClearForTest() (map[int64]struct{}, er
 	return sl.queryLockedTables()
 }
 
+var (
+	// useCurrentSession to make sure the sql is executed in current session.
+	useCurrentSession = []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}
+)
+
 // AddLockedTables add locked tables id to store.
 // - exec: sql executor.
 // - tables: tables that will be locked.
 // Return the message of skipped tables and error.
 func AddLockedTables(
 	sctx sessionctx.Context,
-	tables map[int64]*types.StatsLockTable,
+	tables map[int64]*util.StatsLockTable,
 ) (string, error) {
 	// Load tables to check duplicate before insert.
-	lockedTables, err := QueryLockedTables(util.StatsCtx, sctx)
+	lockedTables, err := QueryLockedTables(sctx)
 	if err != nil {
 		return "", err
 	}
@@ -153,7 +155,7 @@ func AddLockedTables(
 			ids = append(ids, pid)
 		}
 	}
-	logutil.StatsLogger().Info("lock table",
+	statslogutil.StatsLogger().Info("lock table",
 		zap.Any("tables", tables),
 	)
 
@@ -161,7 +163,7 @@ func AddLockedTables(
 	lockedTablesAndPartitions := GetLockedTables(lockedTables, ids...)
 	for tid, table := range tables {
 		if _, ok := lockedTablesAndPartitions[tid]; !ok {
-			if err := insertIntoStatsTableLockedAndUpdateStatsVersion(sctx, tid); err != nil {
+			if err := insertIntoStatsTableLocked(sctx, tid); err != nil {
 				return "", err
 			}
 		} else {
@@ -170,7 +172,7 @@ func AddLockedTables(
 
 		for pid := range table.PartitionInfo {
 			if _, ok := lockedTablesAndPartitions[pid]; !ok {
-				if err := insertIntoStatsTableLockedAndUpdateStatsVersion(sctx, pid); err != nil {
+				if err := insertIntoStatsTableLocked(sctx, pid); err != nil {
 					return "", err
 				}
 			}
@@ -196,7 +198,7 @@ func AddLockedPartitions(
 	pidNames map[int64]string,
 ) (string, error) {
 	// Load tables to check duplicate before insert.
-	lockedTables, err := QueryLockedTables(util.StatsCtx, sctx)
+	lockedTables, err := QueryLockedTables(sctx)
 	if err != nil {
 		return "", err
 	}
@@ -207,7 +209,7 @@ func AddLockedPartitions(
 		pNames = append(pNames, pName)
 	}
 
-	logutil.StatsLogger().Info("lock partitions",
+	statslogutil.StatsLogger().Info("lock partitions",
 		zap.Int64("tableID", tid),
 		zap.String("tableName", tableName),
 		zap.Int64s("partitionIDs", pids),
@@ -227,7 +229,7 @@ func AddLockedPartitions(
 	lockedPartitions := GetLockedTables(lockedTables, pids...)
 	for _, pid := range pids {
 		if _, ok := lockedPartitions[pid]; !ok {
-			if err := insertIntoStatsTableLockedAndUpdateStatsVersion(sctx, pid); err != nil {
+			if err := insertIntoStatsTableLocked(sctx, pid); err != nil {
 				return "", err
 			}
 		} else {
@@ -285,20 +287,10 @@ func generateStableSkippedPartitionsMessage(ids []int64, tableName string, skipp
 	return ""
 }
 
-func insertIntoStatsTableLockedAndUpdateStatsVersion(sctx sessionctx.Context, tid int64) error {
+func insertIntoStatsTableLocked(sctx sessionctx.Context, tid int64) error {
 	_, _, err := util.ExecRows(sctx, insertSQL, tid, tid)
 	if err != nil {
-		logutil.StatsLogger().Error("error occurred when insert mysql.stats_table_locked", zap.Error(err))
-		return err
-	}
-
-	version, err := util.GetStartTS(sctx)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	_, _, err = util.ExecRows(sctx, updateMetaVersionSQL, version, tid)
-	if err != nil {
-		logutil.StatsLogger().Error("error occurred when update mysql.stats_meta version", zap.Error(err))
+		statslogutil.StatsLogger().Error("error occurred when insert mysql.stats_table_locked", zap.Error(err))
 		return err
 	}
 	return nil

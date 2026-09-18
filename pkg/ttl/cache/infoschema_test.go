@@ -18,10 +18,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/ttl/cache"
-	"github.com/pingcap/tidb/pkg/ttl/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/cache"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/session"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -34,7 +34,7 @@ func TestInfoSchemaCache(t *testing.T) {
 	conn := server.CreateMockConn(t, sv)
 	sctx := conn.Context().Session
 	tk := testkit.NewTestKitWithSession(t, store, sctx)
-	se := session.NewSession(sctx, func() {})
+	se := session.NewSession(sctx, sctx, func(_ session.Session) {})
 
 	isc := cache.NewInfoSchemaCache(time.Hour)
 

@@ -22,10 +22,10 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/cznic/strutil"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
 	parser "modernc.org/parser/yacc"
-	"modernc.org/strutil"
 )
 
 func Format(inputFilename string, goldenFilename string) (err error) {
@@ -508,7 +508,7 @@ func (y *OutputFormatter) Teardown() error {
 	return nil
 }
 
-func (y *OutputFormatter) Format(format string, args ...any) (int, error) {
+func (y *OutputFormatter) Format(format string, args ...interface{}) (int, error) {
 	return y.formatter.Format(format, args...)
 }
 
@@ -521,7 +521,7 @@ type NotNilAssert struct {
 	err error
 }
 
-func (n *NotNilAssert) and(target any) *NotNilAssert {
+func (n *NotNilAssert) and(target interface{}) *NotNilAssert {
 	if n.err != nil {
 		return n
 	}
@@ -536,7 +536,7 @@ func (n *NotNilAssert) NotNil() error {
 	return n.err
 }
 
-func Ensure(target any) *NotNilAssert {
+func Ensure(target interface{}) *NotNilAssert {
 	return (&NotNilAssert{}).and(target)
 }
 

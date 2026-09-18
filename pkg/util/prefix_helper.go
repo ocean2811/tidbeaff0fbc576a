@@ -22,7 +22,7 @@ import (
 	"bytes"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 )
 
 // ScanMetaWithPrefix scans metadata with the prefix.

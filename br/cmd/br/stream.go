@@ -16,11 +16,11 @@ package main
 
 import (
 	"github.com/pingcap/errors"
-	advancercfg "github.com/pingcap/tidb/br/pkg/streamhelper/config"
-	"github.com/pingcap/tidb/br/pkg/task"
-	"github.com/pingcap/tidb/br/pkg/trace"
-	"github.com/pingcap/tidb/br/pkg/version/build"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	advancercfg "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/streamhelper/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/task"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/trace"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version/build"
 	"github.com/spf13/cobra"
 	"sourcegraph.com/sourcegraph/appdash"
 )
@@ -36,7 +36,7 @@ func NewStreamCommand() *cobra.Command {
 				return errors.Trace(err)
 			}
 			build.LogInfo(build.BR)
-			logutil.LogEnvVariables()
+			utils.LogEnvVariables()
 			task.LogArguments(c)
 			return nil
 		},
@@ -57,7 +57,7 @@ func NewStreamCommand() *cobra.Command {
 		command.Root().HelpFunc()(command, strings)
 	})
 
-	command.Hidden = false
+	command.Hidden = true
 	return command
 }
 

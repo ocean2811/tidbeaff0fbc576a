@@ -140,18 +140,6 @@ drop table if exists t;
 create table t (a blob(10000), b timestamp, index idx(a(3069), b));
 create table t (a blob(10000), b timestamp, index idx(a(3068), b));
 drop table if exists t;
-create table posts (id int auto_increment primary key, title varchar(500) character set utf8, subtitle varchar(500) character set utf8, unique key(title, subtitle));
--- error 1071
-alter table posts convert to character set utf8mb4;
-drop table if exists posts;
-create table t(a varchar(1000) character set utf8, primary key(a));
--- error 1071
-alter table t convert to character set utf8mb4;
-drop table if exists t;
-create table t(a varchar(1000) character set utf8, key(a));
--- error 1071
-alter table t convert to character set utf8mb4;
-drop table if exists t;
 
 # TestMultiStmts
 drop table if exists t1; create table t1(id int ); insert into t1 values (1);
@@ -165,7 +153,7 @@ insert t values ('100');
 insert t values ('1e2');
 
 # TestParser
-# test for https://github.com/pingcap/tidb/pull/177
+# test for https://github.com/ocean2811/tidbeaff0fbc576a/pull/177
 drop table if exists t1, t2;
 CREATE TABLE `t1` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;
 CREATE TABLE `t2` ( `a` char(3) NOT NULL default '', `b` char(3) NOT NULL default '', `c` char(3) NOT NULL default '', PRIMARY KEY  (`a`,`b`,`c`)) ENGINE=InnoDB;
@@ -178,7 +166,7 @@ deallocate prepare my_stmt;
 drop table t1,t2;
 
 # TestOnDuplicate
-# test for https://github.com/pingcap/tidb/pull/454
+# test for https://github.com/ocean2811/tidbeaff0fbc576a/pull/454
 drop table if exists t;
 drop table if exists t1;
 create table t1 (c1 int, c2 int, c3 int);
@@ -188,7 +176,7 @@ insert into t set c1=1, c2=4;
 insert into t select * from t1 limit 1 on duplicate key update c3=3333;
 
 # TestReplace
-# https://github.com/pingcap/tidb/pull/456
+# https://github.com/ocean2811/tidbeaff0fbc576a/pull/456
 drop table if exists t;
 drop table if exists t1;
 create table t1 (c1 int, c2 int, c3 int);
@@ -234,7 +222,7 @@ select * from t;
 disconnect conn1;
 
 # TestSet
-# Test for https://github.com/pingcap/tidb/issues/1114
+# Test for https://github.com/ocean2811/tidbeaff0fbc576a/issues/1114
 set @tmp = 0;
 set @tmp := @tmp + 1;
 select @tmp;
@@ -263,7 +251,7 @@ insert into address values ('10');
 select cast(0.5 as unsigned);
 select cast(-0.5 as signed);
 select hex(cast(0x10 as binary(2)));
-# test for issue: https://github.com/pingcap/tidb/issues/34539
+# test for issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/34539
 select cast('0000-00-00' as TIME);
 --enable_warnings
 select cast('1234x' as TIME);
@@ -290,3 +278,42 @@ select b from T;
 --replace_column 1 1
 select count(ORDINAL_POSITION) from INFORMATION_SCHEMA.COLUMNS;
 SELECT CHARACTER_SET_NAME FROM INFORMATION_SCHEMA.CHARACTER_SETS WHERE CHARACTER_SET_NAME = 'utf8mb4';
+
+# TestResetCtx
+drop table if exists t;
+set global tidb_txn_mode='';
+set session tidb_txn_mode='';
+create table t (i int auto_increment not null key);
+insert into t values (1);
+set @@tidb_disable_txn_auto_retry = 0;
+begin;
+insert into t values (10);
+update t set i = i + row_count();
+select * from t;
+
+# In new Txn
+connect (conn1, localhost, root,, session__common);
+connection conn1;
+update t set i = 0 where i = 1;
+select * from t;
+connection default;
+
+commit;
+select * from t;
+delete from t where i = 11;
+begin;
+insert into t values ();
+update t set i = i + last_insert_id() + 1;
+select * from t;
+
+# In new Txn
+connection conn1;
+update t set i = 0 where i = 1;
+select * from t;
+connection default;
+
+commit;
+select * from t;
+set tidb_txn_mode=default;
+set global tidb_txn_mode=default;
+

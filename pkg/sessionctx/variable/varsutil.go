@@ -18,43 +18,104 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"math"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
 // secondsPerYear represents seconds in a normal year. Leap year is not considered here.
 const secondsPerYear = 60 * 60 * 24 * 365
 
+// SetDDLReorgWorkerCounter sets ddlReorgWorkerCounter count.
+// Sysvar validation enforces the range to already be correct.
+func SetDDLReorgWorkerCounter(cnt int32) {
+	atomic.StoreInt32(&ddlReorgWorkerCounter, cnt)
+}
+
+// GetDDLReorgWorkerCounter gets ddlReorgWorkerCounter.
+func GetDDLReorgWorkerCounter() int32 {
+	return atomic.LoadInt32(&ddlReorgWorkerCounter)
+}
+
+// SetDDLFlashbackConcurrency sets ddlFlashbackConcurrency count.
+// Sysvar validation enforces the range to already be correct.
+func SetDDLFlashbackConcurrency(cnt int32) {
+	atomic.StoreInt32(&ddlFlashbackConcurrency, cnt)
+}
+
+// GetDDLFlashbackConcurrency gets ddlFlashbackConcurrency count.
+func GetDDLFlashbackConcurrency() int32 {
+	return atomic.LoadInt32(&ddlFlashbackConcurrency)
+}
+
+// SetDDLReorgBatchSize sets ddlReorgBatchSize size.
+// Sysvar validation enforces the range to already be correct.
+func SetDDLReorgBatchSize(cnt int32) {
+	atomic.StoreInt32(&ddlReorgBatchSize, cnt)
+}
+
+// GetDDLReorgBatchSize gets ddlReorgBatchSize.
+func GetDDLReorgBatchSize() int32 {
+	return atomic.LoadInt32(&ddlReorgBatchSize)
+}
+
+// SetDDLErrorCountLimit sets ddlErrorCountlimit size.
+func SetDDLErrorCountLimit(cnt int64) {
+	atomic.StoreInt64(&ddlErrorCountLimit, cnt)
+}
+
+// GetDDLErrorCountLimit gets ddlErrorCountlimit size.
+func GetDDLErrorCountLimit() int64 {
+	return atomic.LoadInt64(&ddlErrorCountLimit)
+}
+
+// SetDDLReorgRowFormat sets ddlReorgRowFormat version.
+func SetDDLReorgRowFormat(format int64) {
+	atomic.StoreInt64(&ddlReorgRowFormat, format)
+}
+
+// GetDDLReorgRowFormat gets ddlReorgRowFormat version.
+func GetDDLReorgRowFormat() int64 {
+	return atomic.LoadInt64(&ddlReorgRowFormat)
+}
+
+// SetMaxDeltaSchemaCount sets maxDeltaSchemaCount size.
+func SetMaxDeltaSchemaCount(cnt int64) {
+	atomic.StoreInt64(&maxDeltaSchemaCount, cnt)
+}
+
+// GetMaxDeltaSchemaCount gets maxDeltaSchemaCount size.
+func GetMaxDeltaSchemaCount() int64 {
+	return atomic.LoadInt64(&maxDeltaSchemaCount)
+}
+
 // BoolToOnOff returns the string representation of a bool, i.e. "ON/OFF"
 func BoolToOnOff(b bool) string {
 	if b {
-		return vardef.On
+		return On
 	}
-	return vardef.Off
+	return Off
 }
 
 func int32ToBoolStr(i int32) string {
 	if i == 1 {
-		return vardef.On
+		return On
 	}
-	return vardef.Off
+	return Off
 }
 
-func checkCollation(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+func checkCollation(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 	coll, err := collate.GetCollationByName(normalizedValue)
 	if err != nil {
 		return normalizedValue, errors.Trace(err)
@@ -62,7 +123,7 @@ func checkCollation(vars *SessionVars, normalizedValue string, originalValue str
 	return coll.Name, nil
 }
 
-func checkDefaultCollationForUTF8MB4(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+func checkDefaultCollationForUTF8MB4(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 	coll, err := collate.GetCollationByName(normalizedValue)
 	if err != nil {
 		return normalizedValue, errors.Trace(err)
@@ -75,7 +136,7 @@ func checkDefaultCollationForUTF8MB4(vars *SessionVars, normalizedValue string, 
 
 func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 	if normalizedValue == "" {
-		return normalizedValue, errors.Trace(ErrWrongValueForVar.FastGenByArgs(argName, "NULL"))
+		return normalizedValue, errors.Trace(ErrWrongValueForVar.GenWithStackByArgs(argName, "NULL"))
 	}
 	cs, err := charset.GetCharsetInfo(normalizedValue)
 	if err != nil {
@@ -85,27 +146,27 @@ func checkCharacterSet(normalizedValue string, argName string) (string, error) {
 }
 
 // checkReadOnly requires TiDBEnableNoopFuncs=1 for the same scope otherwise an error will be returned.
-func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag, offlineMode bool) (string, error) {
-	errMsg := ErrFunctionsNoopImpl.FastGenByArgs("READ ONLY")
+func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag, offlineMode bool) (string, error) {
+	errMsg := ErrFunctionsNoopImpl.GenWithStackByArgs("READ ONLY")
 	if offlineMode {
-		errMsg = ErrFunctionsNoopImpl.FastGenByArgs("OFFLINE MODE")
+		errMsg = ErrFunctionsNoopImpl.GenWithStackByArgs("OFFLINE MODE")
 	}
 	if TiDBOptOn(normalizedValue) {
-		if scope == vardef.ScopeSession && vars.NoopFuncsMode != OnInt {
+		if scope == ScopeSession && vars.NoopFuncsMode != OnInt {
 			if vars.NoopFuncsMode == OffInt {
-				return vardef.Off, errors.Trace(errMsg)
+				return Off, errMsg
 			}
 			vars.StmtCtx.AppendWarning(errMsg)
 		}
-		if scope == vardef.ScopeGlobal {
-			val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(vardef.TiDBEnableNoopFuncs)
+		if scope == ScopeGlobal {
+			val, err := vars.GlobalVarsAccessor.GetGlobalSysVar(TiDBEnableNoopFuncs)
 			if err != nil {
-				return originalValue, errUnknownSystemVariable.GenWithStackByArgs(vardef.TiDBEnableNoopFuncs)
+				return originalValue, errUnknownSystemVariable.GenWithStackByArgs(TiDBEnableNoopFuncs)
 			}
-			if val == vardef.Off {
-				return vardef.Off, errors.Trace(errMsg)
+			if val == Off {
+				return Off, errMsg
 			}
-			if val == vardef.Warn {
+			if val == Warn {
 				vars.StmtCtx.AppendWarning(errMsg)
 			}
 		}
@@ -113,10 +174,10 @@ func checkReadOnly(vars *SessionVars, normalizedValue string, originalValue stri
 	return normalizedValue, nil
 }
 
-func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+func checkIsolationLevel(vars *SessionVars, normalizedValue string, originalValue string, scope ScopeFlag) (string, error) {
 	if normalizedValue == "SERIALIZABLE" || normalizedValue == "READ-UNCOMMITTED" {
-		returnErr := ErrUnsupportedIsolationLevel.FastGenByArgs(normalizedValue)
-		if !TiDBOptOn(vars.systems[vardef.TiDBSkipIsolationLevelCheck]) {
+		returnErr := ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
+		if !TiDBOptOn(vars.systems[TiDBSkipIsolationLevelCheck]) {
 			return normalizedValue, ErrUnsupportedIsolationLevel.GenWithStackByArgs(normalizedValue)
 		}
 		vars.StmtCtx.AppendWarning(returnErr)
@@ -149,9 +210,9 @@ func setTiDBTableValue(vars *SessionVars, name, value, comment string) error {
 // but sysvars use the convention ON/OFF.
 func trueFalseToOnOff(str string) string {
 	if strings.EqualFold("true", str) {
-		return vardef.On
+		return On
 	} else if strings.EqualFold("false", str) {
-		return vardef.Off
+		return Off
 	}
 	return str
 }
@@ -198,12 +259,36 @@ const (
 // It is used for MultiStmtMode and NoopFunctionsMode
 func TiDBOptOnOffWarn(opt string) int {
 	switch opt {
-	case vardef.Warn:
+	case Warn:
 		return WarnInt
-	case vardef.On:
+	case On:
 		return OnInt
 	}
 	return OffInt
+}
+
+// ClusteredIndexDefMode controls the default clustered property for primary key.
+type ClusteredIndexDefMode int
+
+const (
+	// ClusteredIndexDefModeIntOnly indicates only single int primary key will default be clustered.
+	ClusteredIndexDefModeIntOnly ClusteredIndexDefMode = 0
+	// ClusteredIndexDefModeOn indicates primary key will default be clustered.
+	ClusteredIndexDefModeOn ClusteredIndexDefMode = 1
+	// ClusteredIndexDefModeOff indicates primary key will default be non-clustered.
+	ClusteredIndexDefModeOff ClusteredIndexDefMode = 2
+)
+
+// TiDBOptEnableClustered converts enable clustered options to ClusteredIndexDefMode.
+func TiDBOptEnableClustered(opt string) ClusteredIndexDefMode {
+	switch opt {
+	case On:
+		return ClusteredIndexDefModeOn
+	case Off:
+		return ClusteredIndexDefModeOff
+	default:
+		return ClusteredIndexDefModeIntOnly
+	}
 }
 
 // AssertionLevel controls the assertion that will be performed during transactions.
@@ -220,11 +305,11 @@ const (
 
 func tidbOptAssertionLevel(opt string) AssertionLevel {
 	switch opt {
-	case vardef.AssertionStrictStr:
+	case AssertionStrictStr:
 		return AssertionLevelStrict
-	case vardef.AssertionFastStr:
+	case AssertionFastStr:
 		return AssertionLevelFast
-	case vardef.AssertionOffStr:
+	case AssertionOffStr:
 		return AssertionLevelOff
 	default:
 		return AssertionLevelOff
@@ -277,7 +362,7 @@ func tidbOptFloat64(opt string, defaultVal float64) float64 {
 func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
 	defer func() {
 		if err == nil && byteSize > 0 && byteSize < (512<<20) {
-			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(vardef.TiDBServerMemoryLimit, originalValue))
+			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue))
 			byteSize = 512 << 20
 			normalizedStr = "512MB"
 		}
@@ -287,7 +372,7 @@ func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue stri
 	if total := memory.GetMemTotalIgnoreErr(); total != 0 {
 		perc, str := parsePercentage(normalizedValue)
 		if perc != 0 {
-			intVal := total * perc / 100
+			intVal := total / 100 * perc
 			return intVal, str, nil
 		}
 	}
@@ -298,7 +383,7 @@ func parseMemoryLimit(s *SessionVars, normalizedValue string, originalValue stri
 		return bt, str, nil
 	}
 
-	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(vardef.TiDBServerMemoryLimit, originalValue)
+	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(TiDBServerMemoryLimit, originalValue)
 }
 
 func parsePercentage(s string) (percentage uint64, normalizedStr string) {
@@ -322,26 +407,14 @@ func parseByteSize(s string) (byteSize uint64, normalizedStr string) {
 	if n, err := fmt.Sscanf(s, "%dKB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 10, fmt.Sprintf("%dKB", byteSize)
 	}
-	if n, err := fmt.Sscanf(s, "%dKiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
-		return byteSize << 10, fmt.Sprintf("%dKiB", byteSize)
-	}
 	if n, err := fmt.Sscanf(s, "%dMB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 20, fmt.Sprintf("%dMB", byteSize)
-	}
-	if n, err := fmt.Sscanf(s, "%dMiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
-		return byteSize << 20, fmt.Sprintf("%dMiB", byteSize)
 	}
 	if n, err := fmt.Sscanf(s, "%dGB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 30, fmt.Sprintf("%dGB", byteSize)
 	}
-	if n, err := fmt.Sscanf(s, "%dGiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
-		return byteSize << 30, fmt.Sprintf("%dGiB", byteSize)
-	}
 	if n, err := fmt.Sscanf(s, "%dTB%s", &byteSize, &endString); n == 1 && err == io.EOF {
 		return byteSize << 40, fmt.Sprintf("%dTB", byteSize)
-	}
-	if n, err := fmt.Sscanf(s, "%dTiB%s", &byteSize, &endString); n == 1 && err == io.EOF {
-		return byteSize << 40, fmt.Sprintf("%dTiB", byteSize)
 	}
 	return 0, ""
 }
@@ -368,7 +441,7 @@ func parseTSFromNumberOrTime(s *SessionVars, sVal string) (uint64, error) {
 		return tso, nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx.TypeCtx(), sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -383,7 +456,7 @@ func setTxnReadTS(s *SessionVars, sVal string) error {
 		return nil
 	}
 
-	t, err := types.ParseTime(s.StmtCtx.TypeCtx(), sVal, mysql.TypeTimestamp, types.MaxFsp)
+	t, err := types.ParseTime(s.StmtCtx, sVal, mysql.TypeTimestamp, types.MaxFsp, nil)
 	if err != nil {
 		return err
 	}
@@ -424,16 +497,6 @@ func switchDDL(on bool) error {
 	return nil
 }
 
-// switchStats turns on/off stats owner in an instance
-func switchStats(on bool) error {
-	if on && EnableStatsOwner != nil {
-		return EnableStatsOwner()
-	} else if !on && DisableStatsOwner != nil {
-		return DisableStatsOwner()
-	}
-	return nil
-}
-
 func collectAllowFuncName4ExpressionIndex() string {
 	str := make([]string, 0, len(GAFunction4ExpressionIndex))
 	for funcName := range GAFunction4ExpressionIndex {
@@ -444,11 +507,11 @@ func collectAllowFuncName4ExpressionIndex() string {
 }
 
 func updatePasswordValidationLength(s *SessionVars, length int32) error {
-	err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), vardef.ValidatePasswordLength, strconv.FormatInt(int64(length), 10), false)
+	err := s.GlobalVarsAccessor.SetGlobalSysVarOnly(context.Background(), ValidatePasswordLength, strconv.FormatInt(int64(length), 10), false)
 	if err != nil {
 		return err
 	}
-	vardef.PasswordValidationLength.Store(length)
+	PasswordValidationLength.Store(length)
 	return nil
 }
 
@@ -479,7 +542,6 @@ var GAFunction4ExpressionIndex = map[string]struct{}{
 	ast.JSONMergePreserve: {},
 	ast.JSONPretty:        {},
 	ast.JSONQuote:         {},
-	ast.JSONSchemaValid:   {},
 	ast.JSONSearch:        {},
 	ast.JSONStorageSize:   {},
 	ast.JSONDepth:         {},
@@ -507,7 +569,7 @@ func ValidAnalyzeSkipColumnTypes(val string) (string, error) {
 	for _, item := range items {
 		columnType := strings.TrimSpace(item)
 		if _, ok := analyzeSkipAllowedTypes[columnType]; !ok {
-			return val, ErrWrongValueForVar.GenWithStackByArgs(vardef.TiDBAnalyzeSkipColumnTypes, val)
+			return val, ErrWrongValueForVar.GenWithStackByArgs(TiDBAnalyzeSkipColumnTypes, val)
 		}
 		columnTypes = append(columnTypes, columnType)
 	}
@@ -523,35 +585,4 @@ func ParseAnalyzeSkipColumnTypes(val string) map[string]struct{} {
 		}
 	}
 	return skipTypes
-}
-
-var (
-	// SchemaCacheSizeLowerBound will adjust the schema cache size to this value if
-	// it is lower than this value.
-	SchemaCacheSizeLowerBound uint64 = 64 * units.MiB
-	// SchemaCacheSizeLowerBoundStr is the string representation of
-	// SchemaCacheSizeLowerBound.
-	SchemaCacheSizeLowerBoundStr = "64MB"
-)
-
-func parseSchemaCacheSize(s *SessionVars, normalizedValue string, originalValue string) (byteSize uint64, normalizedStr string, err error) {
-	defer func() {
-		if err == nil && byteSize > 0 && byteSize < SchemaCacheSizeLowerBound {
-			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(vardef.TiDBSchemaCacheSize, originalValue))
-			byteSize = SchemaCacheSizeLowerBound
-			normalizedStr = SchemaCacheSizeLowerBoundStr
-		}
-		if err == nil && byteSize > math.MaxInt64 {
-			s.StmtCtx.AppendWarning(ErrTruncatedWrongValue.FastGenByArgs(vardef.TiDBSchemaCacheSize, originalValue))
-			byteSize = math.MaxInt64
-			normalizedStr = strconv.Itoa(math.MaxInt64)
-		}
-	}()
-
-	bt, str := parseByteSize(normalizedValue)
-	if str != "" {
-		return bt, str, nil
-	}
-
-	return 0, "", ErrTruncatedWrongValue.GenWithStackByArgs(vardef.TiDBSchemaCacheSize, originalValue)
 }

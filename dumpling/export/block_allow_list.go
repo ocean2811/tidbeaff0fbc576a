@@ -3,7 +3,7 @@
 package export
 
 import (
-	tcontext "github.com/pingcap/tidb/dumpling/context"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
 	"go.uber.org/zap"
 )
 

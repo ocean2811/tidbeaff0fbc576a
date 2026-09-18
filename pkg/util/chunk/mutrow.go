@@ -19,9 +19,9 @@ import (
 	"math"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
 )
 
 // MutRow represents a mutable Row.
@@ -51,7 +51,7 @@ func (mr MutRow) Clone() MutRow {
 }
 
 // MutRowFromValues creates a MutRow from a interface slice.
-func MutRowFromValues(vals ...any) MutRow {
+func MutRowFromValues(vals ...interface{}) MutRow {
 	c := &Chunk{columns: make([]*Column, 0, len(vals))}
 	for _, val := range vals {
 		col := makeMutRowColumn(val)
@@ -80,7 +80,7 @@ func MutRowFromTypes(types []*types.FieldType) MutRow {
 	return MutRow{c: c, idx: 0}
 }
 
-func zeroValForType(tp *types.FieldType) any {
+func zeroValForType(tp *types.FieldType) interface{} {
 	switch tp.GetType() {
 	case mysql.TypeFloat:
 		return float32(0)
@@ -113,14 +113,12 @@ func zeroValForType(tp *types.FieldType) any {
 		return types.Enum{}
 	case mysql.TypeJSON:
 		return types.CreateBinaryJSON(nil)
-	case mysql.TypeTiDBVectorFloat32:
-		return types.ZeroVectorFloat32
 	default:
 		return nil
 	}
 }
 
-func makeMutRowColumn(in any) *Column {
+func makeMutRowColumn(in interface{}) *Column {
 	switch x := in.(type) {
 	case nil:
 		col := makeMutRowBytesColumn(nil)
@@ -157,8 +155,6 @@ func makeMutRowColumn(in any) *Column {
 		col.data[0] = x.TypeCode
 		copy(col.data[1:], x.Value)
 		return col
-	case types.VectorFloat32:
-		return makeMutRowBytesColumn(x.ZeroCopySerialize())
 	case types.Duration:
 		col := newMutRowFixedLenColumn(8)
 		*(*int64)(unsafe.Pointer(&col.data[0])) = int64(x.Duration)
@@ -240,14 +236,14 @@ func (mr MutRow) SetRow(row Row) {
 }
 
 // SetValues sets the MutRow with values.
-func (mr MutRow) SetValues(vals ...any) {
+func (mr MutRow) SetValues(vals ...interface{}) {
 	for i, v := range vals {
 		mr.SetValue(i, v)
 	}
 }
 
 // SetValue sets the MutRow with colIdx and value.
-func (mr MutRow) SetValue(colIdx int, val any) {
+func (mr MutRow) SetValue(colIdx int, val interface{}) {
 	col := mr.c.columns[colIdx]
 	cleanColOfMutRow(col)
 	if val == nil {
@@ -282,8 +278,6 @@ func (mr MutRow) SetValue(colIdx int, val any) {
 		setMutRowNameValue(col, x.Name, x.Value)
 	case types.BinaryJSON:
 		setMutRowJSON(col, x)
-	case types.VectorFloat32:
-		setMutRowBytes(col, x.ZeroCopySerialize())
 	}
 	col.nullBitmap[0] = 1
 }
@@ -302,41 +296,21 @@ func (mr MutRow) SetDatum(colIdx int, d types.Datum) {
 	if d.IsNull() {
 		return
 	}
-	// For all fixed-size types, col.data may be zero-length when the column was
-	// originally null-allocated (a varlen column with empty buffer). Grow the
-	// buffer to the required size before writing.
 	switch d.Kind() {
 	case types.KindInt64, types.KindUint64, types.KindFloat64:
-		if len(col.data) < 8 {
-			col.data = make([]byte, 8)
-		}
 		binary.LittleEndian.PutUint64(mr.c.columns[colIdx].data, d.GetUint64())
 	case types.KindFloat32:
-		if len(col.data) < 4 {
-			col.data = make([]byte, 4)
-		}
 		binary.LittleEndian.PutUint32(mr.c.columns[colIdx].data, math.Float32bits(d.GetFloat32()))
 	case types.KindString, types.KindBytes, types.KindBinaryLiteral:
 		setMutRowBytes(col, d.GetBytes())
 	case types.KindMysqlTime:
-		if len(col.data) < sizeTime {
-			col.data = make([]byte, sizeTime)
-		}
 		*(*types.Time)(unsafe.Pointer(&col.data[0])) = d.GetMysqlTime()
 	case types.KindMysqlDuration:
-		if len(col.data) < 8 {
-			col.data = make([]byte, 8)
-		}
 		*(*int64)(unsafe.Pointer(&col.data[0])) = int64(d.GetMysqlDuration().Duration)
 	case types.KindMysqlDecimal:
-		if len(col.data) < types.MyDecimalStructSize {
-			col.data = make([]byte, types.MyDecimalStructSize)
-		}
 		*(*types.MyDecimal)(unsafe.Pointer(&col.data[0])) = *d.GetMysqlDecimal()
 	case types.KindMysqlJSON:
 		setMutRowJSON(col, d.GetMysqlJSON())
-	case types.KindVectorFloat32:
-		setMutRowBytes(col, d.GetVectorFloat32().ZeroCopySerialize())
 	case types.KindMysqlEnum:
 		e := d.GetMysqlEnum()
 		setMutRowNameValue(col, e.Name, e.Value)
@@ -402,7 +376,7 @@ func (mr MutRow) ShallowCopyPartialRow(colIdx int, row Row) {
 			dstCol.nullBitmap[0] = 0
 		}
 
-		if srcCol.IsFixed() {
+		if srcCol.isFixed() {
 			elemLen := len(srcCol.elemBuf)
 			offset := row.idx * elemLen
 			dstCol.data = srcCol.data[offset : offset+elemLen]

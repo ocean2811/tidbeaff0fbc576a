@@ -19,9 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/stretchr/testify/require"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 )
 
 func TestDeleteLockKey(t *testing.T) {
@@ -87,7 +86,7 @@ func TestDeleteLockKey(t *testing.T) {
 			tk1, tk2 := testkit.NewTestKit(t, store), testkit.NewTestKit(t, store)
 			tk1.MustExec("use test")
 			tk2.MustExec("use test")
-			tk1.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
+			tk1.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 			tk1.MustExec(testCase.ddl)
 			tk1.MustExec(testCase.pre)
 			tk1.MustExec("begin pessimistic")
@@ -108,46 +107,24 @@ func TestDeleteLockKey(t *testing.T) {
 	wg.Wait()
 }
 
-func TestDeleteIgnoreWithFK(t *testing.T) {
+func TestIssue21200(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+
 	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("drop database if exists TEST1")
+	tk.MustExec("create database TEST1")
+	tk.MustExec("use TEST1")
+	tk.MustExec("create table t(a int)")
+	tk.MustExec("create table t1(a int)")
+	tk.MustExec("insert into t values(1)")
+	tk.MustExec("insert into t1 values(1)")
+	tk.MustExec("delete a from t a where exists (select 1 from t1 where t1.a=a.a)")
+	tk.MustQuery("select * from t").Check(testkit.Rows())
 
-	tk.MustExec("use test")
-	tk.MustExec("create table parent (a int primary key)")
-	tk.MustExec("create table child (a int, foreign key (a) references parent(a))")
-
-	tk.MustExec("insert into parent values (1), (2)")
-	tk.MustExec("insert into child values (1)")
-
-	// Delete the row in parent table will fail
-	require.NotNil(t, tk.ExecToErr("delete from parent where a = 1"))
-
-	// Delete ignore will return no error
-	tk.MustExec("delete ignore from parent where a = 1")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))"))
-
-	// Other rows will be deleted successfully
-	tk.MustExec("delete ignore from parent")
-	tk.MustQuery("show warnings").Check(testkit.Rows("Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))"))
-	tk.MustQuery("select * from parent").Check(testkit.Rows("1"))
-
-	tk.MustExec("insert into parent values (2)")
-	// Delete multiple tables
-	tk.MustExec("create table parent2 (a int primary key)")
-	tk.MustExec("create table child2 (a int, foreign key (a) references parent2(a))")
-	tk.MustExec("insert into parent2 values (1), (2)")
-	tk.MustExec("insert into child2 values (1)")
-	require.NotNil(t, tk.ExecToErr("delete from parent, parent2 using parent inner join parent2 where parent.a = parent2.a"))
-	tk.MustExec("delete ignore from parent, parent2 using parent inner join parent2 where parent.a = parent2.a")
-	tk.MustQuery("show warnings").Sort().Check(testkit.Rows(
-		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child2`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent2` (`a`))",
-		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))"))
-	tk.MustQuery("select * from parent").Check(testkit.Rows("1"))
-	tk.MustQuery("select * from parent2").Check(testkit.Rows("1"))
-
-	// Test batch on delete
-	require.NotNil(t, tk.ExecToErr("batch on `a` limit 1000 delete from parent where a = 1"))
-	tk.MustExec("batch on `a` limit 1000 delete ignore from parent where a = 1")
-	tk.MustQuery("show warnings").Check(testkit.Rows(
-		"Warning 1451 Cannot delete or update a parent row: a foreign key constraint fails (`test`.`child`, CONSTRAINT `fk_1` FOREIGN KEY (`a`) REFERENCES `parent` (`a`))"))
+	tk.MustExec("insert into t values(1), (2)")
+	tk.MustExec("insert into t1 values(2)")
+	tk.MustExec("prepare stmt from 'delete a from t a where exists (select 1 from t1 where a.a=t1.a and t1.a=?)'")
+	tk.MustExec("set @a=1")
+	tk.MustExec("execute stmt using @a")
+	tk.MustQuery("select * from t").Check(testkit.Rows("2"))
 }

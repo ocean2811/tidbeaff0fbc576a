@@ -29,7 +29,7 @@ follower or stale read requests that could be handled by multiple available peer
 
 ## Improvement Proposal
 
-A possible improvement suggested by [#44771](https://github.com/pingcap/tidb/issues/44771) is to make the
+A possible improvement suggested by [#44771](https://github.com/ocean2811/tidbeaff0fbc576a/issues/44771) is to make the
 timeout values of specific KV requests configurable. For example:
 - Adding a session variable `tikv_client_read_timeout`, which is used to control the timeout for a single 
 TiKV read RPC request. When the user sets the value of this variable, all read RPC request timeouts will use this value. 

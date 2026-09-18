@@ -15,55 +15,9 @@
 package metrics
 
 import (
-	"maps"
-	"strconv"
 	"strings"
-	"sync"
 
-	"github.com/pingcap/tidb/pkg/lightning/metric"
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
-	"github.com/pingcap/tidb/pkg/util/promutil"
 	"github.com/prometheus/client_golang/prometheus"
-)
-
-type backfillMetricRegistry struct {
-	mu      sync.Mutex
-	byTblID map[int64]map[string]struct{}
-}
-
-func (r *backfillMetricRegistry) register(tableID int64, typeLabel string) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	set, ok := r.byTblID[tableID]
-	if !ok {
-		set = make(map[string]struct{}, 8)
-		r.byTblID[tableID] = set
-	}
-	set[typeLabel] = struct{}{}
-}
-
-func (r *backfillMetricRegistry) clear(tableID int64) []string {
-	r.mu.Lock()
-	labels, ok := r.byTblID[tableID]
-	if ok {
-		delete(r.byTblID, tableID)
-	}
-	r.mu.Unlock()
-	if !ok {
-		return nil
-	}
-	out := make([]string, 0, len(labels))
-	for l := range labels {
-		out = append(out, l)
-	}
-	return out
-}
-
-var (
-	mu                   sync.Mutex
-	registeredJobMetrics = make(map[int64]*metric.Common, 64)
-
-	backfillMetricsRegistry = &backfillMetricRegistry{byTblID: make(map[int64]map[string]struct{}, 64)}
 )
 
 // Metrics for the DDL package.
@@ -89,36 +43,13 @@ var (
 
 	OwnerHandleSyncerHistogram *prometheus.HistogramVec
 
-	// Metrics for job_worker.go.
-	WorkerAddDDLJob    = "add_job"
-	DDLWorkerHistogram *prometheus.HistogramVec
-
-	// DDLRunOneStep is the label for the DDL worker operation run_one_step.
-	//
-	// if a DDL job runs successfully, the cost time is mostly in below structure:
-	//
-	// run_job
-	// ├─ step-1
-	// │  ├─ transit_one_step
-	// │  │  ├─ run_one_step
-	// │  │  │  ├─ lock_schema_ver
-	// │  │  │  ├─ incr_schema_ver
-	// │  │  │  ├─ async_notify
-	// │  │  ├─ other common works such as register MDL, commit, etc.
-	// │  ├─ wait_schema_synced
-	// │  ├─ clean_mdl_info
-	// ├─ step-2/3/4 ... similar as above -> done state
-	// ├─ handle_job_done
-	DDLRunOneStep           = "run_one_step"
-	DDLWaitSchemaSynced     = "wait_schema_synced"
-	DDLIncrSchemaVerOpHist  prometheus.Observer
-	DDLLockSchemaVerOpHist  prometheus.Observer
-	DDLRunJobOpHist         prometheus.Observer
-	DDLHandleJobDoneOpHist  prometheus.Observer
-	DDLTransitOneStepOpHist prometheus.Observer
-	DDLLockVerDurationHist  prometheus.Observer
-	DDLCleanMDLInfoHist     prometheus.Observer
-	RetryableErrorCount     *prometheus.CounterVec
+	// Metrics for ddl_worker.go.
+	WorkerNotifyDDLJob      = "notify_job"
+	WorkerAddDDLJob         = "add_job"
+	WorkerRunDDLJob         = "run_job"
+	WorkerFinishDDLJob      = "finish_job"
+	WorkerWaitSchemaChanged = "wait_schema_changed"
+	DDLWorkerHistogram      *prometheus.HistogramVec
 
 	CreateDDLInstance = "create_ddl_instance"
 	CreateDDL         = "create_ddl"
@@ -134,7 +65,7 @@ var (
 
 // InitDDLMetrics initializes defines DDL metrics.
 func InitDDLMetrics() {
-	JobsGauge = metricscommon.NewGaugeVec(
+	JobsGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -142,7 +73,7 @@ func InitDDLMetrics() {
 			Help:      "Gauge of jobs.",
 		}, []string{LblType})
 
-	HandleJobHistogram = metricscommon.NewHistogramVec(
+	HandleJobHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -151,7 +82,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.01, 2, 24), // 10ms ~ 24hours
 		}, []string{LblType, LblResult})
 
-	BatchAddIdxHistogram = metricscommon.NewHistogramVec(
+	BatchAddIdxHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -160,7 +91,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType})
 
-	DeploySyncerHistogram = metricscommon.NewHistogramVec(
+	DeploySyncerHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -169,7 +100,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType, LblResult})
 
-	UpdateSelfVersionHistogram = metricscommon.NewHistogramVec(
+	UpdateSelfVersionHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -178,7 +109,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblResult})
 
-	OwnerHandleSyncerHistogram = metricscommon.NewHistogramVec(
+	OwnerHandleSyncerHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -187,7 +118,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 		}, []string{LblType, LblResult})
 
-	DDLWorkerHistogram = metricscommon.NewHistogramVec(
+	DDLWorkerHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -196,7 +127,7 @@ func InitDDLMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(0.001, 2, 28), // 1ms ~ 1.5days
 		}, []string{LblType, LblAction, LblResult})
 
-	DDLCounter = metricscommon.NewCounterVec(
+	DDLCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -204,7 +135,7 @@ func InitDDLMetrics() {
 			Help:      "Counter of creating ddl/worker and isowner.",
 		}, []string{LblType})
 
-	BackfillTotalCounter = metricscommon.NewCounterVec(
+	BackfillTotalCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -212,7 +143,7 @@ func InitDDLMetrics() {
 			Help:      "Speed of add index",
 		}, []string{LblType})
 
-	BackfillProgressGauge = metricscommon.NewGaugeVec(
+	BackfillProgressGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -220,7 +151,7 @@ func InitDDLMetrics() {
 			Help:      "Percentage progress of backfill",
 		}, []string{LblType})
 
-	DDLJobTableDuration = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
+	DDLJobTableDuration = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "ddl",
 		Name:      "job_table_duration_seconds",
@@ -228,7 +159,7 @@ func InitDDLMetrics() {
 		Buckets:   prometheus.ExponentialBuckets(0.001, 2, 20), // 1ms ~ 524s
 	}, []string{LblType})
 
-	DDLRunningJobCount = metricscommon.NewGaugeVec(
+	DDLRunningJobCount = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "ddl",
@@ -236,166 +167,39 @@ func InitDDLMetrics() {
 			Help:      "Running DDL jobs count",
 		}, []string{LblType})
 
-	AddIndexScanRate = metricscommon.NewHistogramVec(prometheus.HistogramOpts{
+	AddIndexScanRate = NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "tidb",
 		Subsystem: "ddl",
 		Name:      "scan_rate",
 		Help:      "scan rate",
 		Buckets:   prometheus.ExponentialBuckets(0.05, 2, 20),
 	}, []string{LblType})
-
-	RetryableErrorCount = metricscommon.NewCounterVec(prometheus.CounterOpts{
-		Namespace: "tidb",
-		Subsystem: "ddl",
-		Name:      "retryable_error_total",
-		Help:      "Retryable error count during ddl.",
-	}, []string{LblType})
-
-	// those metrics are for diagnose performance issues of running multiple DDLs
-	// is a short time window, so we don't need to add label for DDL type.
-	DDLIncrSchemaVerOpHist = DDLWorkerHistogram.WithLabelValues("incr_schema_ver", "*", "*")
-	DDLLockSchemaVerOpHist = DDLWorkerHistogram.WithLabelValues("lock_schema_ver", "*", "*")
-	DDLRunJobOpHist = DDLWorkerHistogram.WithLabelValues("run_job", "*", "*")
-	DDLHandleJobDoneOpHist = DDLWorkerHistogram.WithLabelValues("handle_job_done", "*", "*")
-	DDLTransitOneStepOpHist = DDLWorkerHistogram.WithLabelValues("transit_one_step", "*", "*")
-	DDLLockVerDurationHist = DDLWorkerHistogram.WithLabelValues("lock_ver_duration", "*", "*")
-	DDLCleanMDLInfoHist = DDLWorkerHistogram.WithLabelValues("clean_mdl_info", "*", "*")
 }
-
-var (
-	// DDLAddOneTempIndexWrite records the number of writes to a temporary index.
-	DDLAddOneTempIndexWrite = func(connID uint64, tableID int64, doubleWrite bool) {}
-	// DDLCommitTempIndexWrite commits the writes to a temporary index.
-	DDLCommitTempIndexWrite = func(connID uint64) {}
-	// DDLRollbackTempIndexWrite rolls back the writes to a temporary index.
-	DDLRollbackTempIndexWrite = func(connID uint64) {}
-	// DDLResetTempIndexWrite resets the write count for a temporary index.
-	DDLResetTempIndexWrite = func(tblID int64) {}
-	// DDLClearTempIndexWrite clears the write count for a temporary index.
-	DDLClearTempIndexWrite = func(connID uint64) {}
-	// DDLSetTempIndexScanAndMerge sets the scan count and merge count for a temporary index.
-	DDLSetTempIndexScanAndMerge = func(tableID int64, scanCnt, mergeCnt uint64) {}
-)
 
 // Label constants.
 const (
 	LblAction = "action"
 
-	// Used by BackfillProgressGauge
-	LblAddIndex       = "add_index"
-	LblAddIndexMerge  = "add_index_merge_tmp"
-	LblModifyColumn   = "modify_column"
-	LblReorgPartition = "reorganize_partition"
+	LblAddIndex      = "add_index"
+	LblAddIndexMerge = "add_index_merge_tmp"
+	LblModifyColumn  = "modify_column"
 
-	// Used by BackfillTotalCounter
-	LblAddIdxRate         = "add_idx_rate"
-	LblMergeTmpIdxRate    = "merge_tmp_idx_rate"
-	LblCleanupIdxRate     = "cleanup_idx_rate"
-	LblUpdateColRate      = "update_col_rate"
-	LblReorgPartitionRate = "reorg_partition_rate"
+	LblReorgPartition = "reorganize_partition"
 )
 
-// generateReorgLabel returns the label with schema name, table name and optional column/index names.
-// Multiple columns/indexes can be concatenated with "+".
-func generateReorgLabel(label, schemaName, tableName, colOrIdxNames string) string {
+// GenerateReorgLabel returns the label with schema name and table name.
+func GenerateReorgLabel(label string, schemaName string, tableName string) string {
 	var stringBuilder strings.Builder
-	if len(colOrIdxNames) == 0 {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
-	} else {
-		stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + len(colOrIdxNames) + 3)
-	}
+	stringBuilder.Grow(len(label) + len(schemaName) + len(tableName) + 2)
 	stringBuilder.WriteString(label)
-	stringBuilder.WriteString("-")
+	stringBuilder.WriteString("_")
 	stringBuilder.WriteString(schemaName)
-	stringBuilder.WriteString("-")
+	stringBuilder.WriteString("_")
 	stringBuilder.WriteString(tableName)
-	if len(colOrIdxNames) > 0 {
-		stringBuilder.WriteString("-")
-		stringBuilder.WriteString(colOrIdxNames)
-	}
 	return stringBuilder.String()
 }
 
-// GetBackfillTotalByTableID returns the Counter for the given table ID and type label.
-// It also tracks the label for later cleanup.
-func GetBackfillTotalByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Counter {
-	typeLabel := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
-	backfillMetricsRegistry.register(tableID, typeLabel)
-	return BackfillTotalCounter.WithLabelValues(typeLabel)
-}
-
-// GetBackfillProgressByTableID returns the Gauge for the given table ID and type label.
-// It also tracks the label for later cleanup.
-func GetBackfillProgressByTableID(tableID int64, label, schemaName, tableName, optionalColOrIdxName string) prometheus.Gauge {
-	typeLabel := generateReorgLabel(label, schemaName, tableName, optionalColOrIdxName)
-	backfillMetricsRegistry.register(tableID, typeLabel)
-	return BackfillProgressGauge.WithLabelValues(typeLabel)
-}
-
-// DDLClearBackfillMetrics deletes all backfill-related metric series registered
-// for the given table ID key.
-func DDLClearBackfillMetrics(tableID int64) {
-	labels := backfillMetricsRegistry.clear(tableID)
-	for _, typeLabel := range labels {
-		BackfillProgressGauge.DeleteLabelValues(typeLabel)
-		BackfillTotalCounter.DeleteLabelValues(typeLabel)
-	}
-}
-
-// DDLHasBackfillMetrics reports whether there are any registered backfill metrics.
-func DDLHasBackfillMetrics() bool {
-	backfillMetricsRegistry.mu.Lock()
-	defer backfillMetricsRegistry.mu.Unlock()
-	return len(backfillMetricsRegistry.byTblID) > 0
-}
-
-// GetBackfillLabelsForTest returns the registered label set for the given table ID.
-// It is only used in tests.
-func GetBackfillLabelsForTest(tableID int64) map[string]struct{} {
-	backfillMetricsRegistry.mu.Lock()
-	defer backfillMetricsRegistry.mu.Unlock()
-	set, ok := backfillMetricsRegistry.byTblID[tableID]
-	if !ok {
-		return nil
-	}
-	out := make(map[string]struct{}, len(set))
-	for k := range set {
-		out[k] = struct{}{}
-	}
-	return out
-}
-
-// RegisterLightningCommonMetricsForDDL returns the registered common metrics.
-func RegisterLightningCommonMetricsForDDL(jobID int64) *metric.Common {
-	mu.Lock()
-	defer mu.Unlock()
-	if m, ok := registeredJobMetrics[jobID]; ok {
-		return m
-	}
-	metrics := metric.NewCommon(promutil.NewDefaultFactory(), TiDB, "ddl", prometheus.Labels{
-		"job_id": strconv.FormatInt(jobID, 10),
-	})
-	metrics.RegisterTo(prometheus.DefaultRegisterer)
-	registeredJobMetrics[jobID] = metrics
-	return metrics
-}
-
-// UnregisterLightningCommonMetricsForDDL unregisters the registered common metrics.
-func UnregisterLightningCommonMetricsForDDL(jobID int64, metrics *metric.Common) {
-	if metrics == nil {
-		return
-	}
-	mu.Lock()
-	defer mu.Unlock()
-	metrics.UnregisterFrom(prometheus.DefaultRegisterer)
-	delete(registeredJobMetrics, jobID)
-}
-
-// GetRegisteredJob is used for test
-func GetRegisteredJob() map[int64]*metric.Common {
-	mu.Lock()
-	defer mu.Unlock()
-	ret := make(map[int64]*metric.Common, len(registeredJobMetrics))
-	maps.Copy(ret, registeredJobMetrics)
-	return ret
+// GetBackfillProgressByLabel returns the Gauge showing the percentage progress for the given type label.
+func GetBackfillProgressByLabel(label string, schemaName string, tableName string) prometheus.Gauge {
+	return BackfillProgressGauge.WithLabelValues(GenerateReorgLabel(label, schemaName, tableName))
 }

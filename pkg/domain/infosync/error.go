@@ -15,11 +15,14 @@
 package infosync
 
 import (
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
 )
 
 var (
 	// ErrHTTPServiceError means we got a http response with a status code which is not '2xx'
-	ErrHTTPServiceError = dbterror.ClassDomain.NewStd(errno.ErrHTTPServiceError)
+	ErrHTTPServiceError = dbterror.ClassDomain.NewStdErr(
+		errno.ErrHTTPServiceError, mysql.Message("HTTP request failed with status %s", nil),
+	)
 )

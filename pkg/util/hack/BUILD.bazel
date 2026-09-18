@@ -2,12 +2,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "hack",
-    srcs = [
-        "hack.go",
-        "map_abi.go",
-        "map_abi_go126.go",
-    ],
-    importpath = "github.com/pingcap/tidb/pkg/util/hack",
+    srcs = ["hack.go"],
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack",
     visibility = ["//visibility:public"],
 )
 
@@ -17,15 +13,11 @@ go_test(
     srcs = [
         "hack_test.go",
         "main_test.go",
-        "map_abi_test.go",
-        "map_abi_test_type_go125_test.go",
-        "map_abi_test_type_go126_test.go",
     ],
     embed = [":hack"],
     flaky = True,
     deps = [
         "//pkg/testkit/testsetup",
-        "@com_github_stretchr_testify//require",
         "@org_uber_go_goleak//:goleak",
     ],
 )

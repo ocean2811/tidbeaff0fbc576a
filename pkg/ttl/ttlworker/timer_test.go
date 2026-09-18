@@ -23,11 +23,9 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	timerapi "github.com/pingcap/tidb/pkg/timer/api"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	timerapi "github.com/ocean2811/tidbeaff0fbc576a/pkg/timer/api"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
@@ -55,14 +53,6 @@ func (a *mockJobAdapter) GetJob(ctx context.Context, tableID, physicalID int64, 
 		job = obj.(*TTLJobTrace)
 	}
 	return job, args.Error(1)
-}
-
-func (a *mockJobAdapter) Now() (now time.Time, _ error) {
-	args := a.Called()
-	if obj := args.Get(0); obj != nil {
-		now = obj.(time.Time)
-	}
-	return now, nil
 }
 
 type mockTimerCli struct {
@@ -145,9 +135,9 @@ func triggerTestTimer(t *testing.T, store *timerapi.TimerStore, timerID string) 
 }
 
 func clearTTLWindowAndEnable() {
-	vardef.EnableTTLJob.Store(true)
-	vardef.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 0, 0, 0, 0, time.UTC))
-	vardef.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 23, 59, 0, 0, time.UTC))
+	variable.EnableTTLJob.Store(true)
+	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 0, 0, 0, 0, time.UTC))
+	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 23, 59, 0, 0, time.UTC))
 }
 
 func makeTTLSummary(t *testing.T, requestID string) (*ttlTimerSummary, []byte) {
@@ -193,14 +183,13 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 
 	// normal
 	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
-	adapter.On("Now").Return(time.Now()).Once()
 	r, err := hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{}, r)
 	adapter.AssertExpectations(t)
 
 	// global ttl job disabled
-	vardef.EnableTTLJob.Store(false)
+	variable.EnableTTLJob.Store(false)
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
@@ -208,17 +197,18 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 
 	// not in window
 	now := time.Date(2023, 1, 1, 15, 10, 0, 0, time.UTC)
-	adapter.On("Now").Return(now, nil).Once()
+	hook.nowFunc = func() time.Time {
+		return now
+	}
 	clearTTLWindowAndEnable()
-	vardef.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
+	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
 	adapter.AssertExpectations(t)
 
 	clearTTLWindowAndEnable()
-	adapter.On("Now").Return(now, nil).Once()
-	vardef.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
+	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{Delay: time.Minute}, r)
@@ -226,10 +216,9 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 
 	// in window
 	clearTTLWindowAndEnable()
-	adapter.On("Now").Return(now, nil).Once()
 	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).Return(true).Once()
-	vardef.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
-	vardef.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
+	variable.TTLJobScheduleWindowStartTime.Store(time.Date(0, 0, 0, 15, 9, 0, 0, time.UTC))
+	variable.TTLJobScheduleWindowEndTime.Store(time.Date(0, 0, 0, 15, 11, 0, 0, time.UTC))
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, timerapi.PreSchedEventResult{}, r)
@@ -237,7 +226,6 @@ func TestTTLTimerHookPrepare(t *testing.T) {
 
 	// CanSubmitJob returns false
 	clearTTLWindowAndEnable()
-	adapter.On("Now").Return(now, nil).Once()
 	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).Return(false).Once()
 	r, err = hook.OnPreSchedEvent(context.TODO(), &mockTimerSchedEvent{eventID: "event1", timer: timer})
 	require.NoError(t, err)
@@ -279,7 +267,6 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("SubmitJob", ctx, data.TableID, data.PhysicalID, timer.EventID, timer.EventStart).
 		Return(nil, errors.New("mockSubmitErr")).
 		Once()
-	adapter.On("Now").Return(time.Now()).Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
 	require.EqualError(t, err, "mockSubmitErr")
 	adapter.AssertExpectations(t)
@@ -318,7 +305,6 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("GetJob", hook.ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(&TTLJobTrace{RequestID: timer.EventID, Finished: true, Summary: summary.LastJobSummary}, nil).
 		Once()
-	adapter.On("Now").Return(time.Now()).Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
 	require.NoError(t, err)
 	require.Equal(t, int64(1), hook.waitJobLoopCounter)
@@ -351,9 +337,8 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	require.Equal(t, summaryData, timer.SummaryData)
 	adapter.AssertExpectations(t)
 
-	tz := timeutil.SystemLocation()
 	// job not exists but table ttl not enabled
-	watermark := time.Unix(3600*123, 0).In(tz)
+	watermark := time.Unix(3600*123, 0)
 	require.NoError(t, cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetWatermark(watermark)))
 	timer = triggerTestTimer(t, store, timer.ID)
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
@@ -362,7 +347,6 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	adapter.On("CanSubmitJob", data.TableID, data.PhysicalID).
 		Return(false).
 		Once()
-	adapter.On("Now").Return(time.Now()).Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
 	require.NoError(t, err)
 	adapter.AssertExpectations(t)
@@ -375,14 +359,13 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	require.Equal(t, oldSummary, timer.SummaryData)
 
 	// job not exists but timer disabled
-	watermark = time.Unix(3600*456, 0).In(tz)
+	watermark = time.Unix(3600*456, 0)
 	require.NoError(t, cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetWatermark(watermark), timerapi.WithSetEnable(false)))
 	timer = triggerTestTimer(t, store, timer.ID)
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()
 	require.False(t, timer.Enable)
-	adapter.On("Now").Return(time.Now()).Once()
 	err = hook.OnSchedEvent(ctx, &mockTimerSchedEvent{eventID: timer.EventID, timer: timer})
 	require.NoError(t, err)
 	adapter.AssertExpectations(t)
@@ -396,10 +379,12 @@ func TestTTLTimerHookOnEvent(t *testing.T) {
 	require.NoError(t, cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetEnable(true)))
 
 	// job not exists but event start too early
-	watermark = time.Unix(3600*789, 0).In(tz)
+	watermark = time.Unix(3600*789, 0)
 	require.NoError(t, cli.UpdateTimer(ctx, timer.ID, timerapi.WithSetWatermark(watermark)))
 	timer = triggerTestTimer(t, store, timer.ID)
-	adapter.On("Now").Return(timer.EventStart.Add(11*time.Minute), nil).Once()
+	hook.nowFunc = func() time.Time {
+		return timer.EventStart.Add(11 * time.Minute)
+	}
 	adapter.On("GetJob", ctx, data.TableID, data.PhysicalID, timer.EventID).
 		Return(nil, nil).
 		Once()
@@ -569,24 +554,4 @@ func TestTTLTimerRuntime(t *testing.T) {
 	require.NotNil(t, r.rt)
 	r.Pause()
 	require.Nil(t, r.rt)
-}
-
-func TestGetTTLSchedulePolicy(t *testing.T) {
-	// normal case
-	tp, expr := getTTLSchedulePolicy(&model.TTLInfo{
-		JobInterval: "12h",
-	})
-	require.Equal(t, timerapi.SchedEventInterval, tp)
-	require.Equal(t, "12h", expr)
-	_, err := timerapi.CreateSchedEventPolicy(tp, expr)
-	require.NoError(t, err)
-
-	// empty job interval
-	tp, expr = getTTLSchedulePolicy(&model.TTLInfo{
-		JobInterval: "",
-	})
-	require.Equal(t, timerapi.SchedEventInterval, tp)
-	require.Equal(t, model.OldDefaultTTLJobInterval, expr)
-	_, err = timerapi.CreateSchedEventPolicy(tp, expr)
-	require.NoError(t, err)
 }

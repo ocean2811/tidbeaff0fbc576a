@@ -22,8 +22,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
 	"go.uber.org/zap"
 )
 
@@ -50,6 +51,8 @@ const (
 	wordBase      = ten9
 	wordMax       = wordBase - 1
 	notFixedDec   = 31
+
+	DivFracIncr = 4
 
 	// Round up to the next integer if positive or down to the next integer if negative.
 	ModeHalfUp RoundMode = 5
@@ -247,17 +250,6 @@ type MyDecimal struct {
 	wordBuf [maxWordBufLen]int32
 }
 
-// Clone generate a new decimal with same values
-func (d *MyDecimal) Clone() *MyDecimal {
-	newDec := new(MyDecimal)
-	newDec.digitsInt = d.digitsInt
-	newDec.digitsFrac = d.digitsFrac
-	newDec.resultFrac = d.resultFrac
-	newDec.negative = d.negative
-	copy(newDec.wordBuf[:], d.wordBuf[:])
-	return newDec
-}
-
 // IsNegative returns whether a decimal is negative.
 func (d *MyDecimal) IsNegative() bool {
 	return d.negative
@@ -362,7 +354,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 		for ; digitsFrac > 0; digitsFrac -= digitsPerWord {
 			x := d.wordBuf[wordIdx]
 			wordIdx++
-			for i := min(digitsFrac, digitsPerWord); i > 0; i-- {
+			for i := mathutil.Min(digitsFrac, digitsPerWord); i > 0; i-- {
 				y := x / digMask
 				str[fracIdx] = byte(y) + '0'
 				fracIdx++
@@ -389,7 +381,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 		for ; digitsInt > 0; digitsInt -= digitsPerWord {
 			wordIdx--
 			x := d.wordBuf[wordIdx]
-			for i := min(digitsInt, digitsPerWord); i > 0; i-- {
+			for i := mathutil.Min(digitsInt, digitsPerWord); i > 0; i-- {
 				y := x / 10
 				strIdx--
 				str[strIdx] = '0' + byte(x-y*10)
@@ -404,7 +396,7 @@ func (d *MyDecimal) ToString() (str []byte) {
 
 // FromString parses decimal from string.
 func (d *MyDecimal) FromString(str []byte) error {
-	for i := range str {
+	for i := 0; i < len(str); i++ {
 		if !isSpace(str[i]) {
 			str = str[i:]
 			break
@@ -412,7 +404,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if len(str) == 0 {
 		*d = zeroMyDecimal
-		return ErrTruncatedWrongVal.FastGenByArgs("DECIMAL", str)
+		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
 	}
 	switch str[0] {
 	case '-':
@@ -440,7 +432,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 	}
 	if digitsInt+digitsFrac == 0 {
 		*d = zeroMyDecimal
-		return ErrTruncatedWrongVal.FastGenByArgs("DECIMAL", str)
+		return ErrTruncatedWrongVal.GenWithStackByArgs("DECIMAL", str)
 	}
 	wordsInt := digitsToWords(digitsInt)
 	wordsFrac := digitsToWords(digitsFrac)
@@ -531,7 +523,7 @@ func (d *MyDecimal) FromString(str []byte) error {
 		}
 	}
 	allZero := true
-	for i := range wordBufLen {
+	for i := 0; i < wordBufLen; i++ {
 		if d.wordBuf[i] != 0 {
 			allZero = false
 			break
@@ -576,8 +568,14 @@ func (d *MyDecimal) Shift(shift int) error {
 		return nil
 	}
 
-	digitsInt = max(newPoint-digitBegin, 0)
-	digitsFrac = max(digitEnd-newPoint, 0)
+	digitsInt = newPoint - digitBegin
+	if digitsInt < 0 {
+		digitsInt = 0
+	}
+	digitsFrac = digitEnd - newPoint
+	if digitsFrac < 0 {
+		digitsFrac = 0
+	}
 	wordsInt := digitsToWords(digitsInt)
 	wordsFrac := digitsToWords(digitsFrac)
 	newLen := wordsInt + wordsFrac
@@ -843,7 +841,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 	if to != d {
 		copy(to.wordBuf[:], d.wordBuf[:])
 		to.negative = d.negative
-		to.digitsInt = int8(min(wordsInt, wordBufLen) * digitsPerWord)
+		to.digitsInt = int8(mathutil.Min(wordsInt, wordBufLen) * digitsPerWord)
 	}
 	if wordsFracTo > wordsFrac {
 		idx := wordsInt + wordsFrac
@@ -944,7 +942,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 				frac = wordsFracTo * digitsPerWord
 				err = ErrTruncated
 			}
-			for toIdx = wordsInt + max(wordsFracTo, 0); toIdx > 0; toIdx-- {
+			for toIdx = wordsInt + mathutil.Max(wordsFracTo, 0); toIdx > 0; toIdx-- {
 				if toIdx < wordBufLen {
 					to.wordBuf[toIdx] = to.wordBuf[toIdx-1]
 				} else {
@@ -968,7 +966,7 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 				/* making 'zero' with the proper scale */
 				idx := wordsFracTo + 1
 				to.digitsInt = 1
-				to.digitsFrac = int8(max(frac, 0))
+				to.digitsFrac = int8(mathutil.Max(frac, 0))
 				to.negative = false
 				for toIdx < idx {
 					to.wordBuf[toIdx] = 0
@@ -991,77 +989,6 @@ func (d *MyDecimal) Round(to *MyDecimal, frac int, roundMode RoundMode) (err err
 	to.digitsFrac = int8(frac)
 	to.resultFrac = to.digitsFrac
 	return
-}
-
-// FromParquetArray sets the decimal value from Parquet byte array representation.
-// It assumes that the input buffer is disposable, which will be modified during
-// the conversion.
-// Note:
-//  1. The input buffer will be modified in-place. Callers must pass a disposable
-//     copy if they need to preserve the original data.
-//     For the data layout stored in parquet, please refer to
-//     https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#decimal
-//  2. This function doesn't handle overflow/truncate, use it with caution.
-func (d *MyDecimal) FromParquetArray(buf []byte, scale int) (err error) {
-	// MyDecimal's wordBuf stores absolute value, so we need to get absolute
-	// value from two's complement first.
-	d.negative = (buf[0] & 0x80) != 0
-	if d.negative {
-		for i := range buf {
-			buf[i] = ^buf[i]
-		}
-		for i := len(buf) - 1; i >= 0; i-- {
-			buf[i]++
-			if buf[i] != 0 {
-				break
-			}
-		}
-	}
-
-	var (
-		startIndex = 0
-		endIndex   = len(buf)
-	)
-
-	for startIndex < endIndex && buf[startIndex] == 0 {
-		startIndex++
-	}
-
-	// Apply long‑division algorithm to do radix conversion.
-	wordIdx := 0
-	for startIndex < endIndex {
-		var rem uint64
-		for i := startIndex; i < endIndex; i++ {
-			v := (rem << 8) | uint64(buf[i])
-			q := v / ten9
-			rem = v % ten9
-			buf[i] = byte(q)
-			if q == 0 && i == startIndex {
-				startIndex++
-			}
-		}
-
-		if wordIdx >= wordBufLen {
-			return ErrOverflow
-		}
-
-		d.wordBuf[wordIdx] = int32(rem)
-		wordIdx++
-	}
-
-	for idx := range wordIdx / 2 {
-		d.wordBuf[idx], d.wordBuf[wordIdx-idx-1] =
-			d.wordBuf[wordIdx-idx-1], d.wordBuf[idx]
-	}
-
-	d.digitsFrac = 0
-	d.resultFrac = 0
-	d.digitsInt = int8(wordIdx * digitsPerWord)
-	if err := d.Shift(-scale); err != nil {
-		return err
-	}
-
-	return d.Round(d, scale, ModeTruncate)
 }
 
 // FromInt sets the decimal value from int64.
@@ -1432,23 +1359,6 @@ func (d *MyDecimal) ToHashKey() ([]byte, error) {
 	return buf, err
 }
 
-// HashKeySize returns the size of hash key
-func (d *MyDecimal) HashKeySize() (int, error) {
-	_, digitsInt := d.removeLeadingZeros()
-	_, digitsFrac := d.removeTrailingZeros()
-	prec := digitsInt + digitsFrac
-	if prec == 0 { // zeroDecimal
-		prec = 1
-	}
-
-	size, err := DecimalBinSize(prec, digitsFrac)
-	if err != nil {
-		return 0, err
-	}
-
-	return size + 1, nil
-}
-
 // PrecisionAndFrac returns the internal precision and frac number.
 func (d *MyDecimal) PrecisionAndFrac() (precision, frac int) {
 	frac = int(d.digitsFrac)
@@ -1693,7 +1603,7 @@ func DecimalNeg(from *MyDecimal) *MyDecimal {
 // of `to` may be changed during evaluating.
 func DecimalAdd(from1, from2, to *MyDecimal) error {
 	from1, from2, to = validateArgs(from1, from2, to)
-	to.resultFrac = max(from1.resultFrac, from2.resultFrac)
+	to.resultFrac = mathutil.Max(from1.resultFrac, from2.resultFrac)
 	if from1.negative == from2.negative {
 		return doAdd(from1, from2, to)
 	}
@@ -1704,7 +1614,7 @@ func DecimalAdd(from1, from2, to *MyDecimal) error {
 // DecimalSub subs one decimal from another, sets the result to 'to'.
 func DecimalSub(from1, from2, to *MyDecimal) error {
 	from1, from2, to = validateArgs(from1, from2, to)
-	to.resultFrac = max(from1.resultFrac, from2.resultFrac)
+	to.resultFrac = mathutil.Max(from1.resultFrac, from2.resultFrac)
 	if from1.negative == from2.negative {
 		_, err := doSub(from1, from2, to)
 		return err
@@ -1740,7 +1650,7 @@ func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
 		wordsFrac1  = digitsToWords(int(from1.digitsFrac))
 		wordsInt2   = digitsToWords(int(from2.digitsInt))
 		wordsFrac2  = digitsToWords(int(from2.digitsFrac))
-		wordsFracTo = max(wordsFrac1, wordsFrac2)
+		wordsFracTo = mathutil.Max(wordsFrac1, wordsFrac2)
 
 		start1 = 0
 		stop1  = wordsInt1
@@ -1820,7 +1730,10 @@ func doSub(from1, from2, to *MyDecimal) (cmp int, err error) {
 
 	wordsInt1, wordsFracTo, err = fixWordCntError(wordsInt1, wordsFracTo)
 	idxTo := wordsInt1 + wordsFracTo
-	to.digitsFrac = max(from1.digitsFrac, from2.digitsFrac)
+	to.digitsFrac = from1.digitsFrac
+	if to.digitsFrac < from2.digitsFrac {
+		to.digitsFrac = from2.digitsFrac
+	}
 	to.digitsInt = int8(wordsInt1 * digitsPerWord)
 	if err != nil {
 		if to.digitsFrac > int8(wordsFracTo*digitsPerWord) {
@@ -1902,8 +1815,8 @@ func doAdd(from1, from2, to *MyDecimal) error {
 		wordsFrac1  = digitsToWords(int(from1.digitsFrac))
 		wordsInt2   = digitsToWords(int(from2.digitsInt))
 		wordsFrac2  = digitsToWords(int(from2.digitsFrac))
-		wordsIntTo  = max(wordsInt1, wordsInt2)
-		wordsFracTo = max(wordsFrac1, wordsFrac2)
+		wordsIntTo  = mathutil.Max(wordsInt1, wordsInt2)
+		wordsFracTo = mathutil.Max(wordsFrac1, wordsFrac2)
 	)
 
 	var x int32
@@ -1927,7 +1840,7 @@ func doAdd(from1, from2, to *MyDecimal) error {
 	idxTo := wordsIntTo + wordsFracTo
 	to.negative = from1.negative
 	to.digitsInt = int8(wordsIntTo * digitsPerWord)
-	to.digitsFrac = max(from1.digitsFrac, from2.digitsFrac)
+	to.digitsFrac = mathutil.Max(from1.digitsFrac, from2.digitsFrac)
 
 	if err != nil {
 		if to.digitsFrac > int8(wordsFracTo*digitsPerWord) {
@@ -2065,10 +1978,13 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 		tmp1        = wordsIntTo
 		tmp2        = wordsFracTo
 	)
-	to.resultFrac = min(from1.resultFrac+from2.resultFrac, mysql.MaxDecimalScale)
+	to.resultFrac = mathutil.Min(from1.resultFrac+from2.resultFrac, mysql.MaxDecimalScale)
 	wordsIntTo, wordsFracTo, err = fixWordCntError(wordsIntTo, wordsFracTo)
 	to.negative = from1.negative != from2.negative
-	to.digitsFrac = min(from1.digitsFrac+from2.digitsFrac, notFixedDec)
+	to.digitsFrac = from1.digitsFrac + from2.digitsFrac
+	if to.digitsFrac > notFixedDec {
+		to.digitsFrac = notFixedDec
+	}
 	to.digitsInt = int8(wordsIntTo * digitsPerWord)
 	if err == ErrOverflow {
 		return err
@@ -2177,7 +2093,7 @@ func DecimalMul(from1, from2, to *MyDecimal) error {
 // fracIncr - increment of fraction
 func DecimalDiv(from1, from2, to *MyDecimal, fracIncr int) error {
 	from1, from2, to = validateArgs(from1, from2, to)
-	to.resultFrac = min(from1.resultFrac+int8(fracIncr), mysql.MaxDecimalScale)
+	to.resultFrac = mathutil.Min(from1.resultFrac+int8(fracIncr), mysql.MaxDecimalScale)
 	return doDivMod(from1, from2, to, nil, fracIncr)
 }
 
@@ -2207,7 +2123,7 @@ DecimalMod does modulus of two decimals.
 */
 func DecimalMod(from1, from2, to *MyDecimal) error {
 	from1, from2, to = validateArgs(from1, from2, to)
-	to.resultFrac = max(from1.resultFrac, from2.resultFrac)
+	to.resultFrac = mathutil.Max(from1.resultFrac, from2.resultFrac)
 	return doDivMod(from1, from2, nil, to, 0)
 }
 
@@ -2275,7 +2191,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 		// digitsFrac=max(frac1, frac2), as for subtraction
 		// digitsInt=from2.digitsInt
 		to.negative = from1.negative
-		to.digitsFrac = max(from1.digitsFrac, from2.digitsFrac)
+		to.digitsFrac = mathutil.Max(from1.digitsFrac, from2.digitsFrac)
 	} else {
 		wordsFracTo = digitsToWords(frac1 + frac2 + fracIncr)
 		wordsIntTo, wordsFracTo, err = fixWordCntError(wordsIntTo, wordsFracTo)
@@ -2293,7 +2209,10 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 		}
 	}
 	i = digitsToWords(prec1)
-	len1 := max(i+digitsToWords(2*frac2+fracIncr+1)+1, 3)
+	len1 := i + digitsToWords(2*frac2+fracIncr+1) + 1
+	if len1 < 3 {
+		len1 = 3
+	}
 
 	tmp1 := make([]int32, len1)
 	copy(tmp1, from1.wordBuf[idx1:idx1+i])
@@ -2437,7 +2356,7 @@ func doDivMod(from1, from2, to, mod *MyDecimal, fracIncr int) error {
 				return ErrOverflow
 			}
 			stop1 = start1 + wordsIntTo + wordsFracTo
-			to.digitsInt = int8(min(wordsIntTo*digitsPerWord, int(from2.digitsInt)))
+			to.digitsInt = int8(mathutil.Min(wordsIntTo*digitsPerWord, int(from2.digitsInt)))
 		}
 		if wordsIntTo+wordsFracTo > wordBufLen {
 			stop1 -= wordsIntTo + wordsFracTo - wordBufLen
@@ -2510,7 +2429,7 @@ func NewDecFromStringForTest(s string) *MyDecimal {
 // NewMaxOrMinDec returns the max or min value decimal for given precision and fraction.
 func NewMaxOrMinDec(negative bool, prec, frac int) *MyDecimal {
 	str := make([]byte, prec+2)
-	for i := range str {
+	for i := 0; i < len(str); i++ {
 		str[i] = '9'
 	}
 	if negative {

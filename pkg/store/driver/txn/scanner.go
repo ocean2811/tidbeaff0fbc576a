@@ -15,7 +15,7 @@
 package txn
 
 import (
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 

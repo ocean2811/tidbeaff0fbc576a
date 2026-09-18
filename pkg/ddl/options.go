@@ -17,11 +17,9 @@ package ddl
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/ddl/notifier"
-	"github.com/pingcap/tidb/pkg/extworkload"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -30,14 +28,12 @@ type Option func(*Options)
 
 // Options represents all the options of the DDL module needs
 type Options struct {
-	EtcdCli           *clientv3.Client
-	Store             kv.Storage
-	AutoIDClient      *autoid.ClientDiscover
-	InfoCache         *infoschema.InfoCache
-	Lease             time.Duration
-	SchemaLoader      SchemaLoader
-	EventPublishStore notifier.Store
-	ExtWorkloadMgr    extworkload.Manager
+	EtcdCli      *clientv3.Client
+	Store        kv.Storage
+	AutoIDClient *autoid.ClientDiscover
+	InfoCache    *infoschema.InfoCache
+	Hook         Callback
+	Lease        time.Duration
 }
 
 // WithEtcdClient specifies the `clientv3.Client` of DDL used to request the etcd service
@@ -68,30 +64,16 @@ func WithAutoIDClient(cli *autoid.ClientDiscover) Option {
 	}
 }
 
+// WithHook specifies the `Callback` of DDL used to notify the outer module when events are triggered
+func WithHook(callback Callback) Option {
+	return func(options *Options) {
+		options.Hook = callback
+	}
+}
+
 // WithLease specifies the schema lease duration
 func WithLease(lease time.Duration) Option {
 	return func(options *Options) {
 		options.Lease = lease
-	}
-}
-
-// WithSchemaLoader specifies the schema loader used to load schema from storage
-func WithSchemaLoader(loader SchemaLoader) Option {
-	return func(options *Options) {
-		options.SchemaLoader = loader
-	}
-}
-
-// WithEventPublishStore specifies the store used to publish DDL events
-func WithEventPublishStore(store notifier.Store) Option {
-	return func(options *Options) {
-		options.EventPublishStore = store
-	}
-}
-
-// WithExternalWorkloadManager specifies the manager used to coordinate external background workloads.
-func WithExternalWorkloadManager(manager extworkload.Manager) Option {
-	return func(options *Options) {
-		options.ExtWorkloadMgr = manager
 	}
 }

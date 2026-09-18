@@ -17,7 +17,7 @@ package sessiontest
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/ocean2811/tidbeaff0fbc576a/tests/realtikvtest"
 )
 
 func TestMain(m *testing.M) {

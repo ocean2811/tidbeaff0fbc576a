@@ -1,7 +1,7 @@
 # Proposal: Global Memory Control
 
 * Authors: [wshwsh12](https://github.com/wshwsh12), [Xuhuaiyu](https://github.com/Xuhuaiyu)
-* Tracking issue: [#37816](https://github.com/pingcap/tidb/issues/37816)
+* Tracking issue: [#37816](https://github.com/ocean2811/tidbeaff0fbc576a/issues/37816)
 
 ## Abstract
 

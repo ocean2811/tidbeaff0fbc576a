@@ -19,9 +19,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -39,7 +38,7 @@ type worker interface {
 	Stop()
 	Status() workerStatus
 	Error() error
-	Send() chan<- any
+	Send() chan<- interface{}
 	WaitStopped(ctx context.Context, timeout time.Duration) error
 }
 
@@ -47,7 +46,7 @@ type baseWorker struct {
 	sync.Mutex
 	ctx      context.Context
 	cancel   func()
-	ch       chan any
+	ch       chan interface{}
 	loopFunc func() error
 
 	err    error
@@ -59,7 +58,7 @@ func (w *baseWorker) init(loop func() error) {
 	w.ctx, w.cancel = context.WithCancel(context.Background())
 	w.status = workerStatusCreated
 	w.loopFunc = loop
-	w.ch = make(chan any)
+	w.ch = make(chan interface{})
 }
 
 func (w *baseWorker) Start() {
@@ -118,7 +117,7 @@ func (w *baseWorker) WaitStopped(ctx context.Context, timeout time.Duration) err
 	return nil
 }
 
-func (w *baseWorker) Send() chan<- any {
+func (w *baseWorker) Send() chan<- interface{} {
 	return w.ch
 }
 
@@ -127,7 +126,6 @@ func (w *baseWorker) loop() {
 	defer func() {
 		if r := recover(); r != nil {
 			logutil.BgLogger().Info("ttl worker panic", zap.Any("recover", r), zap.Stack("stack"))
-			intest.Assert(false, "ttl worker panic")
 		}
 		w.Lock()
 		w.toStopped(err)

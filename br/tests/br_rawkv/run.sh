@@ -14,18 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# disable global ENCRYPTION_ARGS and ENABLE_ENCRYPTION_CHECK for this script
-ENCRYPTION_ARGS=""
-ENABLE_ENCRYPTION_CHECK=false
-export ENCRYPTION_ARGS
-export ENABLE_ENCRYPTION_CHECK
-
 set -eux
 
-res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
-
 # restart service without tiflash
-source $UTILS_DIR/run_services
+source $( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/../_utils/run_services
 start_services --no-tiflash
 
 BACKUP_DIR=$TEST_DIR/"raw_backup"
@@ -106,7 +98,7 @@ run_test() {
         --mode put --put-data "311121:31, 31112100:32, 311122:33, 31112200:34, 3111220000:35, 311123:36"
 
 
-    # put some keys starts with t. https://github.com/pingcap/tidb/issues/35279
+    # put some keys starts with t. https://github.com/ocean2811/tidbeaff0fbc576a/issues/35279
     # t_128_r_12 --<hex encode>--> 745f3132385f725f3132
     # t_128_r_13 --<hex encode>--> 745f3132385f725f3133
     bin/rawkv --pd $PD_ADDR \
@@ -130,22 +122,6 @@ run_test() {
 
     if [ "$checksum_new" != "$checksum_empty" ];then
         echo "failed to delete data in range"
-        fail_and_exit
-    fi
-
-    # failed on restore full
-    echo "restore full start..."
-    restore_fail=0
-    run_br --pd $PD_ADDR restore full -s "local://$BACKUP_DIR" --crypter.method "aes128-ctr" --crypter.key "0123456789abcdef0123456789abcdef" > $res_file 2>&1 || restore_fail=1
-    if [ $restore_fail -ne 1 ]; then
-        echo 'full restore from raw backup data success'
-        exit 1
-    fi
-    check_contains "restore mode mismatch"
-
-    checksum_new=$(checksum 31 3130303030303030)
-    if [ "$checksum_new" != "$checksum_empty" ]; then
-        echo "not empty after restore failed"
         fail_and_exit
     fi
 
@@ -209,4 +185,6 @@ run_test() {
 run_test ""
 
 # ingest "region error" to trigger fineGrainedBackup, only one region error.
-run_test "github.com/pingcap/tidb/br/pkg/backup/tikv-region-error=1*return(\"region error\")"
+run_test "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/backup/tikv-region-error=1*return(\"region error\")"
+# all regions failed.
+run_test "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/backup/tikv-region-error=return(\"region error\")"

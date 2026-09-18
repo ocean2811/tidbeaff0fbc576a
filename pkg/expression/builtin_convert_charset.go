@@ -17,16 +17,19 @@ package expression
 import (
 	"bytes"
 	"fmt"
+	"strings"
+	"unicode"
 
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -49,17 +52,15 @@ const InternalFuncToBinary = "to_binary"
 // InternalFuncFromBinary accepts a string and returns another string decode in a given charset.
 const InternalFuncFromBinary = "from_binary"
 
-const maxBytesToShow = 6
-
 type tidbToBinaryFunctionClass struct {
 	baseFunctionClass
 }
 
-func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *tidbToBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
-	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
+	argTp := args[0].GetType().EvalType()
 	var sig builtinFunc
 	switch argTp {
 	case types.ETString:
@@ -67,7 +68,7 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Express
 		if err != nil {
 			return nil, err
 		}
-		bf.tp = args[0].GetType(ctx.GetEvalCtx()).Clone()
+		bf.tp = args[0].GetType().Clone()
 		bf.tp.SetType(mysql.TypeVarString)
 		bf.tp.SetCharset(charset.CharsetBin)
 		bf.tp.SetCollate(charset.CollationBin)
@@ -81,10 +82,6 @@ func (c *tidbToBinaryFunctionClass) getFunction(ctx BuildContext, args []Express
 
 type builtinInternalToBinarySig struct {
 	baseBuiltinFunc
-
-	// NOTE: Any new fields added here must be thread-safe or immutable during execution,
-	// as this expression may be shared across sessions.
-	// If a field does not meet these requirements, set SafeToShareAcrossSession to false.
 }
 
 func (b *builtinInternalToBinarySig) Clone() builtinFunc {
@@ -93,12 +90,12 @@ func (b *builtinInternalToBinarySig) Clone() builtinFunc {
 	return newSig
 }
 
-func (b *builtinInternalToBinarySig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalString(ctx, row)
+func (b *builtinInternalToBinarySig) evalString(row chunk.Row) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return res, isNull, err
 	}
-	tp := b.args[0].GetType(ctx)
+	tp := b.args[0].GetType()
 	enc := charset.FindEncoding(tp.GetCharset())
 	ret, err := enc.Transform(nil, hack.Slice(val), charset.OpEncode)
 	return string(ret), false, err
@@ -108,20 +105,20 @@ func (b *builtinInternalToBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInternalToBinarySig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInternalToBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
-	enc := charset.FindEncoding(b.args[0].GetType(ctx).GetCharset())
+	enc := charset.FindEncoding(b.args[0].GetType().GetCharset())
 	result.ReserveString(n)
 	encodedBuf := &bytes.Buffer{}
-	for i := range n {
+	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -142,11 +139,11 @@ type tidbFromBinaryFunctionClass struct {
 	cannotConvertStringAsWarning bool
 }
 
-func (c *tidbFromBinaryFunctionClass) getFunction(ctx BuildContext, args []Expression) (builtinFunc, error) {
+func (c *tidbFromBinaryFunctionClass) getFunction(ctx sessionctx.Context, args []Expression) (builtinFunc, error) {
 	if err := c.verifyArgs(args); err != nil {
 		return nil, c.verifyArgs(args)
 	}
-	argTp := args[0].GetType(ctx.GetEvalCtx()).EvalType()
+	argTp := args[0].GetType().EvalType()
 	var sig builtinFunc
 	switch argTp {
 	case types.ETString:
@@ -173,12 +170,11 @@ type builtinInternalFromBinarySig struct {
 func (b *builtinInternalFromBinarySig) Clone() builtinFunc {
 	newSig := &builtinInternalFromBinarySig{}
 	newSig.cloneFrom(&b.baseBuiltinFunc)
-	newSig.cannotConvertStringAsWarning = b.cannotConvertStringAsWarning
 	return newSig
 }
 
-func (b *builtinInternalFromBinarySig) evalString(ctx EvalContext, row chunk.Row) (res string, isNull bool, err error) {
-	val, isNull, err := b.args[0].EvalString(ctx, row)
+func (b *builtinInternalFromBinarySig) evalString(row chunk.Row) (res string, isNull bool, err error) {
+	val, isNull, err := b.args[0].EvalString(b.ctx, row)
 	if isNull || err != nil {
 		return val, isNull, err
 	}
@@ -186,13 +182,13 @@ func (b *builtinInternalFromBinarySig) evalString(ctx EvalContext, row chunk.Row
 	valBytes := hack.Slice(val)
 	ret, err := enc.Transform(nil, valBytes, charset.OpDecode)
 	if err != nil {
-		strHex := util.FmtNonASCIIPrintableCharToHex(val, maxBytesToShow, false)
+		strHex := formatInvalidChars(valBytes)
 		err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 
 		if b.cannotConvertStringAsWarning {
-			tc := typeCtx(ctx)
-			tc.AppendWarning(err)
-			if sqlMode(ctx).HasStrictMode() {
+			vars := b.ctx.GetSessionVars()
+			vars.StmtCtx.AppendWarning(err)
+			if vars.SQLMode.HasStrictMode() {
 				return "", true, nil
 			}
 
@@ -208,20 +204,20 @@ func (b *builtinInternalFromBinarySig) vectorized() bool {
 	return true
 }
 
-func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinInternalFromBinarySig) vecEvalString(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalString(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalString(b.ctx, input, buf); err != nil {
 		return err
 	}
 	enc := charset.FindEncoding(b.tp.GetCharset())
 	encodedBuf := &bytes.Buffer{}
 	result.ReserveString(n)
-	for i := range n {
+	for i := 0; i < n; i++ {
 		if buf.IsNull(i) {
 			result.AppendNull()
 			continue
@@ -229,13 +225,13 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 		str := buf.GetBytes(i)
 		val, err := enc.Transform(encodedBuf, str, charset.OpDecode)
 		if err != nil {
-			strHex := util.FmtNonASCIIPrintableCharToHex(string(hack.String(str)), maxBytesToShow, false)
+			strHex := formatInvalidChars(str)
 			err = errCannotConvertString.GenWithStackByArgs(strHex, charset.CharsetBin, b.tp.GetCharset())
 
 			if b.cannotConvertStringAsWarning {
-				tc := typeCtx(ctx)
-				tc.AppendWarning(err)
-				if sqlMode(ctx).HasStrictMode() {
+				vars := b.ctx.GetSessionVars()
+				vars.StmtCtx.AppendWarning(err)
+				if vars.SQLMode.HasStrictMode() {
 					result.AppendNull()
 					continue
 				}
@@ -252,33 +248,33 @@ func (b *builtinInternalFromBinarySig) vecEvalString(ctx EvalContext, input *chu
 }
 
 // BuildToBinaryFunction builds to_binary function.
-func BuildToBinaryFunction(ctx BuildContext, expr Expression) (res Expression) {
+func BuildToBinaryFunction(ctx sessionctx.Context, expr Expression) (res Expression) {
 	fc := &tidbToBinaryFunctionClass{baseFunctionClass{InternalFuncToBinary, 1, 1}}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
 		return expr
 	}
 	res = &ScalarFunction{
-		FuncName: ast.NewCIStr(InternalFuncToBinary),
+		FuncName: model.NewCIStr(InternalFuncToBinary),
 		RetType:  f.getRetTp(),
 		Function: f,
 	}
-	return FoldConstant(ctx, res)
+	return FoldConstant(res)
 }
 
 // BuildFromBinaryFunction builds from_binary function.
-func BuildFromBinaryFunction(ctx BuildContext, expr Expression, tp *types.FieldType, cannotConvertStringAsWarning bool) (res Expression) {
+func BuildFromBinaryFunction(ctx sessionctx.Context, expr Expression, tp *types.FieldType, cannotConvertStringAsWarning bool) (res Expression) {
 	fc := &tidbFromBinaryFunctionClass{baseFunctionClass{InternalFuncFromBinary, 1, 1}, tp, cannotConvertStringAsWarning}
 	f, err := fc.getFunction(ctx, []Expression{expr})
 	if err != nil {
 		return expr
 	}
 	res = &ScalarFunction{
-		FuncName: ast.NewCIStr(InternalFuncFromBinary),
+		FuncName: model.NewCIStr(InternalFuncFromBinary),
 		RetType:  tp,
 		Function: f,
 	}
-	return FoldConstant(ctx, res)
+	return FoldConstant(res)
 }
 
 type funcProp int8
@@ -340,8 +336,8 @@ func init() {
 }
 
 // HandleBinaryLiteral wraps `expr` with to_binary or from_binary sig.
-func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, funcName string, explicitCast bool) Expression {
-	argChs, dstChs := expr.GetType(ctx.GetEvalCtx()).GetCharset(), ec.Charset
+func HandleBinaryLiteral(ctx sessionctx.Context, expr Expression, ec *ExprCollation, funcName string, explicitCast bool) Expression {
+	argChs, dstChs := expr.GetType().GetCharset(), ec.Charset
 	switch convertFuncsMap[funcName] {
 	case funcPropNone:
 		return expr
@@ -357,8 +353,8 @@ func HandleBinaryLiteral(ctx BuildContext, expr Expression, ec *ExprCollation, f
 			}
 			return BuildToBinaryFunction(ctx, expr)
 		} else if argChs == charset.CharsetBin && dstChs != charset.CharsetBin &&
-			expr.GetType(ctx.GetEvalCtx()).GetType() != mysql.TypeNull {
-			ft := expr.GetType(ctx.GetEvalCtx()).Clone()
+			expr.GetType().GetType() != mysql.TypeNull {
+			ft := expr.GetType().Clone()
 			ft.SetCharset(ec.Charset)
 			ft.SetCollate(ec.Collation)
 			return BuildFromBinaryFunction(ctx, expr, ft, explicitCast)
@@ -373,4 +369,21 @@ func isLegacyCharset(chs string) bool {
 		return true
 	}
 	return false
+}
+
+func formatInvalidChars(src []byte) string {
+	var sb strings.Builder
+	const maxBytesToShow = 5
+	for i := 0; i < len(src); i++ {
+		if i > maxBytesToShow {
+			sb.WriteString("...")
+			break
+		}
+		if src[i] > unicode.MaxASCII {
+			sb.WriteString(fmt.Sprintf("\\x%X", src[i]))
+		} else {
+			sb.Write([]byte{src[i]})
+		}
+	}
+	return sb.String()
 }

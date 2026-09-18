@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/version"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -53,7 +53,19 @@ func checkSameCluster(tctx *tcontext.Context, db *sql.DB, pdAddrs []string) (boo
 	slices.Sort(tidbDDLIDs)
 	slices.Sort(pdDDLIDs)
 
-	return slices.Equal(tidbDDLIDs, pdDDLIDs), nil
+	return sameStringArray(tidbDDLIDs, pdDDLIDs), nil
+}
+
+func sameStringArray(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func string2Map(a, b []string) map[string]string {

@@ -22,16 +22,16 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/tikv/client-go/v2/testutils"
 )
@@ -170,7 +170,7 @@ func (e *tableScanExec) getRowFromPoint(ran kv.KeyRange) ([][]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	row, err := getRowData(e.Columns, e.colIDs, handle, val, e.rd)
+	row, err := getRowData(e.Columns, e.colIDs, handle.IntValue(), val, e.rd)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -218,7 +218,7 @@ func (e *tableScanExec) getRowFromRange(ran kv.KeyRange) ([][]byte, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	row, err := getRowData(e.Columns, e.colIDs, handle, pair.Value, e.rd)
+	row, err := getRowData(e.Columns, e.colIDs, handle.IntValue(), pair.Value, e.rd)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -404,9 +404,9 @@ func (e *selectionExec) Counts() []int64 {
 }
 
 // evalBool evaluates expression to a boolean value.
-func evalBool(exprs []expression.Expression, row []types.Datum, ctx sessionctx.Context) (bool, error) {
+func evalBool(exprs []expression.Expression, row []types.Datum, ctx *stmtctx.StatementContext) (bool, error) {
 	for _, expr := range exprs {
-		data, err := expr.Eval(ctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(row).ToRow())
+		data, err := expr.Eval(chunk.MutRowFromDatums(row).ToRow())
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -414,7 +414,8 @@ func evalBool(exprs []expression.Expression, row []types.Datum, ctx sessionctx.C
 			return false, nil
 		}
 
-		isBool, err := data.ToBool(ctx.GetSessionVars().StmtCtx.TypeCtx())
+		isBool, err := data.ToBool(ctx)
+		isBool, err = expression.HandleOverflowOnSelection(ctx, isBool, err)
 		if err != nil {
 			return false, errors.Trace(err)
 		}
@@ -442,7 +443,7 @@ func (e *selectionExec) Next(ctx context.Context) (value [][]byte, err error) {
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
-		match, err := evalBool(e.conditions, e.row, e.evalCtx.sctx)
+		match, err := evalBool(e.conditions, e.row, e.evalCtx.sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -541,7 +542,7 @@ func (e *topNExec) evalTopN(value [][]byte) error {
 		return errors.Trace(err)
 	}
 	for i, expr := range e.orderByExprs {
-		newRow.key[i], err = expr.Eval(e.evalCtx.sctx.GetExprCtx().GetEvalCtx(), chunk.MutRowFromDatums(e.row).ToRow())
+		newRow.key[i], err = expr.Eval(chunk.MutRowFromDatums(e.row).ToRow())
 		if err != nil {
 			return errors.Trace(err)
 		}
@@ -614,9 +615,9 @@ func hasColVal(data [][]byte, colIDs map[int64]int, id int64) bool {
 }
 
 // getRowData decodes raw byte slice to row data.
-func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle kv.Handle, value []byte, rd *rowcodec.BytesDecoder) ([][]byte, error) {
+func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle int64, value []byte, rd *rowcodec.BytesDecoder) ([][]byte, error) {
 	if rowcodec.IsNewFormat(value) {
-		return rd.DecodeToBytes(colIDs, handle, value, nil)
+		return rd.DecodeToBytes(colIDs, kv.IntHandle(handle), value, nil)
 	}
 	values, err := tablecodec.CutRowNew(value, colIDs)
 	if err != nil {
@@ -630,15 +631,14 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle kv.Hand
 		id := col.GetColumnId()
 		offset := colIDs[id]
 		if col.GetPkHandle() || id == model.ExtraHandleID {
-			intHdl := handle.IntValue()
 			var handleDatum types.Datum
 			if mysql.HasUnsignedFlag(uint(col.GetFlag())) {
 				// PK column is Unsigned.
-				handleDatum = types.NewUintDatum(uint64(intHdl))
+				handleDatum = types.NewUintDatum(uint64(handle))
 			} else {
-				handleDatum = types.NewIntDatum(intHdl)
+				handleDatum = types.NewIntDatum(handle)
 			}
-			handleData, err1 := codec.EncodeValue(time.UTC, nil, handleDatum)
+			handleData, err1 := codec.EncodeValue(nil, nil, handleDatum)
 			if err1 != nil {
 				return nil, errors.Trace(err1)
 			}
@@ -662,10 +662,10 @@ func getRowData(columns []*tipb.ColumnInfo, colIDs map[int64]int, handle kv.Hand
 	return values, nil
 }
 
-func convertToExprs(sctx sessionctx.Context, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
+func convertToExprs(sc *stmtctx.StatementContext, fieldTps []*types.FieldType, pbExprs []*tipb.Expr) ([]expression.Expression, error) {
 	exprs := make([]expression.Expression, 0, len(pbExprs))
 	for _, expr := range pbExprs {
-		e, err := expression.PBToExpr(sctx.GetExprCtx(), expr, fieldTps)
+		e, err := expression.PBToExpr(expr, fieldTps, sc)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}

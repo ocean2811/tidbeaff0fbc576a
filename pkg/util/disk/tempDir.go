@@ -21,8 +21,8 @@ import (
 	"github.com/danjacques/gofslock/fslock"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
 	"go.uber.org/zap"
 	"golang.org/x/sync/singleflight"
 )
@@ -40,7 +40,7 @@ const (
 // CheckAndInitTempDir check whether the temp directory is existed.
 // If not, initializes the temp directory.
 func CheckAndInitTempDir() (err error) {
-	_, err, _ = sf.Do("tempDir", func() (value any, err error) {
+	_, err, _ = sf.Do("tempDir", func() (value interface{}, err error) {
 		if !checkTempDirExist() {
 			log.Info("Tmp-storage-path not found. Try to initialize TempDir.")
 			err = InitializeTempDir()

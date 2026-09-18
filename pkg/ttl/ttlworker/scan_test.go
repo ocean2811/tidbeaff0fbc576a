@@ -21,17 +21,11 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/syssession"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/ttl/cache"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/cache"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 	"github.com/stretchr/testify/require"
 )
 
@@ -39,7 +33,7 @@ type mockScanWorker struct {
 	*ttlScanWorker
 	t        *testing.T
 	delCh    chan *ttlDeleteTask
-	notifyCh chan any
+	notifyCh chan interface{}
 	sessPoll *mockSessionPool
 }
 
@@ -47,7 +41,7 @@ func NewMockScanWorker(t *testing.T) *mockScanWorker {
 	w := &mockScanWorker{
 		t:        t,
 		delCh:    make(chan *ttlDeleteTask),
-		notifyCh: make(chan any, 10),
+		notifyCh: make(chan interface{}, 10),
 		sessPoll: newMockSessionPool(t),
 	}
 
@@ -77,14 +71,8 @@ func (w *mockScanWorker) checkPollResult(exist bool, err string) {
 		require.Same(w.t, curTask, r.task)
 		if err == "" {
 			require.NoError(w.t, r.err)
-			require.Equal(w.t, ReasonTaskFinished, r.reason)
 		} else {
 			require.EqualError(w.t, r.err, err)
-			if w.ctx.Err() != nil {
-				require.Equal(w.t, ReasonWorkerStop, r.reason)
-			} else {
-				require.Equal(w.t, ReasonError, r.reason)
-			}
 		}
 	}
 }
@@ -111,8 +99,7 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 		require.NotNil(w.t, del)
 		require.NotNil(w.t, del.statistics)
 		require.Same(w.t, w.curTask.tbl, del.tbl)
-		require.True(w.t, w.curTask.ExpireTime.Equal(del.expire))
-		require.Equal(w.t, time.UTC, del.expire.Location())
+		require.Equal(w.t, w.curTask.ExpireTime, del.expire)
 		require.NotEqual(w.t, 0, len(del.rows))
 		return del
 	case <-time.After(10 * time.Second):
@@ -123,7 +110,7 @@ func (w *mockScanWorker) pollDelTask() *ttlDeleteTask {
 	return nil
 }
 
-func (w *mockScanWorker) setOneRowResult(tbl *cache.PhysicalTable, val ...any) {
+func (w *mockScanWorker) setOneRowResult(tbl *cache.PhysicalTable, val ...interface{}) {
 	w.sessPoll.se.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
 	w.sessPoll.se.rows = newMockRows(w.t, tbl.KeyColumnTypes...).Append(val...).Rows()
 }
@@ -137,27 +124,18 @@ func (w *mockScanWorker) stopWithWait() {
 	require.NoError(w.t, w.WaitStopped(context.TODO(), 10*time.Second))
 }
 
-func (w *mockScanWorker) SetInfoSchema(is infoschema.InfoSchema) {
-	w.sessPoll.se.sessionInfoSchema = is
-}
-
-func (w *mockScanWorker) SetExecuteSQL(fn func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error)) {
-	w.sessPoll.se.executeSQL = fn
-}
-
 func TestScanWorkerSchedule(t *testing.T) {
-	origLimit := vardef.TTLScanBatchSize.Load()
-	vardef.TTLScanBatchSize.Store(5)
-	defer vardef.TTLScanBatchSize.Store(origLimit)
+	origLimit := variable.TTLScanBatchSize.Load()
+	variable.TTLScanBatchSize.Store(5)
+	defer variable.TTLScanBatchSize.Store(origLimit)
 
 	tbl := newMockTTLTbl(t, "t1")
 	w := NewMockScanWorker(t)
-	defer w.sessPoll.AssertNoSessionInUse()
 	w.setOneRowResult(tbl, 7)
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
-		ctx: cache.SetMockExpireTime(context.Background(), time.Now()),
+		ctx: context.Background(),
 		tbl: tbl,
 		TTLTask: &cache.TTLTask{
 			ExpireTime: time.UnixMilli(0),
@@ -196,18 +174,17 @@ func TestScanWorkerSchedule(t *testing.T) {
 }
 
 func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
-	origLimit := vardef.TTLScanBatchSize.Load()
-	vardef.TTLScanBatchSize.Store(5)
-	defer vardef.TTLScanBatchSize.Store(origLimit)
+	origLimit := variable.TTLScanBatchSize.Load()
+	variable.TTLScanBatchSize.Store(5)
+	defer variable.TTLScanBatchSize.Store(origLimit)
 
 	tbl := newMockTTLTbl(t, "t1")
 	w := NewMockScanWorker(t)
-	defer w.sessPoll.AssertNoSessionInUse()
 	w.clearInfoSchema()
 	defer w.stopWithWait()
 
 	task := &ttlScanTask{
-		ctx: cache.SetMockExpireTime(context.Background(), time.Now()),
+		ctx: context.Background(),
 		tbl: tbl,
 		TTLTask: &cache.TTLTask{
 			ExpireTime: time.UnixMilli(0),
@@ -227,43 +204,6 @@ func TestScanWorkerScheduleWithFailedTask(t *testing.T) {
 	w.checkWorkerStatus(workerStatusRunning, false, task)
 	w.checkPollResult(true, msg.result.err.Error())
 	w.checkWorkerStatus(workerStatusRunning, true, nil)
-}
-
-func TestScanResultWhenWorkerStop(t *testing.T) {
-	tbl := newMockTTLTbl(t, "t1")
-	w := NewMockScanWorker(t)
-	defer w.sessPoll.AssertNoSessionInUse()
-	executeCh := make(chan struct{})
-	w.sessPoll.se.sessionInfoSchema = newMockInfoSchema(tbl.TableInfo)
-	w.sessPoll.se.executeSQL = func(ctx context.Context, sql string, args ...any) ([]chunk.Row, error) {
-		close(executeCh)
-		select {
-		case <-ctx.Done():
-		case <-time.After(10 * time.Second):
-			require.FailNow(t, "wait scan worker stop timeout")
-		}
-		return nil, nil
-	}
-
-	w.Start()
-	task := &ttlScanTask{
-		ctx:        context.Background(),
-		tbl:        tbl,
-		TTLTask:    &cache.TTLTask{},
-		statistics: &ttlStatistics{},
-	}
-	require.NoError(t, w.Schedule(task))
-	select {
-	case <-executeCh:
-	case <-time.After(time.Second):
-		require.FailNow(t, "wait executeSQL timeout")
-	}
-	w.stopWithWait()
-	w.checkWorkerStatus(workerStatusStopped, false, task)
-	msg := w.waitNotifyScanTaskEnd()
-	require.Equal(t, ReasonWorkerStop, msg.result.reason)
-	w.checkPollResult(true, msg.result.err.Error())
-	w.checkWorkerStatus(workerStatusStopped, false, nil)
 }
 
 type mockScanTask struct {
@@ -309,21 +249,17 @@ func (t *mockScanTask) selectSQL(i int) string {
 	if i == 0 {
 		op = ">="
 	}
-	return fmt.Sprintf(
-		"SELECT LOW_PRIORITY SQL_NO_CACHE `_tidb_rowid` FROM `test`.`t1` USE INDEX () "+
-			"WHERE `_tidb_rowid` %s %d AND `time` < CAST('1970-01-01 00:00:00' AS DATETIME) ORDER BY `_tidb_rowid` ASC LIMIT 3",
-		op, i*100,
-	)
+	return fmt.Sprintf("SELECT LOW_PRIORITY SQL_NO_CACHE `_tidb_rowid` FROM `test`.`t1` WHERE `_tidb_rowid` %s %d AND `time` < FROM_UNIXTIME(0) ORDER BY `_tidb_rowid` ASC LIMIT 3", op, i*100)
 }
 
 func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlScanTaskExecResult {
 	t.ttlScanTask.statistics.Reset()
-	origLimit := vardef.TTLScanBatchSize.Load()
-	vardef.TTLScanBatchSize.Store(3)
+	origLimit := variable.TTLScanBatchSize.Load()
+	variable.TTLScanBatchSize.Store(3)
 	origRetryInterval := scanTaskExecuteSQLRetryInterval
 	scanTaskExecuteSQLRetryInterval = time.Millisecond
 	defer func() {
-		vardef.TTLScanBatchSize.Store(origLimit)
+		variable.TTLScanBatchSize.Store(origLimit)
 		scanTaskExecuteSQLRetryInterval = origRetryInterval
 	}()
 
@@ -333,15 +269,14 @@ func (t *mockScanTask) runDoScanForTest(delTaskCnt int, errString string) *ttlSc
 	t.sessPool.lastSession = nil
 	r := t.doScan(context.TODO(), t.delCh, t.sessPool)
 	require.NotNil(t.t, t.sessPool.lastSession)
-	require.True(t.t, t.sessPool.lastSession.inPool)
+	require.True(t.t, t.sessPool.lastSession.closed)
+	require.Greater(t.t, t.sessPool.lastSession.resetTimeZoneCalls, 0)
 	require.NotNil(t.t, r)
 	require.Same(t.t, t.ttlScanTask, r.task)
 	if errString == "" {
 		require.NoError(t.t, r.err)
-		require.Equal(t.t, ReasonTaskFinished, r.reason)
 	} else {
 		require.EqualError(t.t, r.err, errString)
-		require.Equal(t.t, ReasonError, r.reason)
 	}
 
 	previousIdx := delTaskCnt
@@ -377,8 +312,7 @@ loop:
 		require.NotNil(t.t, del.statistics)
 		require.Same(t.t, t.statistics, del.statistics)
 		require.Same(t.t, t.tbl, del.tbl)
-		require.True(t.t, t.ExpireTime.Equal(del.expire))
-		require.Equal(t.t, time.UTC, del.expire.Location())
+		require.Equal(t.t, t.ExpireTime, del.expire)
 		if i < len(t.sqlRetry)-1 {
 			require.Equal(t.t, 3, len(del.rows))
 			require.Equal(t.t, 1, len(del.rows[2]))
@@ -398,7 +332,7 @@ loop:
 
 func (t *mockScanTask) checkDelTasks(cnt int) {
 	require.Equal(t.t, cnt, len(t.delTasks))
-	for i := range cnt {
+	for i := 0; i < cnt; i++ {
 		del := t.delTasks[i]
 		require.Nil(t.t, del)
 		require.NotNil(t.t, del.statistics)
@@ -417,10 +351,10 @@ func (t *mockScanTask) checkDelTasks(cnt int) {
 	}
 }
 
-func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk.Row, error) {
+func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...interface{}) ([]chunk.Row, error) {
 	var i int
 	found := false
-	for i = range t.sqlRetry {
+	for i = 0; i < len(t.sqlRetry); i++ {
 		if sql == t.selectSQL(i) {
 			found = true
 			break
@@ -458,8 +392,6 @@ func (t *mockScanTask) execSQL(_ context.Context, sql string, _ ...any) ([]chunk
 
 func TestScanTaskDoScan(t *testing.T) {
 	task := newMockScanTask(t, 3)
-	defer task.sessPool.AssertNoSessionInUse()
-	task.ctx = cache.SetMockExpireTime(task.ctx, time.Now())
 	task.sqlRetry[1] = scanTaskExecuteSQLMaxRetry
 	task.runDoScanForTest(3, "")
 
@@ -475,73 +407,18 @@ func TestScanTaskDoScan(t *testing.T) {
 	task.schemaChangeIdx = 1
 	task.schemaChangeInRetry = 2
 	task.runDoScanForTest(1, "table 'test.t1' meta changed, should abort current job: [schema:1146]Table 'test.t1' doesn't exist")
-
-	t.Run("index scan decodes persisted time range", func(t *testing.T) {
-		tbl := newMockTTLTbl(t, "index_range")
-		tbl.TimeColumn.FieldType = *types.NewFieldType(mysql.TypeTimestamp)
-		indexID := int64(10)
-		tbl.Indices = []*model.IndexInfo{
-			{
-				ID:      indexID,
-				Name:    ast.NewCIStr("idx_time"),
-				Columns: []*model.IndexColumn{{Name: tbl.TimeColumn.Name, Offset: tbl.TimeColumn.Offset, Length: types.UnspecifiedLength}},
-				State:   model.StatePublic,
-			},
-		}
-
-		globalLoc := time.FixedZone("UTC+8", 8*60*60)
-		boundary := time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC)
-		encodedRange, err := codec.EncodeKey(time.UTC, nil,
-			types.NewTimeDatum(types.NewTime(types.FromGoTime(boundary), mysql.TypeTimestamp, 0)))
-		require.NoError(t, err)
-		scanRange, err := codec.Decode(encodedRange, len(encodedRange))
-		require.NoError(t, err)
-		require.Equal(t, types.KindUint64, scanRange[0].Kind())
-
-		expire := boundary.Add(time.Hour)
-		scanTask := &ttlScanTask{
-			ctx: cache.SetMockExpireTime(context.Background(), expire),
-			TTLTask: &cache.TTLTask{
-				ExpireTime:     expire,
-				ScanRangeStart: scanRange,
-				ScanIndexID:    &indexID,
-			},
-			tbl:        tbl,
-			statistics: &ttlStatistics{},
-		}
-		pool := newMockSessionPool(t, tbl)
-		defer pool.AssertNoSessionInUse()
-		pool.se.sessionVars.TimeZone = time.UTC
-		pool.se.globalTimeZone = globalLoc
-		executeCalls := 0
-		pool.se.executeSQL = func(_ context.Context, sql string, _ ...any) ([]chunk.Row, error) {
-			executeCalls++
-			require.Equal(t, fmt.Sprintf("SELECT LOW_PRIORITY SQL_NO_CACHE `time`, `_tidb_rowid` FROM `test`.`index_range` FORCE INDEX(`idx_time`) WHERE `time` >= '%s' AND `time` < FROM_UNIXTIME(%d) ORDER BY `time`, `_tidb_rowid` ASC LIMIT 3", boundary.Format(time.DateTime), expire.Unix()), sql)
-			return newMockRows(t, &tbl.TimeColumn.FieldType, tbl.KeyColumnTypes[0]).Append(boundary, 1).Rows(), nil
-		}
-
-		origLimit := vardef.TTLScanBatchSize.Load()
-		vardef.TTLScanBatchSize.Store(3)
-		defer vardef.TTLScanBatchSize.Store(origLimit)
-		delCh := make(chan *ttlDeleteTask, 1)
-		result := scanTask.doScan(context.Background(), delCh, pool)
-		require.NoError(t, result.err)
-		require.Equal(t, 1, executeCalls)
-		require.Equal(t, [][]types.Datum{{types.NewIntDatum(1)}}, (<-delCh).rows)
-	})
 }
 
 func TestScanTaskCheck(t *testing.T) {
 	tbl := newMockTTLTbl(t, "t1")
 	pool := newMockSessionPool(t, tbl)
-	defer pool.AssertNoSessionInUse()
+	pool.se.evalExpire = time.UnixMilli(100)
 	pool.se.rows = newMockRows(t, types.NewFieldType(mysql.TypeInt24)).Append(12).Rows()
-	ctx := cache.SetMockExpireTime(context.Background(), time.Unix(100, 0))
 
 	task := &ttlScanTask{
-		ctx: ctx,
+		ctx: context.Background(),
 		TTLTask: &cache.TTLTask{
-			ExpireTime: time.Unix(101, 0).Add(time.Minute),
+			ExpireTime: time.UnixMilli(101).Add(time.Minute),
 		},
 		tbl:        tbl,
 		statistics: &ttlStatistics{},
@@ -550,14 +427,14 @@ func TestScanTaskCheck(t *testing.T) {
 	ch := make(chan *ttlDeleteTask, 1)
 	result := task.doScan(context.Background(), ch, pool)
 	require.Equal(t, task, result.task)
-	require.ErrorContains(t, result.err, "current expire time is after safe expire time. (161 > 160,")
+	require.EqualError(t, result.err, "current expire time is after safe expire time. (60101 > 60100)")
 	require.Equal(t, 0, len(ch))
 	require.Equal(t, "Total Rows: 0, Success Rows: 0, Error Rows: 0", task.statistics.String())
 
 	task = &ttlScanTask{
-		ctx: ctx,
+		ctx: context.Background(),
 		TTLTask: &cache.TTLTask{
-			ExpireTime: time.Unix(100, 0).Add(time.Minute),
+			ExpireTime: time.UnixMilli(100).Add(time.Minute),
 		},
 		tbl:        tbl,
 		statistics: &ttlStatistics{},
@@ -568,70 +445,3 @@ func TestScanTaskCheck(t *testing.T) {
 	require.Equal(t, 1, len(ch))
 	require.Equal(t, "Total Rows: 1, Success Rows: 0, Error Rows: 0", task.statistics.String())
 }
-
-func TestScanTaskCancelStmt(t *testing.T) {
-	task := &ttlScanTask{
-		ctx: context.Background(),
-		tbl: newMockTTLTbl(t, "t1"),
-		TTLTask: &cache.TTLTask{
-			ExpireTime:     time.UnixMilli(0),
-			ScanRangeStart: []types.Datum{types.NewIntDatum(0)},
-		},
-		statistics: &ttlStatistics{},
-	}
-
-	testCancel := func(ctx context.Context, doCancel func()) {
-		mockPool := newMockSessionPool(t)
-		defer mockPool.AssertNoSessionInUse()
-		startExec := make(chan struct{})
-		mockPool.se.sessionInfoSchema = newMockInfoSchema(task.tbl.TableInfo)
-		mockPool.se.executeSQL = func(_ context.Context, _ string, _ ...any) ([]chunk.Row, error) {
-			close(startExec)
-			select {
-			case <-mockPool.se.killed:
-				return nil, errors.New("killed")
-			case <-time.After(10 * time.Second):
-				return nil, errors.New("timeout")
-			}
-		}
-		wg := util.WaitGroupWrapper{}
-		wg.Run(func() {
-			select {
-			case <-startExec:
-			case <-time.After(10 * time.Second):
-				require.FailNow(t, "timeout")
-			}
-			doCancel()
-		})
-		r := task.doScan(ctx, nil, mockPool)
-		require.NotNil(t, r)
-		require.EqualError(t, r.err, "killed")
-		wg.Wait()
-	}
-
-	// test cancel with input context
-	ctx, cancel := context.WithCancel(context.Background())
-	testCancel(ctx, cancel)
-
-	// test cancel with task context
-	task.ctx, cancel = context.WithCancel(context.Background())
-	testCancel(context.Background(), cancel)
-}
-
-// NewTTLScanTask creates a new TTL scan task for test.
-func NewTTLScanTask(ctx context.Context, tbl *cache.PhysicalTable, ttlTask *cache.TTLTask) *ttlScanTask {
-	return &ttlScanTask{
-		ctx:        ctx,
-		tbl:        tbl,
-		TTLTask:    ttlTask,
-		statistics: &ttlStatistics{},
-	}
-}
-
-// DoScan is an exported version of `doScan` for test.
-func (t *ttlScanTask) DoScan(ctx context.Context, delCh chan<- *TTLDeleteTask, sessPool syssession.Pool) *ttlScanTaskExecResult {
-	return t.doScan(ctx, delCh, sessPool)
-}
-
-// TTLDeleteTask is an exported version of `ttlDeleteTask` for test.
-type TTLDeleteTask = ttlDeleteTask

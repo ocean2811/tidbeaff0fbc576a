@@ -19,9 +19,8 @@ import (
 	"testing"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
 	"github.com/stretchr/testify/require"
 )
 
@@ -36,22 +35,28 @@ func TestTableError(t *testing.T) {
 
 	tk.MustExec("create table testDrop(a int)")
 	// Schema ID is wrong, so dropping table is failed.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
 	err := tk.ExecToErr("drop table testDrop")
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId"))
 
 	// Table ID is wrong, so dropping table is failed.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockModifyJobTableId", `return(-1)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobTableId", `return(-1)`))
 	err = tk.ExecToErr("drop table testDrop")
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockModifyJobTableId"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobTableId"))
 
-	// Table exists, so creating table is failed.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
+	// Args is wrong, so creating table is failed.
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobArg", `return(true)`))
 	err = tk.ExecToErr("create table test.t1(a int)")
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobArg"))
+
+	// Table exists, so creating table is failed.
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
+	err = tk.ExecToErr("create table test.t1(a int)")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId"))
 	// Table exists, so creating table is failed.
 	tk.MustExec("create table test.t2(a int)")
 	tk.MustGetErrCode("create table test.t2(a int)", errno.ErrTableExists)
@@ -63,6 +68,12 @@ func TestViewError(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int)")
+
+	// Args is wrong, so creating view is failed.
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobArg", `return(true)`))
+	err := tk.ExecToErr("create view v as select * from t")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobArg"))
 }
 
 func TestForeignKeyError(t *testing.T) {
@@ -72,12 +83,12 @@ func TestForeignKeyError(t *testing.T) {
 	tk.MustExec("create table t (a int, index(a))")
 	tk.MustExec("create table t1 (a int, FOREIGN KEY fk(a) REFERENCES t(a))")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
 	err := tk.ExecToErr("alter table t1 add foreign key idx(a) REFERENCES t(a)")
 	require.Error(t, err)
 	err = tk.ExecToErr("alter table t1 drop index fk")
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId"))
 }
 
 func TestIndexError(t *testing.T) {
@@ -89,12 +100,20 @@ func TestIndexError(t *testing.T) {
 	tk.MustExec("alter table t add index a(a)")
 
 	// Schema ID is wrong.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
 	err := tk.ExecToErr("alter table t add index idx(a)")
 	require.Error(t, err)
 	err = tk.ExecToErr("alter table t1 drop a")
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId"))
+
+	// for adding index
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobArg", `return(true)`))
+	err = tk.ExecToErr("alter table t add index idx(a)")
+	require.Error(t, err)
+	err = tk.ExecToErr("alter table t drop index a")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobArg"))
 }
 
 func TestColumnError(t *testing.T) {
@@ -106,7 +125,7 @@ func TestColumnError(t *testing.T) {
 	tk.MustExec("alter table t add index a(a)")
 
 	// Invalid schema ID.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
 	err := tk.ExecToErr("alter table t add column ta int")
 	require.Error(t, err)
 	err = tk.ExecToErr("alter table t drop column aa")
@@ -117,10 +136,10 @@ func TestColumnError(t *testing.T) {
 	require.Error(t, err)
 	err = tk.ExecToErr("alter table t drop column aa, drop column ab")
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId"))
 
 	// Invalid table ID.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/MockModifyJobTableId", `return(-1)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobTableId", `return(-1)`))
 	err = tk.ExecToErr("alter table t add column ta int")
 	require.Error(t, err)
 	err = tk.ExecToErr("alter table t drop column aa")
@@ -131,7 +150,21 @@ func TestColumnError(t *testing.T) {
 	require.Error(t, err)
 	err = tk.ExecToErr("alter table t drop column aa, drop column ab")
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/MockModifyJobTableId"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobTableId"))
+
+	// Invalid argument.
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobArg", `return(true)`))
+	err = tk.ExecToErr("alter table t add column ta int")
+	require.Error(t, err)
+	err = tk.ExecToErr("alter table t drop column aa")
+	require.Error(t, err)
+	err = tk.ExecToErr("alter table t drop column aa")
+	require.Error(t, err)
+	err = tk.ExecToErr("alter table t add column ta int, add column tb int")
+	require.Error(t, err)
+	err = tk.ExecToErr("alter table t drop column aa, drop column ab")
+	require.Error(t, err)
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/MockModifyJobArg"))
 
 	tk.MustGetErrCode("alter table t add column c int after c5", errno.ErrBadField)
 	tk.MustGetErrCode("alter table t drop column c5", errno.ErrCantDropFieldOrKey)
@@ -143,13 +176,7 @@ func TestCreateDatabaseError(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId", `return(-1)`))
 	tk.MustExec("create database db1;")
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockModifyJobSchemaId"))
-}
-
-// This is a hard-coded test to make sure that the DefMaxOfIndexLimit is 512
-// This limitation can not be loosened to a larger number until tidb can handle more indexes on one table.
-func TestCreateIndexErrTooManyKeys(t *testing.T) {
-	require.Equal(t, 512, config.DefMaxOfIndexLimit)
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockModifyJobSchemaId"))
 }

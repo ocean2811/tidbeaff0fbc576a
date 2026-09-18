@@ -18,6 +18,7 @@ import (
 	"math/rand"
 	"sort"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -83,7 +84,8 @@ func TestSelectionWithSerialCase(t *testing.T) {
 
 func randomTestCase(size int) testSlice {
 	data := make(testSlice, 0, size)
-	for range size {
+	rand.Seed(time.Now().Unix())
+	for i := 0; i < size; i++ {
 		data = append(data, rand.Int()%100)
 	}
 	return data
@@ -91,7 +93,7 @@ func randomTestCase(size int) testSlice {
 
 func serialTestCase(size int) testSlice {
 	data := make(testSlice, 0, size)
-	for i := range size {
+	for i := 0; i < size; i++ {
 		data = append(data, i)
 	}
 	return data

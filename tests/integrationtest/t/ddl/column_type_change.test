@@ -38,13 +38,13 @@ alter table t modify column a tinyint;
 drop table if exists t;
 create table t (a bigint);
 insert into t(a) values (9223372036854775807);
--- error 1265
+-- error 1690
 alter table t modify column a int;
--- error 1265
+-- error 1690
 alter table t modify column a mediumint;
--- error 1265
+-- error 1690
 alter table t modify column a smallint;
--- error 1265
+-- error 1690
 alter table t modify column a tinyint;
 admin check table t;
 
@@ -123,7 +123,7 @@ alter table t modify e set("11111", "22222");
 set @@session.time_zone=default;
 
 # TestColumnTypeChangeBetweenVarcharAndNonVarchar
-# https://github.com/pingcap/tidb/issues/23624
+# https://github.com/ocean2811/tidbeaff0fbc576a/issues/23624
 drop table if exists t;
 create table t(b varchar(10));
 insert into t values ('aaa   ');
@@ -134,7 +134,7 @@ select b from t use index(idx);
 select b from t ignore index(idx);
 admin check table t;
 
-# https://github.com/pingcap/tidb/pull/23688#issuecomment-810166597
+# https://github.com/ocean2811/tidbeaff0fbc576a/pull/23688#issuecomment-810166597
 drop table if exists t;
 create table t (a varchar(10));
 insert into t values ('aaa   ');
@@ -1841,7 +1841,7 @@ alter table t modify a bigint null;
 alter table t change column a a bigint null;
 
 # TestChangeUnsignedIntToDatetime
-# https://github.com/pingcap/tidb/issues/24839
+# https://github.com/ocean2811/tidbeaff0fbc576a/issues/24839
 drop table if exists t;
 create table t (a int(10) unsigned default null, b bigint unsigned, c tinyint unsigned);
 insert into t values (1, 1, 1);
@@ -1939,7 +1939,7 @@ create table t(a varchar(700), key(a(700)));
 alter table t change column a a tinytext;
 
 # TestCastToTimeStampDecodeError
-# https://github.com/pingcap/tidb/issues/25469
+# https://github.com/ocean2811/tidbeaff0fbc576a/issues/25469
 drop table if exists t;
 CREATE TABLE `t` (  `a` datetime DEFAULT '1764-06-11 02:46:14') ENGINE=InnoDB DEFAULT CHARSET=latin1 COLLATE=latin1_bin COMMENT='7b84832e-f857-4116-8872-82fc9dcc4ab3';
 insert into `t` values();
@@ -1954,7 +1954,7 @@ drop table if exists t;
 select timestamp(cast('1000-11-11 12-3-1' as date));
 
 # TestCastFromZeroIntToTimeError
-# https://github.com/pingcap/tidb/issues/25285
+# https://github.com/ocean2811/tidbeaff0fbc576a/issues/25285
 drop table if exists t;
 create table t (a int);
 insert into t values (0);
@@ -2066,7 +2066,7 @@ show warnings;
 set @@sql_mode = default;
 
 # TestChangeFromUnsignedIntToTime
-# https://github.com/pingcap/tidb/issues/25282
+# https://github.com/ocean2811/tidbeaff0fbc576a/issues/25282
 drop table if exists t;
 create table t (a mediumint unsigned);
 insert into t values (180857);
@@ -2075,8 +2075,8 @@ select a from t;
 drop table if exists t;
 
 # TestChangeFromBitToStringInvalidUtf8ErrMsg
-# See https://github.com/pingcap/tidb/issues/25287.
-# Revised according to https://github.com/pingcap/tidb/pull/31031#issuecomment-1001404832.
+# See https://github.com/ocean2811/tidbeaff0fbc576a/issues/25287.
+# Revised according to https://github.com/ocean2811/tidbeaff0fbc576a/pull/31031#issuecomment-1001404832.
 drop table if exists t;
 create table t (a bit(45));
 insert into t values (1174717);
@@ -2209,27 +2209,3 @@ alter table t modify column a tinyint;
 show warnings;
 set @@sql_mode=default;
 
-# issue #52748, alter table should respect SQL_MODE and result a valid timestamp value
-drop table if exists t;
-create table t (a date);
-insert into t values('9999-01-01');
-set @@sql_mode='ALLOW_INVALID_DATES';
-alter table t modify a timestamp;
-select * from t;
-
-drop table if exists t;
-create table t (a date);
-insert into t values('9999-01-01');
-set @@sql_mode='ALLOW_INVALID_DATES,STRICT_TRANS_TABLES';
---error 1292
-alter table t modify a timestamp;
-select * from t;
-set @@sql_mode=default;
-
-# issue #52509, generated column should also return a valid timestamp value.
-drop table t;
-CREATE TABLE t (a date, b timestamp AS (a));
-set @@sql_mode='';
-insert into t (a) values('9999-01-01');
-select * from t;
-set @@sql_mode=default;

@@ -17,9 +17,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
 )
 
 //revive:disable:exported
@@ -37,150 +37,81 @@ var (
 // hintScanner implements the yyhintLexer interface
 type hintScanner struct {
 	Scanner
-	setVarValueState hintSetVarValueState
 }
-
-// SET_VAR values are parsed with lexer context so decimal/float tokens are accepted only after
-// SET_VAR(name = ...). Other hints, such as QB_NAME(1.5), must keep rejecting those tokens.
-type hintSetVarValueState uint8
-
-const (
-	hintSetVarValueStateNone hintSetVarValueState = iota
-	hintSetVarValueStateAfterSetVar
-	hintSetVarValueStateAfterLParen
-	hintSetVarValueStateAfterName
-	hintSetVarValueStateExpectValue
-	hintSetVarValueStateAfterSign
-)
 
 func (hs *hintScanner) Errorf(format string, args ...interface{}) error {
 	inner := hs.Scanner.Errorf(format, args...)
 	return ErrParse.GenWithStackByArgs("Optimizer hint syntax error at", inner)
 }
 
-func (hs *hintScanner) acceptSetVarNumericValue() bool {
-	return hs.setVarValueState == hintSetVarValueStateExpectValue ||
-		hs.setVarValueState == hintSetVarValueStateAfterSign
-}
-
-func (hs *hintScanner) updateSetVarValueState(tok int) {
-	switch hs.setVarValueState {
-	case hintSetVarValueStateNone:
-		if tok == hintSetVar {
-			hs.setVarValueState = hintSetVarValueStateAfterSetVar
-		}
-	case hintSetVarValueStateAfterSetVar:
-		if tok == '(' {
-			hs.setVarValueState = hintSetVarValueStateAfterLParen
-		} else if tok != hintSetVar {
-			hs.setVarValueState = hintSetVarValueStateNone
-		}
-	case hintSetVarValueStateAfterLParen:
-		if tok == ')' || tok == ',' || tok == '=' || tok <= 0 {
-			hs.setVarValueState = hintSetVarValueStateNone
-		} else {
-			hs.setVarValueState = hintSetVarValueStateAfterName
-		}
-	case hintSetVarValueStateAfterName:
-		if tok == '=' {
-			hs.setVarValueState = hintSetVarValueStateExpectValue
-		} else {
-			hs.setVarValueState = hintSetVarValueStateNone
-		}
-	case hintSetVarValueStateExpectValue:
-		if tok == '+' || tok == '-' {
-			hs.setVarValueState = hintSetVarValueStateAfterSign
-		} else {
-			hs.setVarValueState = hintSetVarValueStateNone
-		}
-	case hintSetVarValueStateAfterSign:
-		hs.setVarValueState = hintSetVarValueStateNone
-	}
-}
-
 func (hs *hintScanner) Lex(lval *yyhintSymType) int {
 	tok, pos, lit := hs.scan()
 	hs.lastScanOffset = pos.Offset
-	if !hs.updateParenthesesDepth(tok) {
-		return hintInvalid
-	}
 	var errorTokenType string
-	returnToken := func(tok int) int {
-		hs.updateSetVarValueState(tok)
-		return tok
-	}
 
 	switch tok {
 	case intLit:
 		n, e := strconv.ParseUint(lit, 10, 64)
 		if e != nil {
 			hs.AppendError(ErrWarnOptimizerHintInvalidInteger.GenWithStackByArgs(lit))
-			return returnToken(hintInvalid)
+			return hintInvalid
 		}
 		lval.number = n
-		return returnToken(hintIntLit)
+		return hintIntLit
 
 	case singleAtIdentifier:
 		lval.ident = lit
-		return returnToken(hintSingleAtIdentifier)
+		return hintSingleAtIdentifier
 
 	case identifier:
 		lval.ident = lit
 		if tok1, ok := hintTokenMap[strings.ToUpper(lit)]; ok {
-			return returnToken(tok1)
+			return tok1
 		}
-		return returnToken(hintIdentifier)
+		return hintIdentifier
 
 	case stringLit:
 		lval.ident = lit
 		if hs.sqlMode.HasANSIQuotesMode() && hs.r.s[pos.Offset] == '"' {
-			return returnToken(hintIdentifier)
+			return hintIdentifier
 		}
-		return returnToken(hintStringLit)
+		return hintStringLit
 
 	case bitLit:
 		if strings.HasPrefix(lit, "0b") {
 			lval.ident = lit
-			return returnToken(hintIdentifier)
+			return hintIdentifier
 		}
 		errorTokenType = "bit-value literal"
 
 	case hexLit:
 		if strings.HasPrefix(lit, "0x") {
 			lval.ident = lit
-			return returnToken(hintIdentifier)
+			return hintIdentifier
 		}
 		errorTokenType = "hexadecimal literal"
 
 	case quotedIdentifier:
 		lval.ident = lit
-		return returnToken(hintIdentifier)
+		return hintIdentifier
 
 	case eq:
-		return returnToken('=')
+		return '='
 
 	case floatLit:
-		if hs.acceptSetVarNumericValue() {
-			lval.ident = lit
-			return returnToken(hintNumericLit)
-		}
 		errorTokenType = "floating point number"
 	case decLit:
-		if hs.acceptSetVarNumericValue() {
-			lval.ident = lit
-			return returnToken(hintNumericLit)
-		}
 		errorTokenType = "decimal number"
 
 	default:
 		if tok <= 0x7f {
-			return returnToken(tok)
+			return tok
 		}
 		errorTokenType = "unknown token"
 	}
 
 	hs.AppendError(ErrWarnOptimizerHintInvalidToken.GenWithStackByArgs(errorTokenType, lit, tok))
-	return returnToken(hintInvalid)
+	return hintInvalid
 }
 
 type hintParser struct {
@@ -200,7 +131,6 @@ func newHintParser() *hintParser {
 func (hp *hintParser) parse(input string, sqlMode mysql.SQLMode, initPos Pos) ([]*ast.TableOptimizerHint, []error) {
 	hp.result = nil
 	hp.lexer.reset(input[3:])
-	hp.lexer.setVarValueState = hintSetVarValueStateNone
 	hp.lexer.SetSQLMode(sqlMode)
 	hp.lexer.r.updatePos(Pos{
 		Line:   initPos.Line,
@@ -225,7 +155,7 @@ func ParseHint(input string, sqlMode mysql.SQLMode, initPos Pos) ([]*ast.TableOp
 }
 
 func (hp *hintParser) warnUnsupportedHint(name string) {
-	warn := ErrWarnOptimizerHintUnsupportedHint.FastGenByArgs(name)
+	warn := ErrWarnOptimizerHintUnsupportedHint.GenWithStackByArgs(name)
 	hp.lexer.warns = append(hp.lexer.warns, warn)
 }
 

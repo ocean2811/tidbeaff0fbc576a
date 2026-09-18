@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/streamhelper/spans"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/streamhelper/spans"
 	"github.com/stretchr/testify/require"
 )
 

@@ -17,7 +17,7 @@ package plancodec
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 	"github.com/stretchr/testify/require"
 )
 

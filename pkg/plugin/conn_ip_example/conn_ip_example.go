@@ -20,9 +20,8 @@ import (
 	"strings"
 	"sync/atomic"
 
-	"github.com/pingcap/tidb/pkg/plugin"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/plugin"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
 )
 
 // Accumulator of connection
@@ -48,13 +47,13 @@ func OnInit(ctx context.Context, manifest *plugin.Manifest) error {
 	// With the server.
 	sv := &variable.SysVar{
 		Name:  "conn_ip_example_key",
-		Scope: vardef.ScopeGlobal | vardef.ScopeSession,
+		Scope: variable.ScopeGlobal | variable.ScopeSession,
 		Value: "v1",
-		Type:  vardef.TypeStr, // default.
+		Type:  variable.TypeStr, // default.
 		// (Optional) specifying a validation function helps to normalize the value before setting it.
 		// The "normalizedValue" applies if the value has a Type associated, where some formatting may have already
 		// been applied. i.e. TypeBool: ON/oN/1/on -> ON
-		Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope vardef.ScopeFlag) (string, error) {
+		Validation: func(vars *variable.SessionVars, normalizedValue string, originalValue string, scope variable.ScopeFlag) (string, error) {
 			fmt.Println("The validation function was called")
 			return strings.ToLower(normalizedValue), nil
 		},
@@ -95,7 +94,7 @@ func OnShutdown(ctx context.Context, manifest *plugin.Manifest) error {
 func OnGeneralEvent(ctx context.Context, sctx *variable.SessionVars, event plugin.GeneralEvent, cmd string) {
 	fmt.Println("## conn_ip_example OnGeneralEvent called ##")
 	if sctx != nil {
-		fmt.Printf("---- session status: %d\n", sctx.Status())
+		fmt.Printf("---- session status: %d\n", sctx.Status)
 		digest, _ := sctx.StmtCtx.SQLDigest()
 		fmt.Printf("---- statement sql: %s, digest: %s\n", sctx.StmtCtx.OriginalSQL, digest)
 		if len(sctx.StmtCtx.Tables) > 0 {

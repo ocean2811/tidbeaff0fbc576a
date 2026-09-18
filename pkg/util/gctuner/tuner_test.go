@@ -18,14 +18,12 @@ import (
 	"runtime"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
 var testHeap []byte
 
 func TestTuner(t *testing.T) {
-	require.True(t, intest.InTest)
 	EnableGOGCTuner.Store(true)
 	memLimit := uint64(1000 * 1024 * 1024) //1000 MB
 	threshold := memLimit / 2
@@ -79,7 +77,7 @@ func TestTuner(t *testing.T) {
 	testHeap = make([]byte, threshold+1024)
 	t.Logf("old gc percent before gc: %d", tn.getGCPercent())
 	runtime.GC()
-	for range 8 {
+	for i := 0; i < 8; i++ {
 		runtime.GC()
 		require.Equal(t, minGCPercent.Load(), tn.getGCPercent())
 	}
@@ -95,7 +93,6 @@ func TestTuner(t *testing.T) {
 }
 
 func TestCalcGCPercent(t *testing.T) {
-	require.True(t, intest.InTest)
 	const gb = 1024 * 1024 * 1024
 	// use default value when invalid params
 	require.Equal(t, defaultGCPercent, calcGCPercent(0, 0))

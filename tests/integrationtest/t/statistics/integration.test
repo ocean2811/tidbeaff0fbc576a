@@ -15,24 +15,17 @@ create table t1(a int);
 create table t2(a int);
 insert into t1 values(null), (null), (null), (null);
 insert into t2 values(null), (null);
-analyze table t1 all columns;
-analyze table t2 all columns;
-explain format = 'plan_tree' select * from t1 left join t2 on t1.a=t2.a order by t1.a, t2.a;
-explain format = 'plan_tree' select * from t2 left join t1 on t1.a=t2.a order by t1.a, t2.a;
-explain format = 'plan_tree' select * from t1 right join t2 on t1.a=t2.a order by t1.a, t2.a;
-explain format = 'plan_tree' select * from t2 right join t1 on t1.a=t2.a order by t1.a, t2.a;
+analyze table t1;
+analyze table t2;
+explain format = 'brief' select * from t1 left join t2 on t1.a=t2.a order by t1.a, t2.a;
+explain format = 'brief' select * from t2 left join t1 on t1.a=t2.a order by t1.a, t2.a;
+explain format = 'brief' select * from t1 right join t2 on t1.a=t2.a order by t1.a, t2.a;
+explain format = 'brief' select * from t2 right join t1 on t1.a=t2.a order by t1.a, t2.a;
 
-# TestTopNNotStoredForUniqueValues
-# Shows that TopN is not collected for Unique single columns,
-# even when TopN is explicit requested.
-drop table if exists t;
-set @@session.tidb_analyze_version = 2;
-create table t(a int, b int, index idx_a(a), unique index uidx_b(b));
-insert into t values (1,1),(1,2),(2,3);
-analyze table t with 5 topn;
---sorted_result
-show stats_topn where table_name = 't';
-set @@session.tidb_analyze_version = default;
+# TestIssue49986
+drop table if exists test.t;
+create table if not exists test.ast (i varchar(20));
+create table if not exists test.acc (j varchar(20), k varchar(20), l varchar(20), m varchar(20));
+explain format='brief' with t as(select i, (case when b.j = '20001' then b.l else b.k end) an from test.ast a inner join test.acc b on (a.i = b.m) and a.i = 'astp2019121731703151'), t1 as (select i, group_concat(an order by an separator '; ') an from t group by i) select * from t1;
 
-# Cleanup
-drop table if exists t,t1,t2;
+

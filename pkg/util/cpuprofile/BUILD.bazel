@@ -6,7 +6,7 @@ go_library(
         "cpuprofile.go",
         "pprof_api.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/cpuprofile",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/cpuprofile",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/metrics",

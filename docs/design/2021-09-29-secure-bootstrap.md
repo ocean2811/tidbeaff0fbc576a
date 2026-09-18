@@ -1,8 +1,8 @@
 # TiDB Design Documents
 
 - Author(s): [morgo](http://github.com/morgo)
-- Discussion PR: https://github.com/pingcap/tidb/pull/28482
-- Tracking Issue: https://github.com/pingcap/tidb/issues/28481
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/pull/28482
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/28481
 
 ## Table of Contents
 
@@ -55,10 +55,10 @@ mysql> GRANT ALL PRIVILEGES ON *.* TO 'root'@'%' WITH GRANT OPTION;
 
 In order to add the `--initialize-secure` bootstrap option, the following supported features are required:
 
-1. Support for Socket Authentication (`auth_socket`) [PR in Review](https://github.com/pingcap/tidb/pull/27561)
-2. Stale socket files are automatically cleaned up on server start [PR Merged](https://github.com/pingcap/tidb/pull/27886)
-3. TiDB listens on both TCP **and** unix socket by default [PR in Review](https://github.com/pingcap/tidb/pull/28486)
-4. Auth plugin can be changed with ALTER/CREATE [PR Draft](https://github.com/pingcap/tidb/pull/28468)
+1. Support for Socket Authentication (`auth_socket`) [PR in Review](https://github.com/ocean2811/tidbeaff0fbc576a/pull/27561)
+2. Stale socket files are automatically cleaned up on server start [PR Merged](https://github.com/ocean2811/tidbeaff0fbc576a/pull/27886)
+3. TiDB listens on both TCP **and** unix socket by default [PR in Review](https://github.com/ocean2811/tidbeaff0fbc576a/pull/28486)
+4. Auth plugin can be changed with ALTER/CREATE [PR Draft](https://github.com/ocean2811/tidbeaff0fbc576a/pull/28468)
 
 ## Test Design
 

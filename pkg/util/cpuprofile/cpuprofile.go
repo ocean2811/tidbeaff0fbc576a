@@ -22,9 +22,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -211,7 +211,7 @@ func (p *parallelCPUProfiler) sendToConsumers() {
 	defer func() {
 		p.Unlock()
 		if r := recover(); r != nil {
-			logutil.BgLogger().Error("parallel cpu profiler panic", zap.Any("recover", r), zap.Stack("stack"))
+			logutil.BgLogger().Error("parallel cpu profiler panic", zap.Any("recover", r))
 		}
 	}()
 

@@ -3,6 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "_import",
     srcs = ["import.go"],
-    importpath = "github.com/pingcap/tidb/pkg/extension/_import",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/extension/_import",
     visibility = ["//visibility:public"],
 )

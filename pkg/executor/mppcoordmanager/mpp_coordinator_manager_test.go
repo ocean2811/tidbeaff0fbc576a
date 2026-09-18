@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/store/copr"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr"
 	"github.com/stretchr/testify/require"
 )
 
@@ -50,11 +50,6 @@ func (*IdleCoordinator) Close() error {
 // IsClosed implements MppCoordinator interface function.
 func (*IdleCoordinator) IsClosed() bool {
 	return true
-}
-
-// GetNodeCnt implements MppCoordinator interface function.
-func (*IdleCoordinator) GetNodeCnt() int {
-	return 0
 }
 
 func TestDetectAndDelete(t *testing.T) {

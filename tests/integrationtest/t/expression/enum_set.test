@@ -1,4 +1,4 @@
-# https://github.com/pingcap/tidb/issues/49487
+# https://github.com/ocean2811/tidbeaff0fbc576a/issues/49487
 drop table if exists t01;
 CREATE TABLE `t01` (
   `6524d87a` timestamp DEFAULT '2024-10-02 01:54:55',

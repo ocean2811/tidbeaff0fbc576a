@@ -7,7 +7,7 @@ go_library(
         "task_manager_iterator.go",
         "task_manager_scheduler.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/resourcemanager/poolmanager",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/poolmanager",
     visibility = ["//visibility:public"],
     deps = ["@org_uber_go_atomic//:atomic"],
 )

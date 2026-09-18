@@ -41,7 +41,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -127,7 +127,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -220,7 +220,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -258,13 +258,6 @@
                      "intervalFactor": 2,
                      "legendFormat": "{{instance}}",
                      "refId": "A"
-                  },
-                  {
-                     "expr": "tidb_server_maxprocs{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "quota-{{instance}}",
-                     "refId": "B"
                   }
                ],
                "thresholds": [ ],
@@ -313,7 +306,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -358,13 +351,6 @@
                      "intervalFactor": 2,
                      "legendFormat": "HeapInuse-{{instance}}",
                      "refId": "B"
-                  },
-                  {
-                     "expr": "tidb_server_memory_quota_bytes{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", job=\"tidb\"}",
-                     "format": "time_series",
-                     "intervalFactor": 2,
-                     "legendFormat": "quota-{{instance}}",
-                     "refId": "C"
                   }
                ],
                "thresholds": [ ],
@@ -433,7 +419,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -480,7 +466,7 @@
                      "refId": "B"
                   },
                   {
-                     "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type!=\"internal\"}[30s])) / sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type!=\"internal\"}[30s]))",
+                     "expr": "sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\", sql_type!=\"internal\"}[30s])) / sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", sql_type!=\"internal\"}[30s]))",
                      "format": "time_series",
                      "intervalFactor": 2,
                      "legendFormat": "avg",
@@ -533,7 +519,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -619,7 +605,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -667,7 +653,7 @@
                      "refId": "B"
                   },
                   {
-                     "expr": "sum(tidb_server_connections{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) * sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m])) / sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}[1m]))",
+                     "expr": "sum(tidb_server_connections{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\", instance=~\"$instance\"}) * sum(rate(tidb_server_handle_query_duration_seconds_count{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m])) / sum(rate(tidb_server_handle_query_duration_seconds_sum{k8s_cluster=\"$k8s_cluster\", tidb_cluster=\"$tidb_cluster\"}[1m]))",
                      "format": "time_series",
                      "hide": true,
                      "intervalFactor": 2,
@@ -721,7 +707,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -807,7 +793,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -900,7 +886,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -943,7 +929,7 @@
                "thresholds": [ ],
                "timeFrom": null,
                "timeShift": null,
-               "title": "CPS By CMD",
+               "title": "CPS by CMD",
                "tooltip": {
                   "shared": true,
                   "sort": 0,
@@ -1006,7 +992,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -1099,7 +1085,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -1192,7 +1178,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -1285,7 +1271,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -1391,7 +1377,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -1477,7 +1463,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -1577,7 +1563,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 0,
                   "y": 0
@@ -1663,7 +1649,7 @@
                "fill": 1,
                "fillGradient": 0,
                "gridPos": {
-                  "h": 7,
+                  "h": 6,
                   "w": 12,
                   "x": 12,
                   "y": 0
@@ -1786,7 +1772,7 @@
             "multi": false,
             "name": "tidb_cluster",
             "options": [ ],
-            "query": "label_values(pd_cluster_status{k8s_cluster=\"$k8s_cluster\"}, tidb_cluster)",
+            "query": "label_values(pd_cluster_status{k8s_cluster=\"$kuberentes\"}, tidb_cluster)",
             "refresh": 2,
             "regex": "",
             "sort": 1,

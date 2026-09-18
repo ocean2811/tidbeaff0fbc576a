@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "collector",
     srcs = ["cpu.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/topsql/collector",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/topsql/collector",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util",
@@ -21,7 +21,6 @@ go_test(
     srcs = ["main_test.go"],
     embed = [":collector"],
     flaky = True,
-    shard_count = 3,
     deps = [
         "//pkg/testkit/testsetup",
         "//pkg/util/cpuprofile",

@@ -16,30 +16,24 @@ package core_test
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/aggregation"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/plancodec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -57,7 +51,7 @@ func TestEncodeDecodePlan(t *testing.T) {
 	getPlanTree := func() (str1, str2 string) {
 		info := tk.Session().ShowProcess()
 		require.NotNil(t, info)
-		p, ok := info.Plan.(base.Plan)
+		p, ok := info.Plan.(core.Plan)
 		require.True(t, ok)
 		encodeStr := core.EncodePlan(p)
 		planTree, err := plancodec.DecodePlan(encodeStr)
@@ -204,10 +198,10 @@ func TestNormalizedDigest(t *testing.T) {
 	  PRIMARY KEY ( s_w_id , s_i_id ) NONCLUSTERED
 	);`)
 
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/planner/mockRandomPlanID", "return(true)")
+	err := failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/mockRandomPlanID", "return(true)")
 	require.NoError(t, err)
 	defer func() {
-		err = failpoint.Disable("github.com/pingcap/tidb/pkg/planner/mockRandomPlanID")
+		err = failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/mockRandomPlanID")
 		require.NoError(t, err)
 	}()
 
@@ -332,7 +326,7 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	tk.MustQuery(sql1)
 	info := tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	physicalPlan, ok := info.Plan.(base.PhysicalPlan)
+	physicalPlan, ok := info.Plan.(core.PhysicalPlan)
 	require.True(t, ok)
 	normalized1, digest1 := core.NormalizePlan(physicalPlan)
 
@@ -345,7 +339,7 @@ func testNormalizeDigest(tk *testkit.TestKit, t *testing.T, sql1, sql2 string, i
 	tk.MustQuery(sql2)
 	info = tk.Session().ShowProcess()
 	require.NotNil(t, info)
-	physicalPlan, ok = info.Plan.(base.PhysicalPlan)
+	physicalPlan, ok = info.Plan.(core.PhysicalPlan)
 	require.True(t, ok)
 	normalized2, digest2 := core.NormalizePlan(physicalPlan)
 
@@ -373,11 +367,15 @@ func TestExplainFormatHintRecoverableForTiFlashReplica(t *testing.T) {
 	tk.MustExec("create table t(a int)")
 	// Create virtual `tiflash` replica info.
 	is := dom.InfoSchema()
-	tblInfo, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("t"))
-	require.NoError(t, err)
-	tblInfo.Meta().TiFlashReplica = &model.TiFlashReplicaInfo{
-		Count:     1,
-		Available: true,
+	db, exists := is.SchemaByName(model.NewCIStr("test"))
+	require.True(t, exists)
+	for _, tblInfo := range db.Tables {
+		if tblInfo.Name.L == "t" {
+			tblInfo.TiFlashReplica = &model.TiFlashReplicaInfo{
+				Count:     1,
+				Available: true,
+			}
+		}
 	}
 
 	rows := tk.MustQuery("explain select * from t").Rows()
@@ -401,7 +399,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 
 	// generate SQL
 	buf := bytes.NewBuffer(make([]byte, 0, 1024*1024*4))
-	for i := range 50000 {
+	for i := 0; i < 50000; i++ {
 		if i > 0 {
 			buf.WriteString(" union ")
 		}
@@ -412,7 +410,7 @@ func BenchmarkDecodePlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(base.PhysicalPlan)
+	p, ok := info.Plan.(core.PhysicalPlan)
 	require.True(b, ok)
 	// TODO: optimize the encode plan performance when encode plan with runtimeStats
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
@@ -429,6 +427,7 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
@@ -438,7 +437,7 @@ func BenchmarkEncodePlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(base.PhysicalPlan)
+	p, ok := info.Plan.(core.PhysicalPlan)
 	require.True(b, ok)
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	b.ResetTimer()
@@ -452,6 +451,7 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk := testkit.NewTestKit(b, store)
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists th")
+	tk.MustExec("set @@session.tidb_enable_table_partition = 1")
 	tk.MustExec(`set @@tidb_partition_prune_mode='` + string(variable.Static) + `'`)
 	tk.MustExec("create table th (i int, a int,b int, c int, index (a)) partition by hash (a) partitions 8192;")
 	tk.MustExec("set @@tidb_slow_log_threshold=200000")
@@ -461,7 +461,7 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	tk.MustExec(query)
 	info := tk.Session().ShowProcess()
 	require.NotNil(b, info)
-	p, ok := info.Plan.(base.PhysicalPlan)
+	p, ok := info.Plan.(core.PhysicalPlan)
 	require.True(b, ok)
 	tk.Session().GetSessionVars().StmtCtx.RuntimeStatsColl = nil
 	b.ResetTimer()
@@ -471,68 +471,91 @@ func BenchmarkEncodeFlatPlan(b *testing.B) {
 	}
 }
 
+func TestIssue35090(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists p, t;")
+	tk.MustExec("create table p (id int, c int, key i_id(id), key i_c(c));")
+	tk.MustExec("create table t (id int);")
+	tk.MustExec("insert into p values (3,3), (4,4), (6,6), (9,9);")
+	tk.MustExec("insert into t values (4), (9);")
+	tk.MustExec("select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;")
+	rows := [][]interface{}{
+		{"IndexJoin"},
+		{"├─TableReader(Build)"},
+		{"│ └─Selection"},
+		{"│   └─TableFullScan"},
+		{"└─IndexLookUp(Probe)"},
+		{"  ├─Selection(Build)"},
+		{"  │ └─IndexRangeScan"},
+		{"  └─TableRowIDScan(Probe)"},
+	}
+	tk.MustQuery("explain analyze format='brief' select /*+ INL_JOIN(p) */ * from p, t where p.id = t.id;").CheckAt([]int{0}, rows)
+}
+
 func TestCopPaging(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-
+	tk.MustExec("set tidb_cost_model_version=2")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("set session tidb_enable_paging = 1")
 	tk.MustExec("create table t(id int, c1 int, c2 int, primary key (id), key i(c1))")
 	defer tk.MustExec("drop table t")
-	for i := range 1024 {
+	for i := 0; i < 1024; i++ {
 		tk.MustExec("insert into t values(?, ?, ?)", i, i, i)
 	}
-	tk.MustExec("analyze table t all columns")
+	tk.MustExec("analyze table t")
 
 	// limit 960 should go paging
-	for range 10 {
-		tk.MustQuery("explain format='plan_tree' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
-			"Limit root  offset:0, count:960",
-			"└─IndexLookUp root  ",
-			"  ├─Selection(Build) cop[tikv]  le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan cop[tikv] table:t keep order:false"))
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
+			"Limit 4.00 root  offset:0, count:960",
+			"└─IndexLookUp 4.00 root  ",
+			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
 	}
 
 	// selection between limit and indexlookup, limit 960 should also go paging
-	for range 10 {
-		tk.MustQuery("explain format='plan_tree' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
-			"Limit root  offset:0, count:960",
-			"└─IndexLookUp root  ",
-			"  ├─Selection(Build) cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan cop[tikv] table:t keep order:false"))
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 960").Check(testkit.Rows(
+			"Limit 3.20 root  offset:0, count:960",
+			"└─IndexLookUp 3.20 root  ",
+			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
 	}
 
 	// limit 961 exceeds the threshold, it should not go paging
-	for range 10 {
-		tk.MustQuery("explain format='plan_tree' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
-			"Limit root  offset:0, count:961",
-			"└─IndexLookUp root  ",
-			"  ├─Selection(Build) cop[tikv]  le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan cop[tikv] table:t keep order:false"))
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
+			"Limit 4.00 root  offset:0, count:961",
+			"└─IndexLookUp 4.00 root  ",
+			"  ├─Selection(Build) 1024.00 cop[tikv]  le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 4.00 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 1024.00 cop[tikv] table:t keep order:false"))
 	}
 
 	// selection between limit and indexlookup, limit 961 should not go paging too
-	for range 10 {
-		tk.MustQuery("explain format='plan_tree' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
-			"Limit root  offset:0, count:961",
-			"└─IndexLookUp root  ",
-			"  ├─Selection(Build) cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
-			"  │ └─IndexRangeScan cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
-			"  └─Selection(Probe) cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
-			"    └─TableRowIDScan cop[tikv] table:t keep order:false"))
+	for i := 0; i < 10; i++ {
+		tk.MustQuery("explain format='brief' select * from t force index(i) where mod(id, 2) > 0 and id <= 1024 and c1 >= 0 and c1 <= 1024 and c2 in (2, 4, 6, 8) order by c1 limit 961").Check(testkit.Rows(
+			"Limit 3.20 root  offset:0, count:961",
+			"└─IndexLookUp 3.20 root  ",
+			"  ├─Selection(Build) 819.20 cop[tikv]  gt(mod(test.t.id, 2), 0), le(test.t.id, 1024)",
+			"  │ └─IndexRangeScan 1024.00 cop[tikv] table:t, index:i(c1) range:[0,1024], keep order:true",
+			"  └─Selection(Probe) 3.20 cop[tikv]  in(test.t.c2, 2, 4, 6, 8)",
+			"    └─TableRowIDScan 819.20 cop[tikv] table:t keep order:false"))
 	}
 }
 
 func TestBuildFinalModeAggregation(t *testing.T) {
-	aggSchemaBuilder := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
+	aggSchemaBuilder := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc) *expression.Schema {
 		schema := expression.NewSchema(make([]*expression.Column, 0, len(aggFuncs))...)
 		for _, agg := range aggFuncs {
 			newCol := &expression.Column{
@@ -546,10 +569,10 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	isFinalAggMode := func(mode aggregation.AggFunctionMode) bool {
 		return mode == aggregation.FinalMode || mode == aggregation.CompleteMode
 	}
-	checkResult := func(sctx base.PlanContext, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
-		for partialIsCop := range 2 {
-			for isMPPTask := range 2 {
-				partial, final, _ := physicalop.BuildFinalModeAggregation(sctx, &physicalop.AggInfo{
+	checkResult := func(sctx sessionctx.Context, aggFuncs []*aggregation.AggFuncDesc, groubyItems []expression.Expression) {
+		for partialIsCop := 0; partialIsCop < 2; partialIsCop++ {
+			for isMPPTask := 0; isMPPTask < 2; isMPPTask++ {
+				partial, final, _ := core.BuildFinalModeAggregation(sctx, &core.AggInfo{
 					AggFuncs:     aggFuncs,
 					GroupByItems: groubyItems,
 					Schema:       aggSchemaBuilder(sctx, aggFuncs),
@@ -572,7 +595,7 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 		}
 	}
 
-	ctx := coretestsdk.MockContext()
+	ctx := core.MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -679,98 +702,78 @@ func TestBuildFinalModeAggregation(t *testing.T) {
 	checkResult(ctx, mixedAggFuncs, groupByItems)
 }
 
-func TestBuildFinalModeAggregationMaxMinCountSchema(t *testing.T) {
-	ctx := coretestsdk.MockContext()
-	defer func() {
-		domain.GetDomain(ctx).StatsHandle().Close()
-	}()
-
-	argType := types.NewFieldType(mysql.TypeString)
-	argType.SetCharset(charset.CharsetUTF8MB4)
-	argType.SetCollate("utf8mb4_general_ci")
-	argType.DelFlag(mysql.NotNullFlag)
-	argCol := &expression.Column{
-		Index:   0,
-		RetType: argType,
-	}
-
-	desc, err := aggregation.NewAggFuncDesc(ctx, ast.AggFuncMaxCount, []expression.Expression{argCol}, false)
-	require.NoError(t, err)
-
-	schema := expression.NewSchema()
-	schema.Append(&expression.Column{
-		UniqueID: ctx.GetSessionVars().AllocPlanColumnID(),
-		RetType:  desc.RetTp,
-	})
-
-	partial, final, _ := physicalop.BuildFinalModeAggregation(ctx, &physicalop.AggInfo{
-		AggFuncs:     []*aggregation.AggFuncDesc{desc},
-		GroupByItems: nil,
-		Schema:       schema,
-	}, true, false)
-	require.NotNil(t, partial)
-	require.NotNil(t, final)
-	require.Len(t, partial.Schema.Columns, 2)
-	require.Equal(t, mysql.TypeLonglong, partial.Schema.Columns[0].RetType.GetType())
-	require.Equal(t, mysql.TypeString, partial.Schema.Columns[1].RetType.GetType())
-	require.Equal(t, "utf8mb4_general_ci", partial.Schema.Columns[1].RetType.GetCollate())
-	require.Len(t, final.AggFuncs[0].Args, 2)
-	require.Equal(t, mysql.TypeLonglong, final.AggFuncs[0].Args[0].GetType(ctx.GetExprCtx().GetEvalCtx()).GetType())
-	require.Equal(t, mysql.TypeString, final.AggFuncs[0].Args[1].GetType(ctx.GetExprCtx().GetEvalCtx()).GetType())
-	require.Equal(t, "utf8mb4_general_ci", final.AggFuncs[0].Args[1].GetType(ctx.GetExprCtx().GetEvalCtx()).GetCollate())
+func TestIssue40857(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t;")
+	tk.MustExec("CREATE TABLE t (c1 mediumint(9) DEFAULT '-4747160',c2 year(4) NOT NULL DEFAULT '2075',c3 double DEFAULT '1.1559030660251948',c4 enum('wbv4','eli','d8ym','m3gsx','lz7td','o','d1k7l','y1x','xcxq','bj','n7') DEFAULT 'xcxq',c5 int(11) DEFAULT '255080866',c6 tinyint(1) DEFAULT '1',PRIMARY KEY (c2),KEY `c4d86d54-091c-4307-957b-b164c9652b7f` (c6,c4) );")
+	tk.MustExec("insert into t values (-4747160, 2075, 722.5719203870632, 'xcxq', 1576824797, 1);")
+	tk.MustExec("select /*+ stream_agg() */ bit_or(t.c5) as r0 from t where t.c3 in (select c6 from t where not(t.c6 <> 1) and not(t.c3 in(9263.749352636818))) group by t.c1;")
+	require.Empty(t, tk.Session().LastMessage())
 }
 
 func TestCloneFineGrainedShuffleStreamCount(t *testing.T) {
-	window := &physicalop.PhysicalWindow{}
-	newPlan, err := window.Clone(nil)
+	window := &core.PhysicalWindow{}
+	newPlan, err := window.Clone()
 	require.NoError(t, err)
-	newWindow, ok := newPlan.(*physicalop.PhysicalWindow)
+	newWindow, ok := newPlan.(*core.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
 	window.TiFlashFineGrainedShuffleStreamCount = 8
-	newPlan, err = window.Clone(nil)
+	newPlan, err = window.Clone()
 	require.NoError(t, err)
-	newWindow, ok = newPlan.(*physicalop.PhysicalWindow)
+	newWindow, ok = newPlan.(*core.PhysicalWindow)
 	require.Equal(t, ok, true)
 	require.Equal(t, window.TiFlashFineGrainedShuffleStreamCount, newWindow.TiFlashFineGrainedShuffleStreamCount)
 
-	sort := &physicalop.PhysicalSort{}
-	newPlan, err = sort.Clone(nil)
+	sort := &core.PhysicalSort{}
+	newPlan, err = sort.Clone()
 	require.NoError(t, err)
-	newSort, ok := newPlan.(*physicalop.PhysicalSort)
+	newSort, ok := newPlan.(*core.PhysicalSort)
 	require.Equal(t, ok, true)
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
 
 	sort.TiFlashFineGrainedShuffleStreamCount = 8
-	newPlan, err = sort.Clone(nil)
+	newPlan, err = sort.Clone()
 	require.NoError(t, err)
-	newSort, ok = newPlan.(*physicalop.PhysicalSort)
+	newSort, ok = newPlan.(*core.PhysicalSort)
 	require.Equal(t, ok, true)
 	require.Equal(t, sort.TiFlashFineGrainedShuffleStreamCount, newSort.TiFlashFineGrainedShuffleStreamCount)
 }
 
-func TestImportIntoBuildPlan(t *testing.T) {
+func TestIssue40535(t *testing.T) {
 	store := testkit.CreateMockStore(t)
+	var cfg kv.InjectionConfig
+	tk := testkit.NewTestKit(t, kv.NewInjectedStore(store, &cfg))
+	tk.MustExec("use test;")
+	tk.MustExec("drop table if exists t1; drop table if exists t2;")
+	tk.MustExec("CREATE TABLE `t1`(`c1` bigint(20) NOT NULL DEFAULT '-2312745469307452950', `c2` datetime DEFAULT '5316-02-03 06:54:49', `c3` tinyblob DEFAULT NULL, PRIMARY KEY (`c1`) /*T![clustered_index] CLUSTERED */) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_bin;")
+	tk.MustExec("CREATE TABLE `t2`(`c1` set('kn8pu','7et','vekx6','v3','liwrh','q14','1met','nnd5i','5o0','8cz','l') DEFAULT '7et,vekx6,liwrh,q14,1met', `c2` float DEFAULT '1.683167', KEY `k1` (`c2`,`c1`), KEY `k2` (`c2`)) ENGINE=InnoDB DEFAULT CHARSET=gbk COLLATE=gbk_chinese_ci;")
+	tk.MustExec("(select /*+ agg_to_cop()*/ locate(t1.c3, t1.c3) as r0, t1.c3 as r1 from t1 where not( IsNull(t1.c1)) order by r0,r1) union all (select concat_ws(',', t2.c2, t2.c1) as r0, t2.c1 as r1 from t2 order by r0, r1) order by 1 limit 273;")
+	require.Empty(t, tk.Session().LastMessage())
+}
 
+func TestIssue47445(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (a int, b int, c datetime on update CURRENT_TIMESTAMP);")
-	tk.MustExec("create table t2 (a int, b int, c datetime on update CURRENT_TIMESTAMP);")
-	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1 FROM select a from t2;"),
-		plannererrors.ErrWrongValueCountOnRow)
-	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t1(a) FROM select * from t2;"),
-		plannererrors.ErrWrongValueCountOnRow)
+	tk.MustExec("use test;")
+	tk.MustExec("CREATE TABLE golang1 ( `fcbpdt` CHAR (8) COLLATE utf8_general_ci NOT NULL, `fcbpsq` VARCHAR (20) COLLATE utf8_general_ci NOT NULL, `procst` char (4) COLLATE utf8_general_ci DEFAULT NULL,`cipstx` VARCHAR (105) COLLATE utf8_general_ci DEFAULT NULL, `cipsst` CHAR (4) COLLATE utf8_general_ci DEFAULT NULL, `dyngtg` VARCHAR(4) COLLATE utf8_general_ci DEFAULT NULL, `blncdt` VARCHAR (8) COLLATE utf8_general_ci DEFAULT NULL, PRIMARY KEY ( fcbpdt, fcbpsq ))")
+	tk.MustExec("insert into golang1 values('20230925','12023092502158016','abc','','','','')")
+	tk.MustExec("create table golang2 (`sysgrp` varchar(20) NOT NULL,`procst` varchar(8) NOT NULL,`levlid` int(11) NOT NULL,PRIMARY key (procst));")
+	tk.MustExec("insert into golang2 VALUES('COMMON','ACSC',90)")
+	tk.MustExec("insert into golang2 VALUES('COMMON','abc',8)")
+	tk.MustExec("insert into golang2 VALUES('COMMON','CH02',6)")
+	tk.MustExec("UPDATE golang1 a SET procst =(CASE WHEN ( SELECT levlid FROM golang2 b WHERE b.sysgrp = 'COMMON' AND b.procst = 'ACSC' ) > ( SELECT levlid FROM golang2 c WHERE c.sysgrp = 'COMMON' AND c.procst = a.procst ) THEN 'ACSC' ELSE a.procst END ), cipstx = 'CI010000', cipsst = 'ACSC', dyngtg = 'EAYT', blncdt= '20230925' WHERE fcbpdt = '20230925' AND fcbpsq = '12023092502158016'")
+	tk.MustQuery("select * from golang1").Check(testkit.Rows("20230925 12023092502158016 ACSC CI010000 ACSC EAYT 20230925"))
+	tk.MustExec("UPDATE golang1 a SET procst= (SELECT 1 FROM golang2 c WHERE c.procst = a.procst) WHERE fcbpdt = '20230925' AND fcbpsq = '12023092502158016'")
+	tk.MustQuery("select * from golang1").Check(testkit.Rows("20230925 12023092502158016 1 CI010000 ACSC EAYT 20230925"))
+}
 
-	time.Sleep(100 * time.Millisecond)
-	now := tk.MustQuery("select now(6)").Rows()[0][0].(string)
-	time.Sleep(100 * time.Millisecond)
-	tk.MustExec("create table t3 (a int, b int);")
-	// set tidb_snapshot will fail without this
-	tk.MustExec(`replace into mysql.tidb(variable_name, variable_value) values ('tikv_gc_safe_point', '20240131-00:00:00.000 +0800')`)
-	tk.MustExec("set tidb_snapshot = '" + now + "'")
-	require.ErrorContains(t, tk.ExecToErr("IMPORT INTO t1 FROM select * from t2"),
-		"can not execute write statement when 'tidb_snapshot' is set")
-	require.ErrorIs(t, tk.ExecToErr("IMPORT INTO t3 FROM select * from t2"),
-		infoschema.ErrTableNotExists)
+func TestExplainValuesStatement(t *testing.T) {
+	store, _ := testkit.CreateMockStoreAndDomain(t)
+	tk := testkit.NewTestKit(t, store)
+
+	tk.MustMatchErrMsg("EXPLAIN FORMAT = TRADITIONAL ((VALUES ROW ()) ORDER BY 1)", ".*Unknown table ''.*")
 }

@@ -17,19 +17,16 @@ package copr
 import (
 	"context"
 	"math/rand"
-	"slices"
 	"sort"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/store/driver/backoff"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/tiflash"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver/backoff"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/stathat/consistent"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
@@ -41,22 +38,27 @@ import (
 // StoreID: [1, storeCount]
 func buildStoreTaskMap(storeCount int) map[uint64]*batchCopTask {
 	storeTasks := make(map[uint64]*batchCopTask)
-	for i := range storeCount {
+	for i := 0; i < storeCount; i++ {
 		storeTasks[uint64(i+1)] = &batchCopTask{}
 	}
 	return storeTasks
 }
 
 func buildRegionInfos(storeCount, regionCount, replicaNum int) []RegionInfo {
-	ss := make([]string, 0, regionCount)
-	for i := range regionCount {
+	var ss []string
+	for i := 0; i < regionCount; i++ {
 		s := strconv.Itoa(i)
 		ss = append(ss, s)
 	}
 	sort.Strings(ss)
 
 	storeIDExist := func(storeID uint64, storeIDs []uint64) bool {
-		return slices.Contains(storeIDs, storeID)
+		for _, i := range storeIDs {
+			if i == storeID {
+				return true
+			}
+		}
+		return false
 	}
 
 	randomStores := func(storeCount, replicaNum int) []uint64 {
@@ -126,13 +128,13 @@ func TestBalanceBatchCopTaskWithContinuity(t *testing.T) {
 func TestBalanceBatchCopTaskWithEmptyTaskSet(t *testing.T) {
 	{
 		var nilTaskSet []*batchCopTask
-		nilResult := balanceBatchCopTask(nil, nilTaskSet, false, 0, nil)
+		nilResult := balanceBatchCopTask(nil, nil, nilTaskSet, false, 0)
 		require.True(t, nilResult == nil)
 	}
 
 	{
 		emptyTaskSet := make([]*batchCopTask, 0)
-		emptyResult := balanceBatchCopTask(nil, emptyTaskSet, false, 0, nil)
+		emptyResult := balanceBatchCopTask(nil, nil, emptyTaskSet, false, 0)
 		require.True(t, emptyResult != nil)
 		require.True(t, len(emptyResult) == 0)
 	}
@@ -144,7 +146,7 @@ func TestDeepCopyStoreTaskMap(t *testing.T) {
 		task.regionInfos = append(task.regionInfos, RegionInfo{})
 	}
 
-	storeTasks2 := deepCopyStoreTaskMap(storeTasks1, 0)
+	storeTasks2 := deepCopyStoreTaskMap(storeTasks1)
 	for _, task := range storeTasks2 {
 		task.regionInfos = append(task.regionInfos, RegionInfo{})
 	}
@@ -161,7 +163,7 @@ func TestDeepCopyStoreTaskMap(t *testing.T) {
 // Make sure no duplicated ip:addr.
 func generateOneAddr() string {
 	var ip string
-	for i := range 4 {
+	for i := 0; i < 4; i++ {
 		if i != 0 {
 			ip += "."
 		}
@@ -190,7 +192,7 @@ func TestConsistentHash(t *testing.T) {
 	computeNodes := allAddrs[:30]
 	storageNodes := allAddrs[30:]
 	firstRoundMap := make(map[string]string)
-	for round := range 100 {
+	for round := 0; round < 100; round++ {
 		hasher := consistent.New()
 		rand.Shuffle(len(computeNodes), func(i, j int) {
 			computeNodes[i], computeNodes[j] = computeNodes[j], computeNodes[i]
@@ -214,10 +216,10 @@ func TestConsistentHash(t *testing.T) {
 
 func TestDispatchPolicyRR(t *testing.T) {
 	allAddrs := generateDifferentAddrs(100)
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		regCnt := rand.Intn(10000)
 		regIDs := make([]tikv.RegionVerID, 0, regCnt)
-		for i := range regCnt {
+		for i := 0; i < regCnt; i++ {
 			regIDs = append(regIDs, tikv.NewRegionVerID(uint64(i), 0, 0))
 		}
 
@@ -275,7 +277,7 @@ func TestTopoFetcherBackoff(t *testing.T) {
 		if err := fetchTopoBo.Backoff(tikv.BoTiFlashRPC(), expectErr); err != nil {
 			break
 		}
-		logutil.BgLogger().Info("TestTopoFetcherBackoff", zap.Int("retryNum", retryNum))
+		logutil.BgLogger().Info("TestTopoFetcherBackoff", zap.Any("retryNum", retryNum))
 	}
 	dura := time.Since(start)
 	// fetchTopoMaxBackoff is milliseconds.
@@ -316,272 +318,5 @@ func TestGetAllUsedTiFlashStores(t *testing.T) {
 	for _, store := range allUsedTiFlashStores {
 		_, ok := allUsedTiFlashStoresMap[store.StoreID()]
 		require.True(t, ok)
-	}
-}
-
-func BenchmarkBalanceBatchCopTaskWithContinuity(b *testing.B) {
-	b.StopTimer()
-	replicaNum := 3
-	storeCount := 10
-	regionCount := 200000
-	storeTasks := buildStoreTaskMap(storeCount)
-	regionInfos := buildRegionInfos(storeCount, regionCount, replicaNum)
-
-	b.StartTimer()
-	for i := 0; i < b.N; i++ {
-		_, _ = balanceBatchCopTaskWithContinuity(storeTasks, regionInfos, 20)
-	}
-}
-
-func TestAliveStoreSkipCheck(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash", `return(false)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash"))
-	}()
-
-	usedTiFlashStoresMap := map[uint64]struct{}{
-		1: {},
-		2: {},
-		3: {},
-	}
-
-	{
-		// Non closest_replica; min replica num is 1.
-		usedTiFlashStores := [][]uint64{
-			{1, 2}, // region-1
-			{2, 3}, // region-2
-			{1},    // region-3
-		}
-		aliveStores := &aliveStoresBundle{
-			storeIDsInAllZones: map[uint64]struct{}{
-				1: {},
-				2: {},
-				3: {},
-			},
-			storeIDsInTiDBZone: map[uint64]struct{}{
-				1: {},
-			},
-		}
-		// 1, 2, 3 is alive, can skip check.
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2, 1))
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2, 1))
-
-		// 1, 2 is alive, cannot skip check.
-		aliveStores.storeIDsInAllZones = map[uint64]struct{}{
-			1: {},
-			2: {},
-		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2, 1))
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2, 1))
-	}
-
-	{
-		// Non closest_replica; min replica num is 2.
-		usedTiFlashStores := [][]uint64{
-			{1, 2}, // region-1
-			{2, 3}, // region-2
-			{1, 3}, // region-3
-		}
-		// 1, 2, 3 is alive, can skip check.
-		aliveStores := &aliveStoresBundle{
-			storeIDsInAllZones: map[uint64]struct{}{
-				1: {},
-				2: {},
-				3: {},
-			},
-			storeIDsInTiDBZone: map[uint64]struct{}{
-				1: {},
-				2: {},
-				3: {},
-			},
-		}
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2, 2))
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2, 2))
-
-		// 1, 2 is alive, can skip check.
-		aliveStores.storeIDsInAllZones = map[uint64]struct{}{
-			1: {},
-			2: {},
-		}
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestAdaptive, 2, 2))
-		require.True(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.AllReplicas, 2, 2))
-	}
-
-	{
-		// closest_replica(always need check). min replica num is 1.
-		usedTiFlashStores := [][]uint64{
-			{1, 2}, // region-1
-			{2, 3}, // region-2
-			{1},    // region-3
-		}
-		// 1 is alive, cannot skip check.
-		aliveStores := &aliveStoresBundle{
-			storeIDsInAllZones: map[uint64]struct{}{
-				1: {},
-				2: {},
-				3: {},
-			},
-			storeIDsInTiDBZone: map[uint64]struct{}{
-				1: {},
-			},
-		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 1))
-
-		// 1, 2 is alive, cannot skip check.
-		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
-			1: {},
-			2: {},
-		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 1))
-
-		// 1, 2, 3 is alive, can skip check.
-		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
-			1: {},
-			2: {},
-			3: {},
-		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 1))
-	}
-
-	{
-		// closest_replica. min replica num is 2.
-		usedTiFlashStores := [][]uint64{
-			{1, 2}, // region-1
-			{2, 3}, // region-2
-			{1, 3}, // region-3
-		}
-
-		// 1 is alive, cannot skip check.
-		aliveStores := &aliveStoresBundle{
-			storeIDsInAllZones: map[uint64]struct{}{
-				1: {},
-				2: {},
-				3: {},
-			},
-			storeIDsInTiDBZone: map[uint64]struct{}{
-				1: {},
-			},
-		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
-
-		// 1, 2 is alive, cannot skip check.
-		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
-			1: {},
-			2: {},
-		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
-
-		// 1, 2, 3 is alive, can skip check.
-		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
-			1: {},
-			2: {},
-			3: {},
-		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
-
-		// 1, 2 is alive, can skip check.
-		usedTiFlashStores = [][]uint64{
-			{1, 2}, // region-1
-			{1, 2}, // region-2
-			{1, 2}, // region-3
-		}
-		aliveStores.storeIDsInTiDBZone = map[uint64]struct{}{
-			1: {},
-			2: {},
-		}
-		require.False(t, canSkipCheckAliveStores(aliveStores, usedTiFlashStores, usedTiFlashStoresMap, tiflash.ClosestReplicas, 2, 2))
-	}
-}
-
-func TestCheckAliveStore(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash", `return(false)`))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/mockNoAliveTiFlash"))
-	}()
-	aliveStores := &aliveStoresBundle{
-		storeIDsInAllZones: map[uint64]struct{}{
-			1: {},
-			2: {},
-			3: {},
-		},
-		storeIDsInTiDBZone: map[uint64]struct{}{
-			1: {},
-		},
-	}
-
-	usedTiFlashStoresMap := map[uint64]struct{}{
-		1: {},
-		2: {},
-		3: {},
-	}
-
-	usedTiFlashStores := [][]uint64{
-		{1, 2}, // region-1
-		{2, 3}, // region-2
-		{3},    // region-3
-	}
-
-	tasks := []*copTask{
-		{
-			region: tikv.NewRegionVerID(1, 1, 1),
-		},
-		{
-			region: tikv.NewRegionVerID(2, 2, 2),
-		},
-		{
-			region: tikv.NewRegionVerID(3, 3, 3),
-		},
-	}
-
-	var minReplicaNum uint64
-	var maxAllowedRemote int
-	{
-		// Test closest_replica. 2 remote region, 1 tidb zone region.
-		maxAllowedRemote = 1
-		needRetry, invalidRegions := checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
-			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
-		require.True(t, needRetry)
-		require.Equal(t, 2, len(invalidRegions))
-	}
-	{
-		// Test closest_replica. 2 remote region, 1 tidb zone region.
-		maxAllowedRemote = 3
-		needRetry, invalidRegions := checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
-			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
-		require.False(t, needRetry)
-		require.Equal(t, 0, len(invalidRegions))
-	}
-	{
-		// Test non closest_replica.
-		needRetry, invalidRegions := checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
-			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
-		require.False(t, needRetry)
-		require.Equal(t, 0, len(invalidRegions))
-	}
-	{
-		// Test non closest_replica.
-		aliveStores := &aliveStoresBundle{
-			storeIDsInAllZones: map[uint64]struct{}{
-				1: {},
-				2: {},
-			},
-			storeIDsInTiDBZone: map[uint64]struct{}{
-				1: {},
-			},
-		}
-		needRetry, invalidRegions := checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
-			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
-		require.True(t, needRetry)
-		require.Equal(t, 1, len(invalidRegions))
-	}
-	{
-		aliveStores := &aliveStoresBundle{
-			storeIDsInAllZones: map[uint64]struct{}{},
-			storeIDsInTiDBZone: map[uint64]struct{}{},
-		}
-		needRetry, invalidRegions := checkAliveStore(aliveStores, usedTiFlashStores, usedTiFlashStoresMap,
-			nil, tiflash.ClosestReplicas, 2, tasks, minReplicaNum, maxAllowedRemote)
-		require.True(t, needRetry)
-		require.Equal(t, 3, len(invalidRegions))
 	}
 }

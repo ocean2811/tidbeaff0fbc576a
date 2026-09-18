@@ -18,9 +18,9 @@ import (
 	"math/bits"
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 )
 
 const (
@@ -39,6 +39,7 @@ const (
 	fieldTypeTupleIndexFlagNull
 	fieldTypeTupleIndexFlagAntiKeys
 	fieldTypeTupleIndexFlagDefVal
+	fieldTypeTupleIndexCharset
 	fieldTypeTupleIndexCollate
 	fieldTypeTupleIndexElems
 
@@ -85,13 +86,14 @@ func encodeFieldTypeToLattice(ft *types.FieldType) Tuple {
 		Byte(encodeAntiKeys(ft.GetFlag())),
 		defVal,
 
-		Collation(ft.GetCollate()),
+		Singleton(ft.GetCharset()),
+		Singleton(ft.GetCollate()),
 		StringList(ft.GetElems()),
 	}
 }
 
 func decodeFieldTypeFromLattice(tup Tuple) *types.FieldType {
-	lst := tup.Unwrap().([]any)
+	lst := tup.Unwrap().([]interface{})
 
 	flags := lst[fieldTypeTupleIndexFlagSingleton].(uint)
 	flags |= decodeAntiKeys(lst[fieldTypeTupleIndexFlagAntiKeys].(byte))
@@ -104,14 +106,7 @@ func decodeFieldTypeFromLattice(tup Tuple) *types.FieldType {
 		flags |= mysql.NoDefaultValueFlag
 	}
 
-	collate := lst[fieldTypeTupleIndexCollate].(string)
-	charsetName, _, _ := strings.Cut(collate, "_")
-	if charsetName == "" {
-		charsetName = collate
-	}
-	charsetName = Charset(charsetName).Unwrap().(string)
-
-	return types.NewFieldTypeBuilder().SetType(lst[fieldTypeTupleIndexTp].(byte)).SetFlen(lst[fieldTypeTupleIndexFlen].(int)).SetDecimal(lst[fieldTypeTupleIndexDec].(int)).SetFlag(flags).SetCharset(charsetName).SetCollate(collate).SetElems(lst[fieldTypeTupleIndexElems].([]string)).BuildP()
+	return types.NewFieldTypeBuilder().SetType(lst[fieldTypeTupleIndexTp].(byte)).SetFlen(lst[fieldTypeTupleIndexFlen].(int)).SetDecimal(lst[fieldTypeTupleIndexDec].(int)).SetFlag(flags).SetCharset(lst[fieldTypeTupleIndexCharset].(string)).SetCollate(lst[fieldTypeTupleIndexCollate].(string)).SetElems(lst[fieldTypeTupleIndexElems].([]string)).BuildP()
 }
 
 type typ struct{ Tuple }
@@ -152,7 +147,7 @@ func (a typ) setAntiKeyFlags(flag uint) {
 	a.Tuple[fieldTypeTupleIndexFlagAntiKeys] = Byte(encodeAntiKeys(flag))
 }
 
-func (a typ) getStandardDefaultValue() any {
+func (a typ) getStandardDefaultValue() interface{} {
 	var tail string
 	if dec := a.Tuple[fieldTypeTupleIndexDec].Unwrap().(int); dec > 0 {
 		tail = "." + strings.Repeat("0", dec)
@@ -171,12 +166,10 @@ func (a typ) getStandardDefaultValue() any {
 		return "0000"
 	case mysql.TypeJSON:
 		return "null"
-	case mysql.TypeTiDBVectorFloat32:
-		return "[]"
 	case mysql.TypeEnum:
 		return a.Tuple[fieldTypeTupleIndexElems].(StringList)[0]
 	case mysql.TypeString:
-		// ref https://github.com/pingcap/tidb/blob/66948b2fd9bec8ea11644770a2fa746c7eba1a1f/ddl/ddl_api.go#L3916
+		// ref https://github.com/ocean2811/tidbeaff0fbc576a/blob/66948b2fd9bec8ea11644770a2fa746c7eba1a1f/ddl/ddl_api.go#L3916
 		if a.Tuple[fieldTypeTupleIndexCollate].Unwrap().(string) == charset.CollationBin {
 			return string(make([]byte, a.Tuple[fieldTypeTupleIndexFlen].Unwrap().(int)))
 		}
@@ -190,7 +183,7 @@ func (a typ) clone() typ {
 	return typ{Tuple: append(make(Tuple, 0, len(a.Tuple)), a.Tuple...)}
 }
 
-func (a typ) Unwrap() any {
+func (a typ) Unwrap() interface{} {
 	return decodeFieldTypeFromLattice(a.Tuple)
 }
 

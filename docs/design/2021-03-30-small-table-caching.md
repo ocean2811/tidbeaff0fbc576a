@@ -1,8 +1,8 @@
 # Proposal: Caching a table in memory
 
 - Author(@tiancaiamao)
-- Discussion PR: https://github.com/pingcap/tidb/pull/23673
-- Tracking Issue: https://github.com/pingcap/tidb/issues/25293
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/pull/23673
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/25293
 
 ## Introduction
 
@@ -12,7 +12,7 @@ For a small, frequently visited, and rarely changed table, caching the whole tab
 
 For tables that are too small, they are located in just one region, that region would become a hotspot, and such hotspots would cause a performance bottleneck. By directly caching the small table data in the TiDB layer, such hotspot issues can be solved.
 
-We are caching tables for some scenarios already, in a way we're not realized. For example, our handling of global variables. To prevent row-at-a-time loading of each system variable from TiKV, we needed to implement the [sysvar cache](https://github.com/pingcap/tidb/pull/24359). This helps reduce `show variables like ..` latency, but the data set is small and the problem is very generic. It also doesn't help in cases where system variables read from `mysql.tidb` instead, which does not have a cache. The data of privilege related tables are also cached.
+We are caching tables for some scenarios already, in a way we're not realized. For example, our handling of global variables. To prevent row-at-a-time loading of each system variable from TiKV, we needed to implement the [sysvar cache](https://github.com/ocean2811/tidbeaff0fbc576a/pull/24359). This helps reduce `show variables like ..` latency, but the data set is small and the problem is very generic. It also doesn't help in cases where system variables read from `mysql.tidb` instead, which does not have a cache. The data of privilege related tables are also cached.
 
 It can also be used to improve the performance of join. The cached table could be used as the inner table, cutting down the network cost of loading data to TiDB. An example is the TPC-C test, there is an ITEM table. It stores the information of all the goods sold by the sales company, including the name and price of the goods. During the execution of the "order creation" transaction, the data in this table is used to determine the price of the order. Such a table is also a typical scenario that can be optimized.
 

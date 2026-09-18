@@ -17,32 +17,28 @@ package ddl_test
 import (
 	"fmt"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl/testutil"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/testutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util/callback"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/external"
 	"github.com/stretchr/testify/require"
 	atomicutil "go.uber.org/atomic"
 )
 
 type testCancelJob struct {
-	sql             string
-	expectCancelled bool
-	cancelState     any // model.SchemaState | []model.SchemaState
-	onJobBefore     bool
-	onJobUpdate     bool
-	prepareSQL      []string
+	sql         string
+	ok          bool
+	cancelState interface{} // model.SchemaState | []model.SchemaState
+	onJobBefore bool
+	onJobUpdate bool
+	prepareSQL  []string
 }
 
 var allTestCase = []testCancelJob{
@@ -71,33 +67,6 @@ var allTestCase = []testCancelJob{
 	{"alter table t add index idx_c2(c2)", true, model.StateDeleteOnly, true, true, nil},
 	{"alter table t add index idx_c2(c2)", true, model.StateWriteOnly, true, true, nil},
 	{"alter table t add index idx_cx2(c2)", false, model.StatePublic, false, true, nil},
-	// Drop vector index
-	{"alter table t drop index v_idx_1", true, model.StatePublic, true, false, []string{"alter table t add vector index v_idx_1((VEC_L2_DISTANCE(v2))) USING HNSW"}},
-	{"alter table t drop index v_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add vector index v_idx_2((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
-	{"alter table t drop index v_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add vector index v_idx_3((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
-	{"alter table t drop index v_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add vector index v_idx_4((VEC_COSINE_DISTANCE(v2))) USING HNSW"}},
-	// Drop full text index
-	{"alter table t drop index fts_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add fulltext index fts_idx_2(ctxt)"}},
-	{"alter table t drop index fts_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add fulltext index fts_idx_3(ctxt)"}},
-	{"alter table t drop index fts_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add fulltext index fts_idx_4(ctxt)"}},
-	// Add vector index
-	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateNone, true, false, nil},
-	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateDeleteOnly, true, true, nil},
-	{"alter table t add vector index v_idx((VEC_COSINE_DISTANCE(v2))) USING HNSW", true, model.StateWriteOnly, true, true, nil},
-	// Add full text index
-	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateNone, true, false, nil},
-	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateDeleteOnly, true, true, nil},
-	{"alter table t add fulltext index fts_idx(ctxt)", true, model.StateWriteOnly, true, true, nil},
-	{"alter table t add fulltext index fts_idx_x(ctxt)", false, model.StatePublic, false, true, nil},
-	// Add columnar index
-	{"alter table t add columnar index c_idx(c1) USING INVERTED", true, model.StateNone, true, false, nil},
-	{"alter table t add columnar index c_idx(c2) USING INVERTED", true, model.StateDeleteOnly, true, true, nil},
-	{"alter table t add columnar index c_idx(c3) USING INVERTED", true, model.StateWriteOnly, true, true, nil},
-	// Drop columnar index
-	{"alter table t drop index c_idx_1", true, model.StatePublic, true, false, []string{"alter table t add columnar index c_idx_1(c1) USING INVERTED"}},
-	{"alter table t drop index c_idx_2", false, model.StateWriteOnly, true, false, []string{"alter table t add columnar index c_idx_2(c2) USING INVERTED"}},
-	{"alter table t drop index c_idx_3", false, model.StateDeleteOnly, false, true, []string{"alter table t add columnar index c_idx_3(c3) USING INVERTED"}},
-	{"alter table t drop index c_idx_4", false, model.StateDeleteReorganization, false, true, []string{"alter table t add columnar index c_idx_4(c11) USING INVERTED"}},
 	// Add column.
 	{"alter table t add column c4 bigint", true, model.StateNone, true, false, nil},
 	{"alter table t add column c4 bigint", true, model.StateDeleteOnly, true, true, nil},
@@ -234,38 +203,10 @@ func cancelSuccess(rs *testkit.Result) bool {
 	return strings.Contains(rs.Rows()[0][1].(string), "success")
 }
 
-func requiresStarterForFullText(tc testCancelJob) bool {
-	if strings.Contains(strings.ToLower(tc.sql), "fulltext") {
-		return true
-	}
-	for _, prepareSQL := range tc.prepareSQL {
-		if strings.Contains(strings.ToLower(prepareSQL), "fulltext") {
-			return true
-		}
-	}
-	return false
-}
-
-func TestCancelVariousJobs(t *testing.T) {
-	var enterCnt, exitCnt atomic.Int32
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeDeliveryJob", func(job *model.Job) { enterCnt.Add(1) })
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterDeliveryJob", func(job *model.JobW) { exitCnt.Add(1) })
-	waitDDLWorkerExited := func() {
-		require.Eventually(t, func() bool {
-			return enterCnt.Load() == exitCnt.Load()
-		}, 10*time.Second, 10*time.Millisecond)
-	}
-	store := testkit.CreateMockStoreWithSchemaLease(t, 100*time.Millisecond, mockstore.WithMockTiFlash(2))
+func TestCancel(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomainWithSchemaLease(t, 100*time.Millisecond)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
-
-	tiflash := infosync.NewMockTiFlash()
-	infosync.SetMockTiFlash(tiflash)
-	defer func() {
-		tiflash.Lock()
-		tiflash.StatusServer.Close()
-		tiflash.Unlock()
-	}()
 
 	// Prepare schema.
 	tk.MustExec("use test")
@@ -281,121 +222,100 @@ func TestCancelVariousJobs(t *testing.T) {
 		partition p4 values less than (7096)
    	);`)
 	tk.MustExec(`create table t (
-		c1 int, c2 int, c3 int, c11 tinyint, v2 vector(3), index fk_c1(c1), ctxt TEXT
+		c1 int, c2 int, c3 int, c11 tinyint, index fk_c1(c1)
 	);`)
-	tk.MustExec("alter table t set tiflash replica 2 location labels 'a','b';")
 
 	// Prepare data.
 	for i := 0; i <= 2048; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t_partition values(%d, %d, %d)", i*3, i*2, i))
 		tk.MustExec(fmt.Sprintf("insert into t(c1, c2, c3) values(%d, %d, %d)", i*3, i*2, i))
 	}
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/MockCheckColumnarIndexProcess", `return(2048)`)
 
 	// Change some configurations.
-	tk.MustExec("set @@tidb_ddl_reorg_batch_size = 8")
-	tk.MustExec("set @@tidb_ddl_reorg_worker_cnt = 1")
+	ddl.ReorgWaitTimeout = 10 * time.Millisecond
+	tk.MustExec("set @@global.tidb_ddl_reorg_batch_size = 8")
+	tk.MustExec("set @@global.tidb_ddl_reorg_worker_cnt = 1")
 	tk = testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockBackfillSlow", "return"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockBackfillSlow"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockBackfillSlow"))
 	}()
 
+	hook := &callback.TestDDLCallback{Do: dom}
 	i := atomicutil.NewInt64(0)
-	canceled := atomicutil.NewBool(false)
+	cancel := atomicutil.NewBool(false)
 	cancelResult := atomicutil.NewBool(false)
 	cancelWhenReorgNotStart := atomicutil.NewBool(false)
 
 	hookFunc := func(job *model.Job) {
-		if testutil.MatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !canceled.Load() {
+		if testutil.TestMatchCancelState(t, job, allTestCase[i.Load()].cancelState, allTestCase[i.Load()].sql) && !cancel.Load() {
 			if !cancelWhenReorgNotStart.Load() && job.SchemaState == model.StateWriteReorganization && job.MayNeedReorg() && job.RowCount == 0 {
 				return
 			}
 			rs := tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 			cancelResult.Store(cancelSuccess(rs))
-			canceled.Store(true)
+			cancel.Store(true)
 		}
 	}
+	dom.DDL().SetHook(hook.Clone())
 
-	resetHook := func() {
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced")
-		_ = failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep")
+	restHook := func(h *callback.TestDDLCallback) {
+		h.OnJobRunBeforeExported = nil
+		h.OnJobUpdatedExported.Store(nil)
+		dom.DDL().SetHook(h.Clone())
 	}
-	registerHook := func(onJobRunBefore bool) {
+	registHook := func(h *callback.TestDDLCallback, onJobRunBefore bool) {
 		if onJobRunBefore {
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", hookFunc)
+			h.OnJobRunBeforeExported = hookFunc
 		} else {
-			testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/afterWaitSchemaSynced", hookFunc)
+			h.OnJobUpdatedExported.Store(&hookFunc)
 		}
+		dom.DDL().SetHook(h.Clone())
 	}
 
-	waitDDLWorkerExited()
 	for j, tc := range allTestCase {
-		t.Logf("running test case %d: %s", j, tc.sql)
-		runCase := func() {
-			i.Store(int64(j))
-			msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
-			if tc.onJobBefore {
-				resetHook()
-				for _, prepareSQL := range tc.prepareSQL {
-					tk.MustExec(prepareSQL)
-				}
-				waitDDLWorkerExited()
-				canceled.Store(false)
-				cancelWhenReorgNotStart.Store(true)
-				registerHook(true)
-				if tc.expectCancelled {
-					tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
-				} else {
-					tk.MustExec(tc.sql)
-				}
-				waitDDLWorkerExited()
-				if canceled.Load() {
-					require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
-				}
+		i.Store(int64(j))
+		msg := fmt.Sprintf("sql: %s, state: %s", tc.sql, tc.cancelState)
+		if tc.onJobBefore {
+			restHook(hook)
+			for _, prepareSQL := range tc.prepareSQL {
+				tk.MustExec(prepareSQL)
 			}
-			if tc.onJobUpdate {
-				resetHook()
-				for _, prepareSQL := range tc.prepareSQL {
-					tk.MustExec(prepareSQL)
-				}
-				waitDDLWorkerExited()
-				canceled.Store(false)
-				cancelWhenReorgNotStart.Store(false)
-				registerHook(false)
-				if tc.expectCancelled {
-					tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
-				} else {
-					tk.MustExec(tc.sql)
-				}
-				waitDDLWorkerExited()
-				if canceled.Load() {
-					require.Equal(t, tc.expectCancelled, cancelResult.Load(), msg)
-				}
+			cancel.Store(false)
+			cancelWhenReorgNotStart.Store(true)
+			registHook(hook, true)
+			if tc.ok {
+				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
+			} else {
+				tk.MustExec(tc.sql)
+			}
+			if cancel.Load() {
+				require.Equal(t, tc.ok, cancelResult.Load(), msg)
 			}
 		}
-		if !requiresStarterForFullText(tc) {
-			runCase()
-			continue
+		if tc.onJobUpdate {
+			restHook(hook)
+			for _, prepareSQL := range tc.prepareSQL {
+				tk.MustExec(prepareSQL)
+			}
+			cancel.Store(false)
+			cancelWhenReorgNotStart.Store(false)
+			registHook(hook, false)
+			if tc.ok {
+				tk.MustGetErrCode(tc.sql, errno.ErrCancelledDDLJob)
+			} else {
+				tk.MustExec(tc.sql)
+			}
+			if cancel.Load() {
+				require.Equal(t, tc.ok, cancelResult.Load(), msg)
+			}
 		}
-		if kerneltype.IsClassic() {
-			t.Logf("skip starter-only FULLTEXT test case %d in classic: %s", j, tc.sql)
-			continue
-		}
-		originalMode := deploymode.Get()
-		require.NoError(t, deploymode.Set(deploymode.Starter))
-		func() {
-			defer func() {
-				require.NoError(t, deploymode.Set(originalMode))
-			}()
-			runCase()
-		}()
 	}
 }
 
 func TestCancelForAddUniqueIndex(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tkCancel := testkit.NewTestKit(t, store)
 
@@ -406,12 +326,14 @@ func TestCancelForAddUniqueIndex(t *testing.T) {
 	tk.MustExec("insert into t values(2, 2, 2)")
 	tk.MustExec("insert into t values(1, 1, 1)")
 
+	hook := &callback.TestDDLCallback{Do: dom}
 	var testCancelState model.SchemaState
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.SchemaState == testCancelState && job.State == model.JobStateRollingback {
 			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
-	})
+	}
+	dom.DDL().SetHook(hook.Clone())
 
 	testCancelState = model.StateWriteOnly
 	tk.MustGetErrCode("alter table t add unique index idx1(c1)", errno.ErrDupEntry)
@@ -427,27 +349,4 @@ func TestCancelForAddUniqueIndex(t *testing.T) {
 	tk.MustGetErrCode("alter table t add unique index idx1(c1)", errno.ErrDupEntry)
 	tbl = external.GetTableByName(t, tk, "test", "t")
 	require.Equal(t, 0, len(tbl.Meta().Indices))
-}
-
-func TestCancelJobBeforeRun(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tkCancel := testkit.NewTestKit(t, store)
-
-	// Prepare schema.
-	tk.MustExec("use test")
-	tk.MustExec(`create table t (c1 int, c2 int, c3 int)`)
-	tk.MustExec("insert into t values(1, 1, 1)")
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
-
-	counter := 0
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeTransitOneJobStep", func(jobW *model.JobW) {
-		if counter == 0 && jobW.TableName == "t" {
-			tkCancel.MustExec(fmt.Sprintf("admin cancel ddl jobs %d", jobW.ID))
-			counter++
-		}
-	})
-
-	tk.MustGetErrCode("truncate table t", errno.ErrCancelledDDLJob)
-	tk.MustQuery("select * from t").Check(testkit.Rows("1 1 1"))
 }

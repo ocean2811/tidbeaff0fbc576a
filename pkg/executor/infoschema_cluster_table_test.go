@@ -16,12 +16,8 @@ package executor_test
 
 import (
 	"crypto/tls"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
-	"hash/crc32"
 	"net"
-	"net/http"
 	"net/http/httptest"
 	"strconv"
 	"strings"
@@ -31,21 +27,17 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/fn"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl/placement"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/session/sessmgr"
-	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/helper"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/pdapi"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client/http"
 	"google.golang.org/grpc"
 )
 
@@ -61,14 +53,9 @@ type infosSchemaClusterTableSuite struct {
 
 func createInfosSchemaClusterTableSuite(t *testing.T) *infosSchemaClusterTableSuite {
 	s := new(infosSchemaClusterTableSuite)
-	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
-	pdAddrs := []string{s.mockAddr}
-	s.store, s.dom = testkit.CreateMockStoreAndDomain(
-		t,
-		mockstore.WithTiKVOptions(tikv.WithPDHTTPClient("infoschema-cluster-table-test", pdAddrs)),
-		mockstore.WithPDAddr(pdAddrs),
-	)
+	s.store, s.dom = testkit.CreateMockStoreAndDomain(t)
 	s.rpcServer, s.listenAddr = setUpRPCService(t, s.dom, "127.0.0.1:0")
+	s.httpServer, s.mockAddr = s.setUpMockPDHTTPServer()
 	s.startTime = time.Now()
 	t.Cleanup(func() {
 		if s.rpcServer != nil {
@@ -87,10 +74,10 @@ func setUpRPCService(t *testing.T, dom *domain.Domain, addr string) (*grpc.Serve
 
 	// Fix issue 9836
 	sm := &testkit.MockSessionManager{
-		PS:    make([]*sessmgr.ProcessInfo, 1),
+		PS:    make([]*util.ProcessInfo, 1),
 		SerID: 1,
 	}
-	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
@@ -114,12 +101,12 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 	srv := httptest.NewServer(router)
 	// mock store stats stat
 	mockAddr := strings.TrimPrefix(srv.URL, "http://")
-	router.Handle(pd.Stores, fn.Wrap(func() (*pd.StoresInfo, error) {
-		return &pd.StoresInfo{
+	router.Handle(pdapi.Stores, fn.Wrap(func() (*helper.StoresStat, error) {
+		return &helper.StoresStat{
 			Count: 1,
-			Stores: []pd.StoreInfo{
+			Stores: []helper.StoreStat{
 				{
-					Store: pd.MetaStore{
+					Store: helper.StoreBaseStat{
 						ID:             1,
 						Address:        "127.0.0.1:20160",
 						State:          0,
@@ -134,15 +121,15 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		}, nil
 	}))
 	// mock regions
-	regionsResp := func(regionID int64, startKey, endKey string) *pd.RegionsInfo {
-		return &pd.RegionsInfo{
+	router.Handle(pdapi.Regions, fn.Wrap(func() (*helper.RegionsInfo, error) {
+		return &helper.RegionsInfo{
 			Count: 1,
-			Regions: []pd.RegionInfo{
+			Regions: []helper.RegionInfo{
 				{
-					ID:       regionID,
-					StartKey: startKey,
-					EndKey:   endKey,
-					Epoch: pd.RegionEpoch{
+					ID:       1,
+					StartKey: "",
+					EndKey:   "",
+					Epoch: helper.RegionEpoch{
 						ConfVer: 1,
 						Version: 2,
 					},
@@ -152,33 +139,10 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 					ApproximateKeys: 1000,
 				},
 			},
-		}
-	}
-	router.Handle(pd.Regions, fn.Wrap(func() (*pd.RegionsInfo, error) {
-		return regionsResp(1, "", ""), nil
+		}, nil
 	}))
-	router.HandleFunc("/pd/api/v1/regions/key", func(w http.ResponseWriter, r *http.Request) {
-		startKey := strings.ToUpper(hex.EncodeToString([]byte(r.URL.Query().Get("key"))))
-		endKey := strings.ToUpper(hex.EncodeToString([]byte(r.URL.Query().Get("end_key"))))
-		regionID := int64(crc32.ChecksumIEEE([]byte(startKey+"|"+endKey))) + 1
-		w.Header().Set("Content-Type", "application/json")
-		if err := json.NewEncoder(w).Encode(regionsResp(regionID, startKey, endKey)); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-		}
-	})
-	router.HandleFunc(pd.MinResolvedTSPrefix, func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"min_resolved_ts":1,"is_real_time":true}`))
-	})
-	router.HandleFunc(pd.PlacementRuleGroupByID(placement.TiFlashRuleGroupID), func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(fmt.Sprintf(`{"id":"%s","index":%d,"override":false}`, placement.TiFlashRuleGroupID, placement.RuleIndexTiFlash)))
-	})
-	router.HandleFunc("/pd/api/v1/config/rule_group", func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	})
 	// mock PD API
-	router.Handle(pd.Status, fn.Wrap(func() (any, error) {
+	router.Handle(pdapi.Status, fn.Wrap(func() (interface{}, error) {
 		return struct {
 			Version        string `json:"version"`
 			GitHash        string `json:"git_hash"`
@@ -189,14 +153,14 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 			StartTimestamp: s.startTime.Unix(),
 		}, nil
 	}))
-	var mockConfig = func() (map[string]any, error) {
-		configuration := map[string]any{
+	var mockConfig = func() (map[string]interface{}, error) {
+		configuration := map[string]interface{}{
 			"key1": "value1",
 			"key2": map[string]string{
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 			},
-			"key3": map[string]any{
+			"key3": map[string]interface{}{
 				"nest1": "n-value1",
 				"nest2": "n-value2",
 				"key4": map[string]string{
@@ -208,12 +172,12 @@ func (s *infosSchemaClusterTableSuite) setUpMockPDHTTPServer() (*httptest.Server
 		return configuration, nil
 	}
 	// PD config.
-	router.Handle(pd.Config, fn.Wrap(mockConfig))
+	router.Handle(pdapi.Config, fn.Wrap(mockConfig))
 	// TiDB/TiKV config.
 	router.Handle("/config", fn.Wrap(mockConfig))
 	// PD region.
-	router.Handle(pd.StatsRegion, fn.Wrap(func() (*pd.RegionStats, error) {
-		return &pd.RegionStats{
+	router.Handle("/pd/api/v1/stats/region", fn.Wrap(func() (*helper.PDRegionStats, error) {
+		return &helper.PDRegionStats{
 			Count:            1,
 			EmptyCount:       1,
 			StorageSize:      1,
@@ -230,25 +194,11 @@ type mockStore struct {
 	host string
 }
 
-func (s *mockStore) EtcdAddrs() ([]string, error)  { return []string{s.host}, nil }
-func (s *mockStore) GetPDAddrs() ([]string, error) { return []string{s.host}, nil }
-func (s *mockStore) TLSConfig() *tls.Config        { panic("not implemented") }
-func (s *mockStore) StartGCWorker() error          { panic("not implemented") }
-func (s *mockStore) Name() string                  { return "mockStore" }
-func (s *mockStore) Describe() string              { return "" }
-
-func TestSkipEmptyIPNodesForTiDBTypeCoprocessor(t *testing.T) {
-	originIP := config.GetGlobalConfig().AdvertiseAddress
-	config.GetGlobalConfig().AdvertiseAddress = config.UnavailableIP
-	defer func() { config.GetGlobalConfig().AdvertiseAddress = originIP }()
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	rows := tk.MustQuery("select * from information_schema.cluster_slow_query").Rows()
-	require.Equal(t, tk.Session().GetSessionVars().StmtCtx.WarningCount(), uint16(0))
-	// the TiDB node is skipped because it does not has IP
-	require.Equal(t, 0, len(rows))
-}
+func (s *mockStore) EtcdAddrs() ([]string, error) { return []string{s.host}, nil }
+func (s *mockStore) TLSConfig() *tls.Config       { panic("not implemented") }
+func (s *mockStore) StartGCWorker() error         { panic("not implemented") }
+func (s *mockStore) Name() string                 { return "mockStore" }
+func (s *mockStore) Describe() string             { return "" }
 
 func TestTiDBClusterInfo(t *testing.T) {
 	s := createInfosSchemaClusterTableSuite(t)
@@ -264,42 +214,35 @@ func TestTiDBClusterInfo(t *testing.T) {
 	tidbStatusAddr := fmt.Sprintf(":%d", config.GetGlobalConfig().Status.StatusPort)
 	row := func(cols ...string) string { return strings.Join(cols, " ") }
 	tk.MustQuery("select type, instance, status_address, version, git_hash from information_schema.cluster_info").Check(testkit.Rows(
-		row("tidb", ":4000", tidbStatusAddr, "8.4.0-this-is-a-placeholder", "None"),
+		row("tidb", ":4000", tidbStatusAddr, "None", "None"),
 		row("pd", mockAddr, mockAddr, "4.0.0-alpha", "mock-pd-githash"),
 		row("tikv", "store1", "", "", ""),
 	))
-	startTime := types.NewTime(types.FromGoTime(s.startTime), mysql.TypeDatetime, 0).String()
-	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type = 'pd'").Check(testkit.Rows(
+	startTime := s.startTime.Format(time.RFC3339)
+	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type != 'tidb'").Check(testkit.Rows(
 		row("pd", mockAddr, startTime),
-	))
-	// The start_time is filled in `dataForTiDBClusterInfo` function not always same as `s.startTime`.
-	tk.MustQuery("select type, instance from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows(
-		row("tikv", "store1"),
+		row("tikv", "store1", ""),
 	))
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockStoreTombstone", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockStoreTombstone", `return(true)`))
 	tk.MustQuery("select type, instance, start_time from information_schema.cluster_info where type = 'tikv'").Check(testkit.Rows())
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockStoreTombstone"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockStoreTombstone"))
 
 	// information_schema.cluster_config
 	instances := []string{
 		"pd,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,0",
 		"tidb,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,1001",
 		"tikv,127.0.0.1:11080," + mockAddr + ",mock-version,mock-githash,0",
-		"tiproxy,127.0.0.1:6000," + mockAddr + ",mock-version,mock-githash,0",
-		"ticdc,127.0.0.1:8300," + mockAddr + ",mock-version,mock-githash,0",
 	}
 	fpExpr := `return("` + strings.Join(instances, ";") + `")`
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo", fpExpr))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockClusterInfo", fpExpr))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/mockClusterInfo"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema/mockClusterInfo"))
 	}()
 	tk.MustQuery("select type, instance, status_address, version, git_hash, server_id from information_schema.cluster_info").Check(testkit.Rows(
 		row("pd", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "0"),
 		row("tidb", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "1001"),
 		row("tikv", "127.0.0.1:11080", mockAddr, "mock-version", "mock-githash", "0"),
-		row("tiproxy", "127.0.0.1:6000", mockAddr, "mock-version", "mock-githash", "0"),
-		row("ticdc", "127.0.0.1:8300", mockAddr, "mock-version", "mock-githash", "0"),
 	))
 	tk.MustQuery("select * from information_schema.cluster_config").Check(testkit.Rows(
 		"pd 127.0.0.1:11080 key1 value1",
@@ -323,17 +266,9 @@ func TestTiDBClusterInfo(t *testing.T) {
 		"tikv 127.0.0.1:11080 key3.key4.nest4 n-value5",
 		"tikv 127.0.0.1:11080 key3.nest1 n-value1",
 		"tikv 127.0.0.1:11080 key3.nest2 n-value2",
-		"ticdc 127.0.0.1:8300 key1 value1",
-		"ticdc 127.0.0.1:8300 key2.nest1 n-value1",
-		"ticdc 127.0.0.1:8300 key2.nest2 n-value2",
-		"ticdc 127.0.0.1:8300 key3.key4.nest3 n-value4",
-		"ticdc 127.0.0.1:8300 key3.key4.nest4 n-value5",
-		"ticdc 127.0.0.1:8300 key3.nest1 n-value1",
-		"ticdc 127.0.0.1:8300 key3.nest2 n-value2",
 	))
 	tk.MustQuery("select TYPE, `KEY`, VALUE from information_schema.cluster_config where `key`='key3.key4.nest4' order by type").Check(testkit.Rows(
 		"pd key3.key4.nest4 n-value5",
-		"ticdc key3.key4.nest4 n-value5",
 		"tidb key3.key4.nest4 n-value5",
 		"tikv key3.key4.nest4 n-value5",
 	))
@@ -347,30 +282,30 @@ func TestTikvRegionStatus(t *testing.T) {
 		mockAddr,
 	}
 	tk := testkit.NewTestKit(t, store)
+	restoreConfig := config.RestoreFunc()
+	defer restoreConfig()
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableGlobalIndex = true
+	})
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists test_t1")
 	tk.MustExec(`CREATE TABLE test_t1 ( a int(11) DEFAULT NULL, b int(11) DEFAULT NULL, c int(11) DEFAULT NULL)`)
-	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1'").Check(testkit.Rows(
-		"test test_t1 0 <nil> <nil> 0 <nil>",
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1'").Check(testkit.Rows(
+		"1 test test_t1 0 <nil> <nil> 0 <nil>",
 	))
 
 	tk.MustExec("alter table test_t1 add index p_a (a)")
-	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX").Check(testkit.Rows(
-		"test test_t1 0 <nil> 0 <nil>",
-		"test test_t1 1 p_a 0 <nil>",
-	))
-	tableID := tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'test' and TABLE_NAME = 'test_t1'").Rows()[0][0]
-	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID = %v order by IS_INDEX", tableID)).Check(testkit.Rows(
-		"test test_t1 0 <nil> 0 <nil>",
-		"test test_t1 1 p_a 0 <nil>",
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX").Check(testkit.Rows(
+		"1 test test_t1 0 <nil> 0 <nil>",
+		"1 test test_t1 1 p_a 0 <nil>",
 	))
 
 	tk.MustExec("alter table test_t1 add unique p_b (b);")
-	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX, INDEX_NAME").Check(testkit.Rows(
-		"test test_t1 0 <nil> 0 <nil>",
-		"test test_t1 1 p_a 0 <nil>",
-		"test test_t1 1 p_b 0 <nil>",
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t1' order by IS_INDEX, INDEX_NAME").Check(testkit.Rows(
+		"1 test test_t1 0 <nil> 0 <nil>",
+		"1 test test_t1 1 p_a 0 <nil>",
+		"1 test test_t1 1 p_b 0 <nil>",
 	))
 
 	tk.MustExec("drop table if exists test_t2")
@@ -378,38 +313,27 @@ func TestTikvRegionStatus(t *testing.T) {
 		PARTITION BY RANGE (c) (
 		PARTITION p0 VALUES LESS THAN (10),
 		PARTITION p1 VALUES LESS THAN (MAXVALUE))`)
-	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by PARTITION_NAME").Check(testkit.Rows(
-		"test test_t2 0 <nil> <nil> 1 p0",
-		"test test_t2 0 <nil> <nil> 1 p1",
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_ID, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by PARTITION_NAME").Check(testkit.Rows(
+		"1 test test_t2 0 <nil> <nil> 1 p0",
+		"1 test test_t2 0 <nil> <nil> 1 p1",
 	))
 
 	tk.MustExec("alter table test_t2 add index p_a (a)")
-	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, PARTITION_NAME").Check(testkit.Rows(
-		"test test_t2 0 <nil> 1 p0",
-		"test test_t2 0 <nil> 1 p1",
-		"test test_t2 1 p_a 1 p0",
-		"test test_t2 1 p_a 1 p1",
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, PARTITION_NAME").Check(testkit.Rows(
+		"1 test test_t2 0 <nil> 1 p0",
+		"1 test test_t2 0 <nil> 1 p1",
+		"1 test test_t2 1 p_a 1 p0",
+		"1 test test_t2 1 p_a 1 p1",
 	))
 
-	tk.MustExec("alter table test_t2 add unique p_b (b) global")
-	tk.MustQuery("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME").Check(testkit.Rows(
-		"test test_t2 0 <nil> 1 p0",
-		"test test_t2 0 <nil> 1 p1",
-		"test test_t2 1 p_a 1 p0",
-		"test test_t2 1 p_a 1 p1",
-		"test test_t2 1 p_b 0 <nil>",
+	tk.MustExec("alter table test_t2 add unique p_b (b);")
+	tk.MustQuery("select REGION_ID, DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where DB_NAME = 'test' and TABLE_NAME = 'test_t2' order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME").Check(testkit.Rows(
+		"1 test test_t2 0 <nil> 1 p0",
+		"1 test test_t2 0 <nil> 1 p1",
+		"1 test test_t2 1 p_a 1 p0",
+		"1 test test_t2 1 p_a 1 p1",
+		"1 test test_t2 1 p_b 0 <nil>",
 	))
-	tableID = tk.MustQuery("select TIDB_TABLE_ID from information_schema.tables where TABLE_SCHEMA = 'test' and TABLE_NAME = 'test_t2'").Rows()[0][0]
-	tk.MustQuery(fmt.Sprintf("select DB_NAME, TABLE_NAME, IS_INDEX, INDEX_NAME, IS_PARTITION, PARTITION_NAME from information_schema.TIKV_REGION_STATUS where TABLE_ID = %v order by IS_INDEX, IS_PARTITION desc, PARTITION_NAME", tableID)).Check(testkit.Rows(
-		"test test_t2 0 <nil> 1 p0",
-		"test test_t2 0 <nil> 1 p1",
-		"test test_t2 1 p_a 1 p0",
-		"test test_t2 1 p_a 1 p1",
-		"test test_t2 1 p_b 0 <nil>",
-	))
-
-	// Run the query to ensure virtual schemas are excluded and expect no rows to be returned
-	tk.MustQuery(`SELECT DB_NAME FROM information_schema.TIKV_REGION_STATUS WHERE DB_NAME IN ('INFORMATION_SCHEMA', 'METRICS_SCHEMA', 'PERFORMANCE_SCHEMA')`).Check(testkit.Rows())
 }
 
 func TestTableStorageStats(t *testing.T) {
@@ -433,9 +357,9 @@ func TestTableStorageStats(t *testing.T) {
 		"For example, where TABLE_SCHEMA = 'xxx' or where TABLE_SCHEMA in ('xxx', 'yyy')")
 
 	// Test it would get null set when get the sys schema.
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]any{})
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA in ('information_schema', 'metrics_schema');").Check([][]any{})
-	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check([][]any{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema';").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA in ('information_schema', 'metrics_schema');").Check([][]interface{}{})
+	tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'information_schema' and TABLE_NAME='schemata';").Check([][]interface{}{})
 
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -451,8 +375,7 @@ func TestTableStorageStats(t *testing.T) {
 		"test 2",
 	))
 	rows := tk.MustQuery("select TABLE_NAME from information_schema.TABLE_STORAGE_STATS where TABLE_SCHEMA = 'mysql';").Rows()
-	result := len(rows)
-	require.Greater(t, result, 0)
+	result := 55
 	require.Len(t, rows, result)
 
 	// More tests about the privileges.

@@ -16,13 +16,24 @@ package driver
 
 import (
 	"context"
+	"flag"
+	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testsetup"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
+)
+
+var (
+	pdAddrs  = flag.String("pd-addrs", "127.0.0.1:2379", "pd addrs")
+	withTiKV = flag.Bool("with-tikv", false, "run tests with TiKV cluster started. (not use the mock server)")
 )
 
 func TestMain(m *testing.M) {
@@ -30,16 +41,73 @@ func TestMain(m *testing.M) {
 	tikv.EnableFailpoints()
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("syscall.Syscall"),
 	}
 	goleak.VerifyTestMain(m, opts...)
 }
 
-func prepareSnapshot(t *testing.T, store kv.Storage, data [][]any) kv.Snapshot {
+func createTestStore(t *testing.T) (kv.Storage, *domain.Domain) {
+	if *withTiKV {
+		return createTiKVStore(t)
+	}
+	return createUnistore(t)
+}
+
+func createTiKVStore(t *testing.T) (kv.Storage, *domain.Domain) {
+	var d TiKVDriver
+	store, err := d.Open(fmt.Sprintf("tikv://%s", *pdAddrs))
+	require.NoError(t, err)
+
+	// clear storage
+	txn, err := store.Begin()
+	require.NoError(t, err)
+	iter, err := txn.Iter(nil, nil)
+	require.NoError(t, err)
+	for iter.Valid() {
+		require.NoError(t, txn.Delete(iter.Key()))
+		require.NoError(t, iter.Next())
+	}
+	require.NoError(t, txn.Commit(context.Background()))
+
+	session.ResetStoreForWithTiKVTest(store)
+
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+
+	return store, dom
+}
+
+func createUnistore(t *testing.T) (kv.Storage, *domain.Domain) {
+	client, pdClient, cluster, err := unistore.New("")
+	require.NoError(t, err)
+
+	unistore.BootstrapWithSingleStore(cluster)
+	kvStore, err := tikv.NewTestTiKVStore(client, pdClient, nil, nil, 0)
+	require.NoError(t, err)
+
+	coprStore, err := copr.NewStore(kvStore, nil)
+	require.NoError(t, err)
+
+	store := &tikvStore{KVStore: kvStore, coprStore: coprStore}
+	dom, err := session.BootstrapSession(store)
+	require.NoError(t, err)
+
+	t.Cleanup(func() {
+		dom.Close()
+		require.NoError(t, store.Close())
+	})
+
+	return store, dom
+}
+
+func prepareSnapshot(t *testing.T, store kv.Storage, data [][]interface{}) kv.Snapshot {
 	txn, err := store.Begin()
 	require.NoError(t, err)
 	defer func() {
@@ -59,7 +127,7 @@ func prepareSnapshot(t *testing.T, store kv.Storage, data [][]any) kv.Snapshot {
 	return store.GetSnapshot(kv.MaxVersion)
 }
 
-func makeBytes(s any) []byte {
+func makeBytes(s interface{}) []byte {
 	if s == nil {
 		return nil
 	}

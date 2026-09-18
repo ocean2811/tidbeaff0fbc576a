@@ -19,9 +19,9 @@ import (
 
 	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
@@ -62,13 +62,6 @@ type AccessCheckFunc func(db, tbl, column string, priv mysql.PrivilegeType, sem 
 func WithCustomAccessCheck(fn AccessCheckFunc) Option {
 	return func(m *Manifest) {
 		m.accessCheckFunc = fn
-	}
-}
-
-// WithCustomAuthPlugins specifies the custom authentication plugins available for the system.
-func WithCustomAuthPlugins(authPlugins []*AuthPlugin) Option {
-	return func(m *Manifest) {
-		m.authPlugins = authPlugins
 	}
 }
 
@@ -125,7 +118,6 @@ type Manifest struct {
 	bootstrap             func(BootstrapContext) error
 	funcs                 []*FunctionDef
 	accessCheckFunc       AccessCheckFunc
-	authPlugins           []*AuthPlugin
 	sessionHandlerFactory func() *SessionHandler
 	close                 func()
 }
@@ -221,10 +213,6 @@ func newManifestWithSetup(name string, factory func() ([]Option, error)) (_ *Man
 		if err != nil {
 			return nil, nil, err
 		}
-	}
-
-	if err := validateAuthPlugin(m); err != nil {
-		return nil, nil, err
 	}
 
 	return m, clearBuilder.Build(), nil

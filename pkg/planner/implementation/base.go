@@ -15,8 +15,8 @@
 package implementation
 
 import (
-	plannercore "github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/memo"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/memo"
 )
 
 type baseImpl struct {

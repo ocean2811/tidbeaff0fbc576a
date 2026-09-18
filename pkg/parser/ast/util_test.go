@@ -18,71 +18,61 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser"
-	. "github.com/pingcap/tidb/pkg/parser/ast"
-	. "github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/test_driver"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	. "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	. "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/test_driver"
 	"github.com/stretchr/testify/require"
 )
 
 func TestCacheable(t *testing.T) {
 	// test non-SelectStmt
 	var stmt Node = &DeleteStmt{}
-	require.False(t, IsReadOnly(stmt, true))
+	require.False(t, IsReadOnly(stmt))
 
 	stmt = &InsertStmt{}
-	require.False(t, IsReadOnly(stmt, true))
+	require.False(t, IsReadOnly(stmt))
 
 	stmt = &UpdateStmt{}
-	require.False(t, IsReadOnly(stmt, true))
+	require.False(t, IsReadOnly(stmt))
 
 	stmt = &ExplainStmt{}
-	require.True(t, IsReadOnly(stmt, true))
+	require.True(t, IsReadOnly(stmt))
 
 	stmt = &ExplainStmt{}
-	require.True(t, IsReadOnly(stmt, true))
+	require.True(t, IsReadOnly(stmt))
 
 	stmt = &DoStmt{}
-	require.True(t, IsReadOnly(stmt, true))
+	require.True(t, IsReadOnly(stmt))
 
 	stmt = &ExplainStmt{
 		Stmt: &InsertStmt{},
 	}
-	require.True(t, IsReadOnly(stmt, true))
+	require.True(t, IsReadOnly(stmt))
 
 	stmt = &ExplainStmt{
 		Analyze: true,
 		Stmt:    &InsertStmt{},
 	}
-	require.False(t, IsReadOnly(stmt, true))
+	require.False(t, IsReadOnly(stmt))
 
 	stmt = &ExplainStmt{
 		Stmt: &SelectStmt{},
 	}
-	require.True(t, IsReadOnly(stmt, true))
+	require.True(t, IsReadOnly(stmt))
 
 	stmt = &ExplainStmt{
 		Analyze: true,
 		Stmt:    &SelectStmt{},
 	}
-	require.True(t, IsReadOnly(stmt, true))
+	require.True(t, IsReadOnly(stmt))
 
 	stmt = &ShowStmt{}
-	require.True(t, IsReadOnly(stmt, true))
+	require.True(t, IsReadOnly(stmt))
 
 	stmt = &ShowStmt{}
-	require.True(t, IsReadOnly(stmt, true))
-
-	stmt = &TraceStmt{
-		Stmt: &SelectStmt{},
-	}
-	require.True(t, IsReadOnly(stmt, true))
-
-	stmt = &TraceStmt{
-		Stmt: &DeleteStmt{},
-	}
-	require.False(t, IsReadOnly(stmt, true))
+	require.True(t, IsReadOnly(stmt))
 }
 
 func TestUnionReadOnly(t *testing.T) {
@@ -99,29 +89,29 @@ func TestUnionReadOnly(t *testing.T) {
 			Selects: []Node{selectReadOnly, selectReadOnly},
 		},
 	}
-	require.True(t, IsReadOnly(setOprStmt, true))
+	require.True(t, IsReadOnly(setOprStmt))
 
 	setOprStmt.SelectList.Selects = []Node{selectReadOnly, selectReadOnly, selectReadOnly}
-	require.True(t, IsReadOnly(setOprStmt, true))
+	require.True(t, IsReadOnly(setOprStmt))
 
 	setOprStmt.SelectList.Selects = []Node{selectReadOnly, selectForUpdate}
-	require.False(t, IsReadOnly(setOprStmt, true))
+	require.False(t, IsReadOnly(setOprStmt))
 
 	setOprStmt.SelectList.Selects = []Node{selectReadOnly, selectForUpdateNoWait}
-	require.False(t, IsReadOnly(setOprStmt, true))
+	require.False(t, IsReadOnly(setOprStmt))
 
 	setOprStmt.SelectList.Selects = []Node{selectForUpdate, selectForUpdateNoWait}
-	require.False(t, IsReadOnly(setOprStmt, true))
+	require.False(t, IsReadOnly(setOprStmt))
 
 	setOprStmt.SelectList.Selects = []Node{selectReadOnly, selectForUpdate, selectForUpdateNoWait}
-	require.False(t, IsReadOnly(setOprStmt, true))
+	require.False(t, IsReadOnly(setOprStmt))
 }
 
 // CleanNodeText set the text of node and all child node empty.
 // For test only.
 func CleanNodeText(node Node) {
 	var cleaner nodeTextCleaner
-	Walk(node, &cleaner)
+	node.Accept(&cleaner)
 }
 
 // nodeTextCleaner clean the text of a node and it's child node.
@@ -129,8 +119,8 @@ func CleanNodeText(node Node) {
 type nodeTextCleaner struct {
 }
 
-// Enter implements InPlaceVisitor interface.
-func (checker *nodeTextCleaner) Enter(in Node) bool {
+// Enter implements Visitor interface.
+func (checker *nodeTextCleaner) Enter(in Node) (out Node, skipChildren bool) {
 	in.SetText(nil, "")
 	in.SetOriginTextPosition(0)
 	if v, ok := in.(ValueExpr); ok && v != nil {
@@ -170,12 +160,12 @@ func (checker *nodeTextCleaner) Enter(in Node) bool {
 	case *ColumnDef:
 		node.Tp.CleanElemIsBinaryLit()
 	}
-	return false
+	return in, false
 }
 
-// Leave implements InPlaceVisitor interface.
-func (checker *nodeTextCleaner) Leave(in Node) bool {
-	return true
+// Leave implements Visitor interface.
+func (checker *nodeTextCleaner) Leave(in Node) (out Node, ok bool) {
+	return in, true
 }
 
 type NodeRestoreTestCase struct {

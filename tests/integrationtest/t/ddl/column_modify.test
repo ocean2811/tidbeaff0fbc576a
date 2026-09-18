@@ -59,7 +59,7 @@ alter table test_gv_ddl modify column c bigint as (b+200) stored;
 DESC test_gv_ddl;
 alter table test_gv_ddl change column c cnew bigint;
 DESC test_gv_ddl;
-# According to https://github.com/pingcap/tidb/issues/24321, this test case is not supported.
+# According to https://github.com/ocean2811/tidbeaff0fbc576a/issues/24321, this test case is not supported.
 # Although in MySQL this is a legal one.
 # alter table test_gv_ddl change column b b bigint as (a+100) virtual;
 # DESC test_gv_ddl;
@@ -127,9 +127,7 @@ select * from t1;
 drop table t1;
 create table t1 (a int, b int as (a+1), index idx(b));
 insert into t1 set a=1;
--- error 3106
 alter table t1 modify column b bigint as (a+1);
--- error 3106
 alter table t1 modify column b bigint as (a + 1);
 select * from t1;
 
@@ -227,7 +225,7 @@ drop view test_rename_column_view;
 drop table test_rename_column;
 drop table if exists t;
 create table t (a int);
-# Test rename a non-exists column. See https://github.com/pingcap/tidb/issues/34811.
+# Test rename a non-exists column. See https://github.com/ocean2811/tidbeaff0fbc576a/issues/34811.
 -- error 1054
 alter table t rename column b to b;
 

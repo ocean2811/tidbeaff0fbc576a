@@ -16,13 +16,12 @@ package predeclared
 
 import (
 	"github.com/nishanths/predeclared/passes/predeclared"
-	"github.com/pingcap/tidb/build/linter/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/build/linter/util"
 )
 
 // Analyzer is the analyzer struct of predeclared.
 var Analyzer = predeclared.Analyzer
 
 func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
 	util.SkipAnalyzer(Analyzer)
 }

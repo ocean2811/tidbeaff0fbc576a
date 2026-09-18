@@ -22,146 +22,119 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/plancodec"
 	"go.uber.org/zap"
 )
 
 // Statements summary table column name.
 const (
-	ClusterTableInstanceColumnNameStr          = "INSTANCE"
-	SummaryBeginTimeStr                        = "SUMMARY_BEGIN_TIME"
-	SummaryEndTimeStr                          = "SUMMARY_END_TIME"
-	StmtTypeStr                                = "STMT_TYPE"
-	SchemaNameStr                              = "SCHEMA_NAME"
-	DigestStr                                  = "DIGEST"
-	DigestTextStr                              = "DIGEST_TEXT"
-	TableNamesStr                              = "TABLE_NAMES"
-	IndexNamesStr                              = "INDEX_NAMES"
-	SampleUserStr                              = "SAMPLE_USER"
-	ExecCountStr                               = "EXEC_COUNT"
-	SumErrorsStr                               = "SUM_ERRORS"
-	SumWarningsStr                             = "SUM_WARNINGS"
-	SumLatencyStr                              = "SUM_LATENCY"
-	MaxLatencyStr                              = "MAX_LATENCY"
-	MinLatencyStr                              = "MIN_LATENCY"
-	AvgLatencyStr                              = "AVG_LATENCY"
-	AvgParseLatencyStr                         = "AVG_PARSE_LATENCY"
-	MaxParseLatencyStr                         = "MAX_PARSE_LATENCY"
-	AvgCompileLatencyStr                       = "AVG_COMPILE_LATENCY"
-	MaxCompileLatencyStr                       = "MAX_COMPILE_LATENCY"
-	SumCopTaskNumStr                           = "SUM_COP_TASK_NUM"
-	MaxCopProcessTimeStr                       = "MAX_COP_PROCESS_TIME"
-	MaxCopProcessAddressStr                    = "MAX_COP_PROCESS_ADDRESS"
-	MaxCopWaitTimeStr                          = "MAX_COP_WAIT_TIME"    // #nosec G101
-	MaxCopWaitAddressStr                       = "MAX_COP_WAIT_ADDRESS" // #nosec G101
-	AvgProcessTimeStr                          = "AVG_PROCESS_TIME"
-	MaxProcessTimeStr                          = "MAX_PROCESS_TIME"
-	AvgWaitTimeStr                             = "AVG_WAIT_TIME"
-	MaxWaitTimeStr                             = "MAX_WAIT_TIME"
-	AvgBackoffTimeStr                          = "AVG_BACKOFF_TIME"
-	MaxBackoffTimeStr                          = "MAX_BACKOFF_TIME"
-	AvgTotalKeysStr                            = "AVG_TOTAL_KEYS"
-	MaxTotalKeysStr                            = "MAX_TOTAL_KEYS"
-	AvgProcessedKeysStr                        = "AVG_PROCESSED_KEYS"
-	MaxProcessedKeysStr                        = "MAX_PROCESSED_KEYS"
-	AvgRocksdbDeleteSkippedCountStr            = "AVG_ROCKSDB_DELETE_SKIPPED_COUNT"
-	MaxRocksdbDeleteSkippedCountStr            = "MAX_ROCKSDB_DELETE_SKIPPED_COUNT"
-	AvgRocksdbKeySkippedCountStr               = "AVG_ROCKSDB_KEY_SKIPPED_COUNT"
-	MaxRocksdbKeySkippedCountStr               = "MAX_ROCKSDB_KEY_SKIPPED_COUNT"
-	AvgRocksdbBlockCacheHitCountStr            = "AVG_ROCKSDB_BLOCK_CACHE_HIT_COUNT"
-	MaxRocksdbBlockCacheHitCountStr            = "MAX_ROCKSDB_BLOCK_CACHE_HIT_COUNT"
-	AvgRocksdbBlockReadCountStr                = "AVG_ROCKSDB_BLOCK_READ_COUNT"
-	MaxRocksdbBlockReadCountStr                = "MAX_ROCKSDB_BLOCK_READ_COUNT"
-	AvgRocksdbBlockReadByteStr                 = "AVG_ROCKSDB_BLOCK_READ_BYTE"
-	MaxRocksdbBlockReadByteStr                 = "MAX_ROCKSDB_BLOCK_READ_BYTE"
-	IAExecCountStr                             = "IA_REMOTE_EXEC_COUNT"
-	AvgIARemoteReadSegmentCountStr             = "AVG_IA_REMOTE_READ_SEGMENT_COUNT"
-	MaxIARemoteReadSegmentCountStr             = "MAX_IA_REMOTE_READ_SEGMENT_COUNT"
-	AvgIARemoteReadSegmentSizeStr              = "AVG_IA_REMOTE_READ_SEGMENT_SIZE"
-	MaxIARemoteReadSegmentSizeStr              = "MAX_IA_REMOTE_READ_SEGMENT_SIZE"
-	AvgIARemoteReadSegmentWaitTimeStr          = "AVG_IA_REMOTE_READ_SEGMENT_WAIT_TIME"
-	MaxIARemoteReadSegmentWaitTimeStr          = "MAX_IA_REMOTE_READ_SEGMENT_WAIT_TIME"
-	AvgPrewriteTimeStr                         = "AVG_PREWRITE_TIME"
-	MaxPrewriteTimeStr                         = "MAX_PREWRITE_TIME"
-	AvgCommitTimeStr                           = "AVG_COMMIT_TIME"
-	MaxCommitTimeStr                           = "MAX_COMMIT_TIME"
-	AvgGetCommitTsTimeStr                      = "AVG_GET_COMMIT_TS_TIME"
-	MaxGetCommitTsTimeStr                      = "MAX_GET_COMMIT_TS_TIME"
-	AvgCommitBackoffTimeStr                    = "AVG_COMMIT_BACKOFF_TIME"
-	MaxCommitBackoffTimeStr                    = "MAX_COMMIT_BACKOFF_TIME"
-	AvgResolveLockTimeStr                      = "AVG_RESOLVE_LOCK_TIME"
-	MaxResolveLockTimeStr                      = "MAX_RESOLVE_LOCK_TIME"
-	AvgLocalLatchWaitTimeStr                   = "AVG_LOCAL_LATCH_WAIT_TIME"
-	MaxLocalLatchWaitTimeStr                   = "MAX_LOCAL_LATCH_WAIT_TIME"
-	AvgWriteKeysStr                            = "AVG_WRITE_KEYS"
-	MaxWriteKeysStr                            = "MAX_WRITE_KEYS"
-	AvgWriteSizeStr                            = "AVG_WRITE_SIZE"
-	MaxWriteSizeStr                            = "MAX_WRITE_SIZE"
-	AvgPrewriteRegionsStr                      = "AVG_PREWRITE_REGIONS"
-	MaxPrewriteRegionsStr                      = "MAX_PREWRITE_REGIONS"
-	AvgTxnRetryStr                             = "AVG_TXN_RETRY"
-	MaxTxnRetryStr                             = "MAX_TXN_RETRY"
-	SumExecRetryStr                            = "SUM_EXEC_RETRY"
-	SumExecRetryTimeStr                        = "SUM_EXEC_RETRY_TIME"
-	SumBackoffTimesStr                         = "SUM_BACKOFF_TIMES"
-	BackoffTypesStr                            = "BACKOFF_TYPES"
-	AvgMemStr                                  = "AVG_MEM"
-	MaxMemStr                                  = "MAX_MEM"
-	AvgMemArbitrationStr                       = "AVG_MEM_ARBITRATION"
-	MaxMemArbitrationStr                       = "MAX_MEM_ARBITRATION"
-	AvgDiskStr                                 = "AVG_DISK"
-	MaxDiskStr                                 = "MAX_DISK"
-	AvgKvTimeStr                               = "AVG_KV_TIME"
-	AvgPdTimeStr                               = "AVG_PD_TIME"
-	AvgBackoffTotalTimeStr                     = "AVG_BACKOFF_TOTAL_TIME"
-	AvgWriteSQLRespTimeStr                     = "AVG_WRITE_SQL_RESP_TIME"
-	AvgTidbCPUTimeStr                          = "AVG_TIDB_CPU_TIME"
-	AvgTikvCPUTimeStr                          = "AVG_TIKV_CPU_TIME"
-	MaxResultRowsStr                           = "MAX_RESULT_ROWS"
-	MinResultRowsStr                           = "MIN_RESULT_ROWS"
-	AvgResultRowsStr                           = "AVG_RESULT_ROWS"
-	PreparedStr                                = "PREPARED"
-	AvgAffectedRowsStr                         = "AVG_AFFECTED_ROWS"
-	FirstSeenStr                               = "FIRST_SEEN"
-	LastSeenStr                                = "LAST_SEEN"
-	PlanInCacheStr                             = "PLAN_IN_CACHE"
-	PlanCacheHitsStr                           = "PLAN_CACHE_HITS"
-	PlanCacheUnqualifiedStr                    = "PLAN_CACHE_UNQUALIFIED"
-	PlanCacheUnqualifiedLastReasonStr          = "PLAN_CACHE_UNQUALIFIED_LAST_REASON"
-	PlanInBindingStr                           = "PLAN_IN_BINDING"
-	QuerySampleTextStr                         = "QUERY_SAMPLE_TEXT"
-	PrevSampleTextStr                          = "PREV_SAMPLE_TEXT"
-	PlanDigestStr                              = "PLAN_DIGEST"
-	PlanStr                                    = "PLAN"
-	BinaryPlan                                 = "BINARY_PLAN"
-	BindingDigestStr                           = "BINDING_DIGEST"
-	BindingDigestTextStr                       = "BINDING_DIGEST_TEXT"
-	Charset                                    = "CHARSET"
-	Collation                                  = "COLLATION"
-	PlanHint                                   = "PLAN_HINT"
-	AvgRequestUnitRead                         = "AVG_REQUEST_UNIT_READ"
-	MaxRequestUnitRead                         = "MAX_REQUEST_UNIT_READ"
-	AvgRequestUnitWrite                        = "AVG_REQUEST_UNIT_WRITE"
-	MaxRequestUnitWrite                        = "MAX_REQUEST_UNIT_WRITE"
-	AvgQueuedRcTimeStr                         = "AVG_QUEUED_RC_TIME"
-	MaxQueuedRcTimeStr                         = "MAX_QUEUED_RC_TIME"
-	AvgRequestUnitV2                           = "AVG_REQUEST_UNIT_V2"
-	MaxRequestUnitV2                           = "MAX_REQUEST_UNIT_V2"
-	ResourceGroupName                          = "RESOURCE_GROUP"
-	SumUnpackedBytesSentTiKVTotalStr           = "SUM_UNPACKED_BYTES_SENT_TIKV_TOTAL"
-	SumUnpackedBytesReceivedTiKVTotalStr       = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_TOTAL"
-	SumUnpackedBytesSentTiKVCrossZoneStr       = "SUM_UNPACKED_BYTES_SENT_TIKV_CROSS_ZONE"
-	SumUnpackedBytesReceivedTiKVCrossZoneStr   = "SUM_UNPACKED_BYTES_RECEIVED_TIKV_CROSS_ZONE"
-	SumUnpackedBytesSentTiFlashTotalStr        = "SUM_UNPACKED_BYTES_SENT_TIFLASH_TOTAL"
-	SumUnpackedBytesReceivedTiFlashTotalStr    = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_TOTAL"
-	SumUnpackedBytesSentTiFlashCrossZoneStr    = "SUM_UNPACKED_BYTES_SENT_TIFLASH_CROSS_ZONE"
-	SumUnpackedBytesReceiveTiFlashCrossZoneStr = "SUM_UNPACKED_BYTES_RECEIVED_TIFLASH_CROSS_ZONE"
-	StorageKVStr                               = "STORAGE_KV"
-	StorageMPPStr                              = "STORAGE_MPP"
+	ClusterTableInstanceColumnNameStr = "INSTANCE"
+	SummaryBeginTimeStr               = "SUMMARY_BEGIN_TIME"
+	SummaryEndTimeStr                 = "SUMMARY_END_TIME"
+	StmtTypeStr                       = "STMT_TYPE"
+	SchemaNameStr                     = "SCHEMA_NAME"
+	DigestStr                         = "DIGEST"
+	DigestTextStr                     = "DIGEST_TEXT"
+	TableNamesStr                     = "TABLE_NAMES"
+	IndexNamesStr                     = "INDEX_NAMES"
+	SampleUserStr                     = "SAMPLE_USER"
+	ExecCountStr                      = "EXEC_COUNT"
+	SumErrorsStr                      = "SUM_ERRORS"
+	SumWarningsStr                    = "SUM_WARNINGS"
+	SumLatencyStr                     = "SUM_LATENCY"
+	MaxLatencyStr                     = "MAX_LATENCY"
+	MinLatencyStr                     = "MIN_LATENCY"
+	AvgLatencyStr                     = "AVG_LATENCY"
+	AvgParseLatencyStr                = "AVG_PARSE_LATENCY"
+	MaxParseLatencyStr                = "MAX_PARSE_LATENCY"
+	AvgCompileLatencyStr              = "AVG_COMPILE_LATENCY"
+	MaxCompileLatencyStr              = "MAX_COMPILE_LATENCY"
+	SumCopTaskNumStr                  = "SUM_COP_TASK_NUM"
+	MaxCopProcessTimeStr              = "MAX_COP_PROCESS_TIME"
+	MaxCopProcessAddressStr           = "MAX_COP_PROCESS_ADDRESS"
+	MaxCopWaitTimeStr                 = "MAX_COP_WAIT_TIME"    // #nosec G101
+	MaxCopWaitAddressStr              = "MAX_COP_WAIT_ADDRESS" // #nosec G101
+	AvgProcessTimeStr                 = "AVG_PROCESS_TIME"
+	MaxProcessTimeStr                 = "MAX_PROCESS_TIME"
+	AvgWaitTimeStr                    = "AVG_WAIT_TIME"
+	MaxWaitTimeStr                    = "MAX_WAIT_TIME"
+	AvgBackoffTimeStr                 = "AVG_BACKOFF_TIME"
+	MaxBackoffTimeStr                 = "MAX_BACKOFF_TIME"
+	AvgTotalKeysStr                   = "AVG_TOTAL_KEYS"
+	MaxTotalKeysStr                   = "MAX_TOTAL_KEYS"
+	AvgProcessedKeysStr               = "AVG_PROCESSED_KEYS"
+	MaxProcessedKeysStr               = "MAX_PROCESSED_KEYS"
+	AvgRocksdbDeleteSkippedCountStr   = "AVG_ROCKSDB_DELETE_SKIPPED_COUNT"
+	MaxRocksdbDeleteSkippedCountStr   = "MAX_ROCKSDB_DELETE_SKIPPED_COUNT"
+	AvgRocksdbKeySkippedCountStr      = "AVG_ROCKSDB_KEY_SKIPPED_COUNT"
+	MaxRocksdbKeySkippedCountStr      = "MAX_ROCKSDB_KEY_SKIPPED_COUNT"
+	AvgRocksdbBlockCacheHitCountStr   = "AVG_ROCKSDB_BLOCK_CACHE_HIT_COUNT"
+	MaxRocksdbBlockCacheHitCountStr   = "MAX_ROCKSDB_BLOCK_CACHE_HIT_COUNT"
+	AvgRocksdbBlockReadCountStr       = "AVG_ROCKSDB_BLOCK_READ_COUNT"
+	MaxRocksdbBlockReadCountStr       = "MAX_ROCKSDB_BLOCK_READ_COUNT"
+	AvgRocksdbBlockReadByteStr        = "AVG_ROCKSDB_BLOCK_READ_BYTE"
+	MaxRocksdbBlockReadByteStr        = "MAX_ROCKSDB_BLOCK_READ_BYTE"
+	AvgPrewriteTimeStr                = "AVG_PREWRITE_TIME"
+	MaxPrewriteTimeStr                = "MAX_PREWRITE_TIME"
+	AvgCommitTimeStr                  = "AVG_COMMIT_TIME"
+	MaxCommitTimeStr                  = "MAX_COMMIT_TIME"
+	AvgGetCommitTsTimeStr             = "AVG_GET_COMMIT_TS_TIME"
+	MaxGetCommitTsTimeStr             = "MAX_GET_COMMIT_TS_TIME"
+	AvgCommitBackoffTimeStr           = "AVG_COMMIT_BACKOFF_TIME"
+	MaxCommitBackoffTimeStr           = "MAX_COMMIT_BACKOFF_TIME"
+	AvgResolveLockTimeStr             = "AVG_RESOLVE_LOCK_TIME"
+	MaxResolveLockTimeStr             = "MAX_RESOLVE_LOCK_TIME"
+	AvgLocalLatchWaitTimeStr          = "AVG_LOCAL_LATCH_WAIT_TIME"
+	MaxLocalLatchWaitTimeStr          = "MAX_LOCAL_LATCH_WAIT_TIME"
+	AvgWriteKeysStr                   = "AVG_WRITE_KEYS"
+	MaxWriteKeysStr                   = "MAX_WRITE_KEYS"
+	AvgWriteSizeStr                   = "AVG_WRITE_SIZE"
+	MaxWriteSizeStr                   = "MAX_WRITE_SIZE"
+	AvgPrewriteRegionsStr             = "AVG_PREWRITE_REGIONS"
+	MaxPrewriteRegionsStr             = "MAX_PREWRITE_REGIONS"
+	AvgTxnRetryStr                    = "AVG_TXN_RETRY"
+	MaxTxnRetryStr                    = "MAX_TXN_RETRY"
+	SumExecRetryStr                   = "SUM_EXEC_RETRY"
+	SumExecRetryTimeStr               = "SUM_EXEC_RETRY_TIME"
+	SumBackoffTimesStr                = "SUM_BACKOFF_TIMES"
+	BackoffTypesStr                   = "BACKOFF_TYPES"
+	AvgMemStr                         = "AVG_MEM"
+	MaxMemStr                         = "MAX_MEM"
+	AvgDiskStr                        = "AVG_DISK"
+	MaxDiskStr                        = "MAX_DISK"
+	AvgKvTimeStr                      = "AVG_KV_TIME"
+	AvgPdTimeStr                      = "AVG_PD_TIME"
+	AvgBackoffTotalTimeStr            = "AVG_BACKOFF_TOTAL_TIME"
+	AvgWriteSQLRespTimeStr            = "AVG_WRITE_SQL_RESP_TIME"
+	MaxResultRowsStr                  = "MAX_RESULT_ROWS"
+	MinResultRowsStr                  = "MIN_RESULT_ROWS"
+	AvgResultRowsStr                  = "AVG_RESULT_ROWS"
+	PreparedStr                       = "PREPARED"
+	AvgAffectedRowsStr                = "AVG_AFFECTED_ROWS"
+	FirstSeenStr                      = "FIRST_SEEN"
+	LastSeenStr                       = "LAST_SEEN"
+	PlanInCacheStr                    = "PLAN_IN_CACHE"
+	PlanCacheHitsStr                  = "PLAN_CACHE_HITS"
+	PlanInBindingStr                  = "PLAN_IN_BINDING"
+	QuerySampleTextStr                = "QUERY_SAMPLE_TEXT"
+	PrevSampleTextStr                 = "PREV_SAMPLE_TEXT"
+	PlanDigestStr                     = "PLAN_DIGEST"
+	PlanStr                           = "PLAN"
+	BinaryPlan                        = "BINARY_PLAN"
+	Charset                           = "CHARSET"
+	Collation                         = "COLLATION"
+	PlanHint                          = "PLAN_HINT"
+	AvgRequestUnitRead                = "AVG_REQUEST_UNIT_READ"
+	MaxRequestUnitRead                = "MAX_REQUEST_UNIT_READ"
+	AvgRequestUnitWrite               = "AVG_REQUEST_UNIT_WRITE"
+	MaxRequestUnitWrite               = "MAX_REQUEST_UNIT_WRITE"
+	AvgQueuedRcTimeStr                = "AVG_QUEUED_RC_TIME"
+	MaxQueuedRcTimeStr                = "MAX_QUEUED_RC_TIME"
+	ResourceGroupName                 = "RESOURCE_GROUP"
 )
 
 type columnInfo interface {
@@ -169,51 +142,45 @@ type columnInfo interface {
 	getTimeLocation() *time.Location
 }
 
-type columnFactory func(info columnInfo, record *StmtRecord) any
+type columnFactory func(info columnInfo, record *StmtRecord) interface{}
 
 var columnFactoryMap = map[string]columnFactory{
-	ClusterTableInstanceColumnNameStr: func(info columnInfo, _ *StmtRecord) any {
+	ClusterTableInstanceColumnNameStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return info.getInstanceAddr()
 	},
-	SummaryBeginTimeStr: func(info columnInfo, record *StmtRecord) any {
+	SummaryBeginTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		beginTime := time.Unix(record.Begin, 0)
 		if beginTime.Location() != info.getTimeLocation() {
 			beginTime = beginTime.In(info.getTimeLocation())
 		}
 		return types.NewTime(types.FromGoTime(beginTime), mysql.TypeTimestamp, 0)
 	},
-	SummaryEndTimeStr: func(info columnInfo, record *StmtRecord) any {
+	SummaryEndTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		endTime := time.Unix(record.End, 0)
 		if endTime.Location() != info.getTimeLocation() {
 			endTime = endTime.In(info.getTimeLocation())
 		}
 		return types.NewTime(types.FromGoTime(endTime), mysql.TypeTimestamp, 0)
 	},
-	StmtTypeStr: func(_ columnInfo, record *StmtRecord) any {
+	StmtTypeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.StmtType
 	},
-	SchemaNameStr: func(_ columnInfo, record *StmtRecord) any {
+	SchemaNameStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return convertEmptyToNil(record.SchemaName)
 	},
-	DigestStr: func(_ columnInfo, record *StmtRecord) any {
+	DigestStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return convertEmptyToNil(record.Digest)
 	},
-	DigestTextStr: func(_ columnInfo, record *StmtRecord) any {
+	DigestTextStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.NormalizedSQL
 	},
-	BindingDigestStr: func(_ columnInfo, record *StmtRecord) any {
-		return convertEmptyToNil(record.BindingDigest)
-	},
-	BindingDigestTextStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.BindingSQL
-	},
-	TableNamesStr: func(_ columnInfo, record *StmtRecord) any {
+	TableNamesStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return convertEmptyToNil(record.TableNames)
 	},
-	IndexNamesStr: func(_ columnInfo, record *StmtRecord) any {
+	IndexNamesStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return convertEmptyToNil(strings.Join(record.IndexNames, ","))
 	},
-	SampleUserStr: func(_ columnInfo, record *StmtRecord) any {
+	SampleUserStr: func(info columnInfo, record *StmtRecord) interface{} {
 		sampleUser := ""
 		for key := range record.AuthUsers {
 			sampleUser = key
@@ -221,291 +188,258 @@ var columnFactoryMap = map[string]columnFactory{
 		}
 		return convertEmptyToNil(sampleUser)
 	},
-	ExecCountStr: func(_ columnInfo, record *StmtRecord) any {
+	ExecCountStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.ExecCount
 	},
-	SumErrorsStr: func(_ columnInfo, record *StmtRecord) any {
+	SumErrorsStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.SumErrors
 	},
-	SumWarningsStr: func(_ columnInfo, record *StmtRecord) any {
+	SumWarningsStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.SumWarnings
 	},
-	SumLatencyStr: func(_ columnInfo, record *StmtRecord) any {
+	SumLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.SumLatency)
 	},
-	MaxLatencyStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxLatency)
 	},
-	MinLatencyStr: func(_ columnInfo, record *StmtRecord) any {
+	MinLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MinLatency)
 	},
-	AvgLatencyStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumLatency), record.ExecCount)
 	},
-	AvgParseLatencyStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgParseLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumParseLatency), record.ExecCount)
 	},
-	MaxParseLatencyStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxParseLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxParseLatency)
 	},
-	AvgCompileLatencyStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgCompileLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumCompileLatency), record.ExecCount)
 	},
-	MaxCompileLatencyStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxCompileLatencyStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxCompileLatency)
 	},
-	SumCopTaskNumStr: func(_ columnInfo, record *StmtRecord) any {
+	SumCopTaskNumStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.SumNumCopTasks
 	},
-	MaxCopProcessTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxCopProcessTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxCopProcessTime)
 	},
-	MaxCopProcessAddressStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxCopProcessAddressStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return convertEmptyToNil(record.MaxCopProcessAddress)
 	},
-	MaxCopWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxCopWaitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxCopWaitTime)
 	},
-	MaxCopWaitAddressStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxCopWaitAddressStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return convertEmptyToNil(record.MaxCopWaitAddress)
 	},
-	AvgProcessTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgProcessTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumProcessTime), record.ExecCount)
 	},
-	MaxProcessTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxProcessTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxProcessTime)
 	},
-	AvgWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgWaitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumWaitTime), record.ExecCount)
 	},
-	MaxWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxWaitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxWaitTime)
 	},
-	AvgBackoffTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgBackoffTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumBackoffTime), record.ExecCount)
 	},
-	MaxBackoffTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxBackoffTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxBackoffTime)
 	},
-	AvgTotalKeysStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgTotalKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(record.SumTotalKeys, record.ExecCount)
 	},
-	MaxTotalKeysStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxTotalKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxTotalKeys
 	},
-	AvgProcessedKeysStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgProcessedKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(record.SumProcessedKeys, record.ExecCount)
 	},
-	MaxProcessedKeysStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxProcessedKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxProcessedKeys
 	},
-	AvgRocksdbDeleteSkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgFloat4Uint(record.SumRocksdbDeleteSkippedCount, record.ExecCount)
+	AvgRocksdbDeleteSkippedCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgInt(int64(record.SumRocksdbDeleteSkippedCount), record.ExecCount)
 	},
-	MaxRocksdbDeleteSkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxRocksdbDeleteSkippedCountStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxRocksdbDeleteSkippedCount
 	},
-	AvgRocksdbKeySkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgFloat4Uint(record.SumRocksdbKeySkippedCount, record.ExecCount)
+	AvgRocksdbKeySkippedCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgInt(int64(record.SumRocksdbKeySkippedCount), record.ExecCount)
 	},
-	MaxRocksdbKeySkippedCountStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxRocksdbKeySkippedCountStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxRocksdbKeySkippedCount
 	},
-	AvgRocksdbBlockCacheHitCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgFloat4Uint(record.SumRocksdbBlockCacheHitCount, record.ExecCount)
+	AvgRocksdbBlockCacheHitCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgInt(int64(record.SumRocksdbBlockCacheHitCount), record.ExecCount)
 	},
-	MaxRocksdbBlockCacheHitCountStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxRocksdbBlockCacheHitCountStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxRocksdbBlockCacheHitCount
 	},
-	AvgRocksdbBlockReadCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgFloat4Uint(record.SumRocksdbBlockReadCount, record.ExecCount)
+	AvgRocksdbBlockReadCountStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgInt(int64(record.SumRocksdbBlockReadCount), record.ExecCount)
 	},
-	MaxRocksdbBlockReadCountStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxRocksdbBlockReadCountStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxRocksdbBlockReadCount
 	},
-	AvgRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgFloat4Uint(record.SumRocksdbBlockReadByte, record.ExecCount)
+	AvgRocksdbBlockReadByteStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgInt(int64(record.SumRocksdbBlockReadByte), record.ExecCount)
 	},
-	MaxRocksdbBlockReadByteStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxRocksdbBlockReadByteStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxRocksdbBlockReadByte
 	},
-	IAExecCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.IAExecCount
-	},
-	AvgIARemoteReadSegmentCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgFloat4Uint(record.SumIARemoteReadSegmentCount, record.ExecCount)
-	},
-	MaxIARemoteReadSegmentCountStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.MaxIARemoteReadSegmentCount
-	},
-	AvgIARemoteReadSegmentSizeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgFloat4Uint(record.SumIARemoteReadSegmentSize, record.ExecCount)
-	},
-	MaxIARemoteReadSegmentSizeStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.MaxIARemoteReadSegmentSize
-	},
-	AvgIARemoteReadSegmentWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumIARemoteReadSegmentWaitTime), record.ExecCount)
-	},
-	MaxIARemoteReadSegmentWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return int64(record.MaxIARemoteReadSegmentWaitTime)
-	},
-	AvgPrewriteTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgPrewriteTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumPrewriteTime), record.CommitCount)
 	},
-	MaxPrewriteTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxPrewriteTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxPrewriteTime)
 	},
-	AvgCommitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgCommitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumCommitTime), record.CommitCount)
 	},
-	MaxCommitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxCommitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxCommitTime)
 	},
-	AvgGetCommitTsTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgGetCommitTsTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumGetCommitTsTime), record.CommitCount)
 	},
-	MaxGetCommitTsTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxGetCommitTsTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxGetCommitTsTime)
 	},
-	AvgCommitBackoffTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgCommitBackoffTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(record.SumCommitBackoffTime, record.CommitCount)
 	},
-	MaxCommitBackoffTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxCommitBackoffTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxCommitBackoffTime
 	},
-	AvgResolveLockTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgResolveLockTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(record.SumResolveLockTime, record.CommitCount)
 	},
-	MaxResolveLockTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxResolveLockTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxResolveLockTime
 	},
-	AvgLocalLatchWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgLocalLatchWaitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumLocalLatchTime), record.CommitCount)
 	},
-	MaxLocalLatchWaitTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxLocalLatchWaitTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxLocalLatchTime)
 	},
-	AvgWriteKeysStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgWriteKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgFloat(record.SumWriteKeys, record.CommitCount)
 	},
-	MaxWriteKeysStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxWriteKeysStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxWriteKeys
 	},
-	AvgWriteSizeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgWriteSizeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgFloat(record.SumWriteSize, record.CommitCount)
 	},
-	MaxWriteSizeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxWriteSizeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxWriteSize
 	},
-	AvgPrewriteRegionsStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgPrewriteRegionsStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgFloat(record.SumPrewriteRegionNum, record.CommitCount)
 	},
-	MaxPrewriteRegionsStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxPrewriteRegionsStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int(record.MaxPrewriteRegionNum)
 	},
-	AvgTxnRetryStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgTxnRetryStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgFloat(record.SumTxnRetry, record.CommitCount)
 	},
-	MaxTxnRetryStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxTxnRetryStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxTxnRetry
 	},
-	SumExecRetryStr: func(_ columnInfo, record *StmtRecord) any {
+	SumExecRetryStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int(record.ExecRetryCount)
 	},
-	SumExecRetryTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	SumExecRetryTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.ExecRetryTime)
 	},
-	SumBackoffTimesStr: func(_ columnInfo, record *StmtRecord) any {
+	SumBackoffTimesStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.SumBackoffTimes
 	},
-	BackoffTypesStr: func(_ columnInfo, record *StmtRecord) any {
+	BackoffTypesStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return formatBackoffTypes(record.BackoffTypes)
 	},
-	AvgMemStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgMemStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(record.SumMem, record.ExecCount)
 	},
-	MaxMemStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxMemStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxMem
 	},
-	AvgMemArbitrationStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgSumFloat(record.SumMemArbitration, record.ExecCount)
-	},
-	MaxMemArbitrationStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.MaxMemArbitration
-	},
-	AvgDiskStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgDiskStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(record.SumDisk, record.ExecCount)
 	},
-	MaxDiskStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxDiskStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxDisk
 	},
-	AvgKvTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumKVTotal), record.ExecCount)
+	AvgKvTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgInt(int64(record.SumKVTotal), record.CommitCount)
 	},
-	AvgPdTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumPDTotal), record.ExecCount)
+	AvgPdTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgInt(int64(record.SumPDTotal), record.CommitCount)
 	},
-	AvgBackoffTotalTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumBackoffTotal), record.ExecCount)
+	AvgBackoffTotalTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgInt(int64(record.SumBackoffTotal), record.CommitCount)
 	},
-	AvgWriteSQLRespTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumWriteSQLRespTotal), record.ExecCount)
+	AvgWriteSQLRespTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgInt(int64(record.SumWriteSQLRespTotal), record.CommitCount)
 	},
-	AvgTidbCPUTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumTidbCPU), record.ExecCount)
-	},
-	AvgTikvCPUTimeStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgInt(int64(record.SumTikvCPU), record.ExecCount)
-	},
-	MaxResultRowsStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxResultRowsStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxResultRows
 	},
-	MinResultRowsStr: func(_ columnInfo, record *StmtRecord) any {
+	MinResultRowsStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MinResultRows
 	},
-	AvgResultRowsStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgResultRowsStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(record.SumResultRows, record.ExecCount)
 	},
-	PreparedStr: func(_ columnInfo, record *StmtRecord) any {
+	PreparedStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.Prepared
 	},
-	AvgAffectedRowsStr: func(_ columnInfo, record *StmtRecord) any {
-		return avgFloat4Uint(record.SumAffectedRows, record.ExecCount)
+	AvgAffectedRowsStr: func(info columnInfo, record *StmtRecord) interface{} {
+		return avgFloat(int64(record.SumAffectedRows), record.ExecCount)
 	},
-	FirstSeenStr: func(info columnInfo, record *StmtRecord) any {
+	FirstSeenStr: func(info columnInfo, record *StmtRecord) interface{} {
 		firstSeen := record.FirstSeen
 		if firstSeen.Location() != info.getTimeLocation() {
 			firstSeen = firstSeen.In(info.getTimeLocation())
 		}
 		return types.NewTime(types.FromGoTime(firstSeen), mysql.TypeTimestamp, 0)
 	},
-	LastSeenStr: func(info columnInfo, record *StmtRecord) any {
+	LastSeenStr: func(info columnInfo, record *StmtRecord) interface{} {
 		lastSeen := record.LastSeen
 		if lastSeen.Location() != info.getTimeLocation() {
 			lastSeen = lastSeen.In(info.getTimeLocation())
 		}
 		return types.NewTime(types.FromGoTime(lastSeen), mysql.TypeTimestamp, 0)
 	},
-	PlanInCacheStr: func(_ columnInfo, record *StmtRecord) any {
+	PlanInCacheStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.PlanInCache
 	},
-	PlanCacheHitsStr: func(_ columnInfo, record *StmtRecord) any {
+	PlanCacheHitsStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.PlanCacheHits
 	},
-	PlanInBindingStr: func(_ columnInfo, record *StmtRecord) any {
+	PlanInBindingStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.PlanInBinding
 	},
-	QuerySampleTextStr: func(_ columnInfo, record *StmtRecord) any {
+	QuerySampleTextStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.SampleSQL
 	},
-	PrevSampleTextStr: func(_ columnInfo, record *StmtRecord) any {
+	PrevSampleTextStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.PrevSQL
 	},
-	PlanDigestStr: func(_ columnInfo, record *StmtRecord) any {
+	PlanDigestStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.PlanDigest
 	},
-	PlanStr: func(_ columnInfo, record *StmtRecord) any {
+	PlanStr: func(info columnInfo, record *StmtRecord) interface{} {
 		plan, err := plancodec.DecodePlan(record.SamplePlan)
 		if err != nil {
 			logutil.BgLogger().Error("decode plan in statement summary failed",
@@ -515,80 +449,38 @@ var columnFactoryMap = map[string]columnFactory{
 		}
 		return plan
 	},
-	BinaryPlan: func(_ columnInfo, record *StmtRecord) any {
+	BinaryPlan: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.SampleBinaryPlan
 	},
-	Charset: func(_ columnInfo, record *StmtRecord) any {
+	Charset: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.Charset
 	},
-	Collation: func(_ columnInfo, record *StmtRecord) any {
+	Collation: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.Collation
 	},
-	PlanHint: func(_ columnInfo, record *StmtRecord) any {
+	PlanHint: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.PlanHint
 	},
-	AvgRequestUnitRead: func(_ columnInfo, record *StmtRecord) any {
+	AvgRequestUnitRead: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgSumFloat(record.SumRRU, record.ExecCount)
 	},
-	MaxRequestUnitRead: func(_ columnInfo, record *StmtRecord) any {
+	MaxRequestUnitRead: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxRRU
 	},
-	AvgRequestUnitWrite: func(_ columnInfo, record *StmtRecord) any {
+	AvgRequestUnitWrite: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgSumFloat(record.SumWRU, record.ExecCount)
 	},
-	MaxRequestUnitWrite: func(_ columnInfo, record *StmtRecord) any {
+	MaxRequestUnitWrite: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.MaxWRU
 	},
-	AvgQueuedRcTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	AvgQueuedRcTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return avgInt(int64(record.SumRUWaitDuration), record.ExecCount)
 	},
-	MaxQueuedRcTimeStr: func(_ columnInfo, record *StmtRecord) any {
+	MaxQueuedRcTimeStr: func(info columnInfo, record *StmtRecord) interface{} {
 		return int64(record.MaxRUWaitDuration)
 	},
-	AvgRequestUnitV2: func(_ columnInfo, record *StmtRecord) any {
-		return avgSumFloat(record.SumRUV2, record.ExecCount)
-	},
-	MaxRequestUnitV2: func(_ columnInfo, record *StmtRecord) any {
-		return record.MaxRUV2
-	},
-	ResourceGroupName: func(_ columnInfo, record *StmtRecord) any {
+	ResourceGroupName: func(info columnInfo, record *StmtRecord) interface{} {
 		return record.ResourceGroupName
-	},
-	PlanCacheUnqualifiedStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.PlanCacheUnqualifiedCount
-	},
-	PlanCacheUnqualifiedLastReasonStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.PlanCacheUnqualifiedLastReason
-	},
-	SumUnpackedBytesSentTiKVTotalStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesSentTiKVTotal
-	},
-	SumUnpackedBytesReceivedTiKVTotalStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesReceivedTiKVTotal
-	},
-	SumUnpackedBytesSentTiKVCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesSentTiKVCrossZone
-	},
-	SumUnpackedBytesReceivedTiKVCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesReceivedTiKVCrossZone
-	},
-	SumUnpackedBytesSentTiFlashTotalStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesSentTiFlashTotal
-	},
-	SumUnpackedBytesReceivedTiFlashTotalStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesReceivedTiFlashTotal
-	},
-	SumUnpackedBytesSentTiFlashCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesSentTiFlashCrossZone
-	},
-	SumUnpackedBytesReceiveTiFlashCrossZoneStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.UnpackedBytesReceivedTiFlashCrossZone
-	},
-	StorageKVStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.StorageKV
-	},
-	StorageMPPStr: func(_ columnInfo, record *StmtRecord) any {
-		return record.StorageMPP
 	},
 }
 
@@ -605,7 +497,7 @@ func makeColumnFactories(columns []*model.ColumnInfo) []columnFactory {
 }
 
 // Format the backoffType map to a string or nil.
-func formatBackoffTypes(backoffMap map[string]int) any {
+func formatBackoffTypes(backoffMap map[string]int) interface{} {
 	type backoffStat struct {
 		backoffType string
 		count       int
@@ -650,13 +542,6 @@ func avgFloat(sum int64, count int64) float64 {
 	return 0
 }
 
-func avgFloat4Uint(sum uint64, count int64) float64 {
-	if count > 0 {
-		return float64(sum) / float64(count)
-	}
-	return 0
-}
-
 func avgSumFloat(sum float64, count int64) float64 {
 	if count > 0 {
 		return sum / float64(count)
@@ -664,7 +549,7 @@ func avgSumFloat(sum float64, count int64) float64 {
 	return 0
 }
 
-func convertEmptyToNil(str string) any {
+func convertEmptyToNil(str string) interface{} {
 	if str == "" {
 		return nil
 	}

@@ -42,7 +42,7 @@ func TestContext(t *testing.T) {
 
 func BenchmarkNewContext(b *testing.B) {
 	b.ReportAllocs()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		NewContext()
 	}
 }

@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "table-router",
     srcs = ["router.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/table-router",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/table-router",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/table-rule-selector",

@@ -3,10 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "bootstrap",
     srcs = ["analyzer.go"],
-    importpath = "github.com/pingcap/tidb/build/linter/bootstrap",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/build/linter/bootstrap",
     visibility = ["//visibility:public"],
-    deps = [
-        "//build/linter/util",
-        "@org_golang_x_tools//go/analysis",
-    ],
+    deps = ["@org_golang_x_tools//go/analysis"],
 )

@@ -22,10 +22,10 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/mpp"
-	"github.com/pingcap/tidb/pkg/executor/metrics"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -136,13 +136,6 @@ func (m *MPPCoordinatorManager) Unregister(coordID CoordinatorUniqueID) {
 	if exists {
 		metrics.MppCoordinatorStatsActiveNumber.Dec()
 	}
-}
-
-// GetCoordCount returns the coordinatorMap size
-func (m *MPPCoordinatorManager) GetCoordCount() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return len(m.coordinatorMap)
 }
 
 // ReportStatus reports mpp task execution status to specific coordinator

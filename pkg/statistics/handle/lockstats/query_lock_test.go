@@ -19,12 +19,12 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	statsutil "github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	statsutil "github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/util"
 	"go.uber.org/mock/gomock"
@@ -115,14 +115,14 @@ func TestQueryLockedTables(t *testing.T) {
 
 type ctxMatcher struct{}
 
-func (c *ctxMatcher) Matches(x any) bool {
+func (c *ctxMatcher) Matches(x interface{}) bool {
 	ctx := x.(context.Context)
 	s := util.RequestSourceFromCtx(ctx)
-	return s == util.InternalRequest+"_"+kv.InternalTxnStatsForegroundPriority
+	return s == util.InternalRequest+"_"+kv.InternalTxnStats
 }
 
 func (c *ctxMatcher) String() string {
-	return "all txns should be internal stats foreground priority source"
+	return "all txns should be internal_stats source"
 }
 
 func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int, wantErr bool) (map[int64]struct{}, error) {
@@ -132,15 +132,15 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 			statsutil.UseCurrentSessionOpt,
 			selectSQL,
 		).Return(nil, nil, errors.New("error"))
-		return QueryLockedTables(statsutil.StatsCtx, wrapAsSCtx(exec))
+		return QueryLockedTables(wrapAsSCtx(exec))
 	}
 
 	c := chunk.NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeLonglong)}, numRows)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		c.AppendInt64(0, int64(i+1))
 	}
-	rows := make([]chunk.Row, 0, numRows)
-	for i := range numRows {
+	var rows []chunk.Row
+	for i := 0; i < numRows; i++ {
 		rows = append(rows, c.GetRow(i))
 	}
 	exec.EXPECT().ExecRestrictedSQL(
@@ -149,5 +149,5 @@ func executeQueryLockedTables(exec *mock.MockRestrictedSQLExecutor, numRows int,
 		selectSQL,
 	).Return(rows, nil, nil)
 
-	return QueryLockedTables(statsutil.StatsCtx, wrapAsSCtx(exec))
+	return QueryLockedTables(wrapAsSCtx(exec))
 }

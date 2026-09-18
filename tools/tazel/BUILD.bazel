@@ -7,9 +7,10 @@ go_library(
         "main.go",
         "util.go",
     ],
-    importpath = "github.com/pingcap/tidb/tools/tazel",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/tools/tazel",
     visibility = ["//visibility:private"],
     deps = [
+        "//pkg/util/mathutil",
         "//pkg/util/set",
         "@com_github_bazelbuild_buildtools//build:go_default_library",
         "@com_github_pingcap_log//:log",

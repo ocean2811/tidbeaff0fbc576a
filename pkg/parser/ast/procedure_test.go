@@ -17,8 +17,8 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
 	"github.com/stretchr/testify/require"
 )
 
@@ -28,8 +28,8 @@ func TestProcedureVisitorCover(t *testing.T) {
 		&ast.ProcedureDecl{},
 	}
 	for _, v := range stmts {
-		ast.Walk(v, visitor{})
-		ast.Walk(v, visitor1{})
+		v.Accept(visitor{})
+		v.Accept(visitor1{})
 	}
 	stmts2 := []ast.StmtNode{
 		&ast.ProcedureBlock{},
@@ -37,8 +37,8 @@ func TestProcedureVisitorCover(t *testing.T) {
 		&ast.DropProcedureStmt{},
 	}
 	for _, v := range stmts2 {
-		ast.Walk(v, visitor{})
-		ast.Walk(v, visitor1{})
+		v.Accept(visitor{})
+		v.Accept(visitor1{})
 	}
 }
 func TestProcedure(t *testing.T) {
@@ -134,8 +134,8 @@ func TestProcedureVisitor(t *testing.T) {
 		stmts, _, err := parse.Parse(sql, "", "")
 		require.NoError(t, err)
 		for _, stmt := range stmts {
-			ast.Walk(stmt, visitor{})
-			ast.Walk(stmt, visitor1{})
+			stmt.Accept(visitor{})
+			stmt.Accept(visitor1{})
 		}
 	}
 }

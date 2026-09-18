@@ -18,7 +18,7 @@ import (
 	"context"
 
 	deadlockpb "github.com/pingcap/kvproto/pkg/deadlock"
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 	"github.com/tikv/client-go/v2/oracle"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -69,7 +69,7 @@ func (*Store) GetMemCache() kv.MemManager {
 }
 
 // ShowStatus implements kv.Storage interface.
-func (*Store) ShowStatus(_ context.Context, _ string) (any, error) { return nil, nil }
+func (*Store) ShowStatus(_ context.Context, _ string) (interface{}, error) { return nil, nil }
 
 // GetMinSafeTS implements kv.Storage interface.
 func (*Store) GetMinSafeTS(_ string) uint64 {
@@ -84,22 +84,4 @@ func (*Store) GetLockWaits() ([]*deadlockpb.WaitForEntry, error) {
 // GetCodec implements kv.Storage interface.
 func (*Store) GetCodec() tikv.Codec {
 	return nil
-}
-
-// GetOption implements kv.Storage interface.
-func (*Store) GetOption(_ any) (any, bool) {
-	return nil, false
-}
-
-// SetOption implements kv.Storage interface.
-func (*Store) SetOption(_, _ any) {}
-
-// GetClusterID implements kv.Storage interface.
-func (*Store) GetClusterID() uint64 {
-	return 1
-}
-
-// GetKeyspace implements kv.Storage interface.
-func (*Store) GetKeyspace() string {
-	return ""
 }

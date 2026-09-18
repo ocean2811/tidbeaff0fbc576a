@@ -17,7 +17,7 @@ package types
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
 )
 

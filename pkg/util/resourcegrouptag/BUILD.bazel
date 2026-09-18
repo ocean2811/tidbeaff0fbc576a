@@ -3,9 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "resourcegrouptag",
     srcs = ["resource_group_tag.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/resourcegrouptag",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/resourcegrouptag",
     visibility = ["//visibility:public"],
     deps = [
+        "//pkg/parser",
         "//pkg/tablecodec/rowindexcodec",
         "@com_github_pingcap_errors//:errors",
         "@com_github_pingcap_kvproto//pkg/coprocessor",
@@ -25,6 +26,7 @@ go_test(
     embed = [":resourcegrouptag"],
     flaky = True,
     deps = [
+        "//pkg/parser",
         "//pkg/testkit/testsetup",
         "//pkg/util/hack",
         "@com_github_pingcap_kvproto//pkg/coprocessor",

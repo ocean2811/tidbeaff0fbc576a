@@ -3,15 +3,15 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "tiflashrec",
     srcs = ["tiflash_recorder.go"],
-    importpath = "github.com/pingcap/tidb/br/pkg/restore/tiflashrec",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/restore/tiflashrec",
     visibility = ["//visibility:public"],
     deps = [
         "//br/pkg/logutil",
         "//br/pkg/utils",
         "//pkg/infoschema",
-        "//pkg/meta/model",
         "//pkg/parser/ast",
         "//pkg/parser/format",
+        "//pkg/parser/model",
         "@com_github_pingcap_log//:log",
         "@org_uber_go_zap//:zap",
     ],
@@ -26,8 +26,7 @@ go_test(
     deps = [
         ":tiflashrec",
         "//pkg/infoschema",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "@com_github_stretchr_testify//require",
     ],
 )

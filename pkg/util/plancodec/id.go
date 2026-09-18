@@ -85,8 +85,6 @@ const (
 	TypeDelete = "Delete"
 	// TypeIndexLookUp is the type of IndexLookUp.
 	TypeIndexLookUp = "IndexLookUp"
-	// TypeLocalIndexLookUp is the type of LocalIndexLookUp.
-	TypeLocalIndexLookUp = "LocalIndexLookUp"
 	// TypeTableReader is the type of TableReader.
 	TypeTableReader = "TableReader"
 	// TypeIndexReader is the type of IndexReader.
@@ -141,12 +139,6 @@ const (
 	TypeSequence = "Sequence"
 	// TypeScalarSubQuery is the type of ScalarQuery
 	TypeScalarSubQuery = "ScalarSubQuery"
-	// TypePhysicalCTESink is the type of CTE sink.
-	TypePhysicalCTESink = "PhysicalCTESink"
-	// TypePhysicalCTESource is the type of CTE source.
-	TypePhysicalCTESource = "PhysicalCTESource"
-	// TypeAnalyze is the type of Analyze.
-	TypeAnalyze = "Analyze"
 )
 
 // plan id.
@@ -212,10 +204,6 @@ const (
 	typeExpandID              int = 58
 	typeImportIntoID          int = 59
 	TypeScalarSubQueryID      int = 60
-	typeLocalIndexLookUpID    int = 61
-	typePhysicalCTESinkID     int = 62
-	typePhysicalCTESourceID   int = 63
-	typeAnalyzeID             int = 64
 )
 
 // TypeStringToPhysicalID converts the plan type string to plan id.
@@ -283,8 +271,6 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeDeleteID
 	case TypeIndexLookUp:
 		return typeIndexLookUpID
-	case TypeLocalIndexLookUp:
-		return typeLocalIndexLookUpID
 	case TypeTableReader:
 		return typeTableReaderID
 	case TypeIndexReader:
@@ -343,12 +329,6 @@ func TypeStringToPhysicalID(tp string) int {
 		return typeImportIntoID
 	case TypeScalarSubQuery:
 		return TypeScalarSubQueryID
-	case TypePhysicalCTESink:
-		return typePhysicalCTESinkID
-	case TypePhysicalCTESource:
-		return typePhysicalCTESourceID
-	case TypeAnalyze:
-		return typeAnalyzeID
 	}
 	// Should never reach here.
 	return 0
@@ -419,8 +399,6 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeDelete
 	case typeIndexLookUpID:
 		return TypeIndexLookUp
-	case typeLocalIndexLookUpID:
-		return TypeLocalIndexLookUp
 	case typeTableReaderID:
 		return TypeTableReader
 	case typeIndexReaderID:
@@ -479,12 +457,6 @@ func PhysicalIDToTypeString(id int) string {
 		return TypeImportInto
 	case TypeScalarSubQueryID:
 		return TypeScalarSubQuery
-	case typePhysicalCTESinkID:
-		return TypePhysicalCTESink
-	case typePhysicalCTESourceID:
-		return TypePhysicalCTESource
-	case typeAnalyzeID:
-		return TypeAnalyze
 	}
 
 	// Should never reach here.

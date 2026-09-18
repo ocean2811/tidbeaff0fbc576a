@@ -1,7 +1,7 @@
 # Proposal: Stats LRU Cache
 
 - Author(s): [Yisaer](https://github.com/yisaer)
-- Tracking Issue: https://github.com/pingcap/tidb/issues/34052
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/34052
 
 ## Abstract
 

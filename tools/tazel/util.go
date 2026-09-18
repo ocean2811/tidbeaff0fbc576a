@@ -19,7 +19,7 @@ import (
 	"strings"
 
 	"github.com/bazelbuild/buildtools/build"
-	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set"
 )
 
 func write(path string, f *build.File) error {
@@ -41,11 +41,9 @@ func skipTazel(path string) bool {
 }
 
 func skipShardCount(path string) bool {
-	return strings.HasPrefix(path, "tests/readonlytest") ||
+	return strings.HasPrefix(path, "tests") ||
 		(strings.HasPrefix(path, "pkg/util") &&
 			!strings.HasPrefix(path, "pkg/util/admin") &&
 			!strings.HasPrefix(path, "pkg/util/chunk") &&
-			!strings.HasPrefix(path, "pkg/util/topsql") &&
-			!strings.HasPrefix(path, "pkg/util/stmtsummary") &&
-			!strings.HasPrefix(path, "pkg/util/workloadrepo"))
+			!strings.HasPrefix(path, "pkg/util/stmtsummary"))
 }

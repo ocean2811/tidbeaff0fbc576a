@@ -8,11 +8,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net"
-	"slices"
 	"strconv"
 	"strings"
 	"text/template"
-	"text/template/parse"
 	"time"
 
 	"github.com/coreos/go-semver/semver"
@@ -20,14 +18,11 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/pkg/dumpformat/parquetfile"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/compressedio"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/promutil"
-	filter "github.com/pingcap/tidb/pkg/util/table-filter"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/promutil"
+	filter "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/table-filter"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/spf13/pflag"
 	"go.uber.org/atomic"
@@ -65,8 +60,6 @@ const (
 	flagCsvNullValue             = "csv-null-value"
 	flagSQL                      = "sql"
 	flagFilter                   = "filter"
-	flagColumnFilter             = "column-filter"
-	flagColumnFilterFile         = "column-filter-file"
 	flagCaseSensitive            = "case-sensitive"
 	flagDumpEmptyDatabase        = "dump-empty-database"
 	flagTidbMemQuotaQuery        = "tidb-mem-quota-query"
@@ -78,63 +71,18 @@ const (
 	flagCsvLineTerminator        = "csv-line-terminator"
 	flagOutputFilenameTemplate   = "output-filename-template"
 	flagCompleteInsert           = "complete-insert"
-	flagIncludeGeneratedColumns  = "include-generated-columns"
 	flagParams                   = "params"
 	flagReadTimeout              = "read-timeout"
 	flagTransactionalConsistency = "transactional-consistency"
 	flagCompress                 = "compress"
-	flagCsvOutputDialect         = "csv-output-dialect"
-	flagPDAddr                   = "pd"
-	flagClusterSSLCA             = "cluster-ssl-ca"
-	flagClusterSSLCert           = "cluster-ssl-cert"
-	flagClusterSSLKey            = "cluster-ssl-key"
-	flagPartitions               = "partitions"
-	flagParquetCompress          = "parquet-compress"
-	flagParquetPageSize          = "parquet-page-size"
-	flagParquetRowGroupSize      = "parquet-row-group-size"
 
 	// FlagHelp represents the help flag
 	FlagHelp = "help"
 )
 
-// CSVDialect is the dialect of the CSV output for compatible with different import target
-type CSVDialect int
-
-const (
-	// CSVDialectDefault is the default dialect, which is MySQL/MariaDB/TiDB etc.
-	CSVDialectDefault CSVDialect = iota
-	// CSVDialectSnowflake is the dialect of Snowflake
-	CSVDialectSnowflake
-	// CSVDialectRedshift is the dialect of Redshift
-	CSVDialectRedshift
-	// CSVDialectBigQuery is the dialect of BigQuery
-	CSVDialectBigQuery
-)
-
-// BinaryFormat is the format of binary data
-// Three standard formats are supported: UTF8, HEX and Base64 now.
-type BinaryFormat int
-
-const (
-	// BinaryFormatUTF8 is the default format, format binary data as UTF8 string
-	BinaryFormatUTF8 BinaryFormat = iota
-	// BinaryFormatHEX format binary data as HEX string, e.g. 12ABCD
-	BinaryFormatHEX
-	// BinaryFormatBase64 format binary data as Base64 string, e.g. 123qwer==
-	BinaryFormatBase64
-)
-
-// DialectBinaryFormatMap is the map of dialect and binary format
-var DialectBinaryFormatMap = map[CSVDialect]BinaryFormat{
-	CSVDialectDefault:   BinaryFormatUTF8,
-	CSVDialectSnowflake: BinaryFormatHEX,
-	CSVDialectRedshift:  BinaryFormatHEX,
-	CSVDialectBigQuery:  BinaryFormatBase64,
-}
-
 // Config is the dump config for dumpling
 type Config struct {
-	objstore.BackendOptions
+	storage.BackendOptions
 
 	SpecifiedTables          bool
 	AllowCleartextPasswords  bool
@@ -149,12 +97,7 @@ type Config struct {
 	EscapeBackslash          bool
 	DumpEmptyDatabase        bool
 	PosAfterConnect          bool
-	CompressType             compressedio.CompressType
-
-	// IncludeGeneratedColumns controls which generated column values are dumped
-	// into data files. Schema files are not affected. An empty value means
-	// GeneratedColumnsNone.
-	IncludeGeneratedColumns GeneratedColumnsMode
+	CompressType             storage.CompressType
 
 	Host     string
 	Port     int
@@ -186,8 +129,6 @@ type Config struct {
 	Databases         []string
 
 	TableFilter         filter.Filter `json:"-"`
-	columnFilter        columnFilterConfig
-	columnProjection    map[tableName]columnProjection
 	Where               string
 	FileType            string
 	ServerInfo          version.ServerInfo
@@ -198,39 +139,17 @@ type Config struct {
 	TiDBMemQuotaQuery   uint64
 	FileSize            uint64
 	StatementSize       uint64
-	SessionParams       map[string]any
+	SessionParams       map[string]interface{}
 	Tables              DatabaseTables
 	CollationCompatible string
-	CsvOutputDialect    CSVDialect
-	Partitions          []string
 
-	Labels        prometheus.Labels `json:"-"`
-	PromFactory   promutil.Factory  `json:"-"`
-	PromRegistry  promutil.Registry `json:"-"`
-	ExtStorage    storeapi.Storage  `json:"-"`
-	MinTLSVersion uint16            `json:"-"`
+	Labels       prometheus.Labels       `json:"-"`
+	PromFactory  promutil.Factory        `json:"-"`
+	PromRegistry promutil.Registry       `json:"-"`
+	ExtStorage   storage.ExternalStorage `json:"-"`
 
 	IOTotalBytes *atomic.Uint64
 	Net          string
-
-	// PDAddr is a comma-separated list of PD endpoints in host:port form.
-	// http:// or https:// prefixes are also accepted and normalized by the PD client.
-	// It's used for controlling GC in keyspace-level clusters where PD addresses
-	// may not be discoverable from TiDB.
-	PDAddr string
-	// ClusterSSLCA/ClusterSSLCert/ClusterSSLKey override Security.* when connecting
-	// to PD endpoints for GC control.
-	ClusterSSLCA   string
-	ClusterSSLCert string
-	ClusterSSLKey  string
-
-	// ParquetCompressType is the parquet row-group compression type.
-	ParquetCompressType compressedio.CompressType
-	// ParquetPageSize is the parquet data page size in bytes.
-	ParquetPageSize int64
-	// ParquetRowGroupSize is the parquet row-group flush threshold by accounted
-	// in-memory bytes.
-	ParquetRowGroupSize int64
 }
 
 // ServerInfoUnknown is the unknown database type to dumpling
@@ -275,23 +194,14 @@ func DefaultConfig() *Config {
 		CsvDelimiter:             "\"",
 		CsvSeparator:             ",",
 		CsvLineTerminator:        "\r\n",
-		SessionParams:            make(map[string]any),
+		SessionParams:            make(map[string]interface{}),
 		OutputFileTemplate:       DefaultOutputFileTemplate,
 		PosAfterConnect:          false,
 		CollationCompatible:      LooseCollationCompatible,
-		CsvOutputDialect:         CSVDialectDefault,
-		IncludeGeneratedColumns:  GeneratedColumnsNone,
 		SpecifiedTables:          false,
 		PromFactory:              promutil.NewDefaultFactory(),
 		PromRegistry:             promutil.NewDefaultRegistry(),
 		TransactionalConsistency: true,
-		PDAddr:                   "",
-		ClusterSSLCA:             "",
-		ClusterSSLCert:           "",
-		ClusterSSLKey:            "",
-		ParquetCompressType:      parquetfile.DefaultCompressionType,
-		ParquetPageSize:          units.MiB,
-		ParquetRowGroupSize:      parquetfile.DefaultRowGroupMemoryLimitBytes,
 	}
 }
 
@@ -328,14 +238,10 @@ func (conf *Config) GetDriverConfig(db string) *mysql.Config {
 	} else {
 		// Use TLS first.
 		driverCfg.AllowFallbackToPlaintext = true
-		minTLSVersion := uint16(tls.VersionTLS12)
-		if conf.MinTLSVersion != 0 {
-			minTLSVersion = conf.MinTLSVersion
-		}
 		/* #nosec G402 */
 		driverCfg.TLS = &tls.Config{
 			InsecureSkipVerify: true,
-			MinVersion:         minTLSVersion,
+			MinVersion:         tls.VersionTLS10,
 			NextProtos:         []string{"h2", "http/1.1"}, // specify `h2` to let Go use HTTP/2.
 		}
 	}
@@ -356,7 +262,7 @@ func timestampDirName() string {
 
 // DefineFlags defines flags of dumpling's configuration
 func (*Config) DefineFlags(flags *pflag.FlagSet) {
-	objstore.DefineFlags(flags)
+	storage.DefineFlags(flags)
 	flags.StringSliceP(flagDatabase, "B", nil, "Databases to dump")
 	flags.StringSliceP(flagTablesList, "T", nil, "Comma delimited table list to dump; must be qualified table names")
 	flags.StringP(flagHost, "h", "127.0.0.1", "The host to connect to")
@@ -381,7 +287,7 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 		"If not specified, dumpling will dump table without inner-concurrency which could be relatively slow. default unlimited")
 	flags.String(flagWhere, "", "Dump only selected records")
 	flags.Bool(flagEscapeBackslash, true, "use backslash to escape special characters")
-	flags.String(flagFiletype, "", "The type of export file (sql/csv/parquet)")
+	flags.String(flagFiletype, "", "The type of export file (sql/csv)")
 	flags.Bool(flagNoHeader, false, "whether not to dump CSV table header")
 	flags.BoolP(flagNoSchemas, "m", false, "Do not dump table schemas with the data")
 	flags.BoolP(flagNoData, "d", false, "Do not dump table data")
@@ -389,12 +295,6 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.StringP(flagSQL, "S", "", "Dump data with given sql. This argument doesn't support concurrent dump")
 	_ = flags.MarkHidden(flagSQL)
 	flags.StringSliceP(flagFilter, "f", []string{"*.*", DefaultTableFilter}, "filter to select which tables to dump")
-	flags.StringArray(
-		flagColumnFilter,
-		nil,
-		`Inline TOML column filter rule for data and schema projection. Can be specified multiple times. Example: --column-filter '{ matcher = ["db.tbl"], columns = ["*", "!col"] }'. Unmatched tables are dumped with all columns; column rules are case-insensitive. Mutually exclusive with --column-filter-file and cannot be used with --sql`,
-	)
-	flags.String(flagColumnFilterFile, "", "Path to the column filter TOML file for data and schema projection. Unmatched tables are dumped with all columns; column rules are case-insensitive. Cannot be used with --sql")
 	flags.Bool(flagCaseSensitive, false, "whether the filter should be case-sensitive")
 	flags.Bool(flagDumpEmptyDatabase, true, "whether to dump empty database")
 	flags.Uint64(flagTidbMemQuotaQuery, UnspecifiedSize, "The maximum memory limit for a single SQL statement, in bytes.")
@@ -404,9 +304,8 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.String(flagCsvSeparator, ",", "The separator for csv files, default ','")
 	flags.String(flagCsvDelimiter, "\"", "The delimiter for values in csv files, default '\"'")
 	flags.String(flagCsvLineTerminator, "\r\n", "The line terminator for csv files, default '\\r\\n'")
-	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension). When used with --rows/-r or --filesize/-F in split mode, include {{.Index}} (for example: '{{.DB}}.{{.Table}}.{{.Index}}') to avoid overwriting chunk files")
+	flags.String(flagOutputFilenameTemplate, "", "The output filename template (without file extension)")
 	flags.Bool(flagCompleteInsert, false, "Use complete INSERT statements that include column names")
-	flags.String(flagIncludeGeneratedColumns, string(GeneratedColumnsNone), "Which generated column values to include in data files: none, stored. Only supported with --filetype csv or parquet, and can't be used with --sql, --where, --column-filter, --column-filter-file or --no-data. Schema files are unchanged, so the output may not be importable back into TiDB/MySQL as-is")
 	flags.StringToString(flagParams, nil, `Extra session variables used while dumping, accepted format: --params "character_set_client=latin1,character_set_connection=latin1"`)
 	flags.Bool(FlagHelp, false, "Print help message and quit")
 	flags.Duration(flagReadTimeout, 15*time.Minute, "I/O read timeout for db connection.")
@@ -414,20 +313,6 @@ func (*Config) DefineFlags(flags *pflag.FlagSet) {
 	flags.Bool(flagTransactionalConsistency, true, "Only support transactional consistency")
 	_ = flags.MarkHidden(flagTransactionalConsistency)
 	flags.StringP(flagCompress, "c", "", "Compress output file type, support 'gzip', 'snappy', 'zstd', 'no-compression' now")
-	flags.String(flagCsvOutputDialect, "", "The dialect of output CSV file, support 'snowflake', 'redshift', 'bigquery' now")
-	flags.StringSlice(flagPartitions, nil, "The table partitions to dump. Every listed partition must exist on all selected base tables; incompatible with --sql. TiDB >= v5.0.0 only")
-
-	flags.String(flagPDAddr, "", "PD endpoints for controlling GC in premium keyspace clusters (comma-separated host:port list; http(s):// is also accepted and normalized)")
-	flags.String(flagClusterSSLCA, "", "CA certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --ca")
-	flags.String(flagClusterSSLCert, "", "Client certificate path for TLS connections to PD endpoints used by GC control; if empty, reuse --cert")
-	flags.String(flagClusterSSLKey, "", "Client private key path for TLS connections to PD endpoints used by GC control; if empty, reuse --key")
-	flags.String(flagParquetCompress, "snappy", "Compress algorithm for parquet file, support 'no-compression', 'snappy', 'gzip', 'zstd'")
-	flags.String(flagParquetPageSize, units.BytesSize(float64(units.MiB)), "Parquet page size in bytes, accepts human-readable units")
-	flags.String(
-		flagParquetRowGroupSize,
-		units.BytesSize(float64(parquetfile.DefaultRowGroupMemoryLimitBytes)),
-		"Parquet row-group memory limit in bytes (flush threshold by accounted in-memory bytes), accepts human-readable units",
-	)
 }
 
 // ParseFromFlags parses dumpling's export.Config from flags
@@ -574,14 +459,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	includeGeneratedColumns, err := flags.GetString(flagIncludeGeneratedColumns)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	conf.IncludeGeneratedColumns, err = parseGeneratedColumnsMode(includeGeneratedColumns)
-	if err != nil {
-		return errors.Trace(err)
-	}
 	conf.ReadTimeout, err = flags.GetDuration(flagReadTimeout)
 	if err != nil {
 		return errors.Trace(err)
@@ -594,11 +471,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.Partitions, err = flags.GetStringSlice(flagPartitions)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	conf.Partitions = normalizePartitions(conf.Partitions)
 
 	if conf.Threads <= 0 {
 		return errors.Errorf("--threads is set to %d. It should be greater than 0", conf.Threads)
@@ -608,7 +480,7 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	if conf.SessionParams == nil {
-		conf.SessionParams = make(map[string]any)
+		conf.SessionParams = make(map[string]interface{})
 	}
 
 	tablesList, err := flags.GetStringSlice(flagTablesList)
@@ -626,34 +498,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	caseSensitive, err := flags.GetBool(flagCaseSensitive)
 	if err != nil {
 		return errors.Trace(err)
-	}
-	columnFilters, err := flags.GetStringArray(flagColumnFilter)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	columnFilterFile, err := flags.GetString(flagColumnFilterFile)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if len(columnFilters) > 0 && strings.TrimSpace(columnFilterFile) != "" {
-		return errors.New("can't specify both --column-filter and --column-filter-file at the same time")
-	}
-	if len(columnFilters) > 0 {
-		if err = validateColumnFilterOptions(conf, flagColumnFilter); err != nil {
-			return errors.Trace(err)
-		}
-		conf.columnFilter, err = parseColumnFilterArgs(columnFilters, caseSensitive)
-		if err != nil {
-			return errors.Trace(err)
-		}
-	} else if strings.TrimSpace(columnFilterFile) != "" {
-		if err = validateColumnFilterOptions(conf, flagColumnFilterFile); err != nil {
-			return errors.Trace(err)
-		}
-		conf.columnFilter, err = parseColumnFilterConfig(columnFilterFile, caseSensitive)
-		if err != nil {
-			return errors.Trace(err)
-		}
 	}
 	outputFilenameFormat, err := flags.GetString(flagOutputFilenameTemplate)
 	if err != nil {
@@ -691,69 +535,19 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	if err != nil {
 		return errors.Errorf("failed to parse output filename template (--output-filename-template '%s')", outputFilenameFormat)
 	}
-	outputSplitIntoMultipleFiles := conf.Rows != UnspecifiedSize || conf.FileSize != UnspecifiedSize
-	if flags.Changed(flagOutputFilenameTemplate) && outputSplitIntoMultipleFiles && !outputTemplateUsesIndex(tmpl, outputFileTemplateData) {
-		return errors.New("--output-filename-template must include a standalone {{.Index}} outside conditional blocks (for example: '{{.DB}}.{{.Table}}.{{.Index}}') when split mode is enabled by --rows/-r or --filesize/-F; otherwise chunk files may overwrite each other")
-	}
 	conf.OutputFileTemplate = tmpl
 
 	compressType, err := flags.GetString(flagCompress)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	conf.CompressType, err = compressedio.ParseCompressType(compressType)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	dialect, err := flags.GetString(flagCsvOutputDialect)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	if dialect != "" && !strings.EqualFold(conf.FileType, FileFormatCSVString) {
-		return errors.Errorf("%s is only supported when dumping whole table to csv, not compatible with %s", flagCsvOutputDialect, conf.FileType)
-	}
-	conf.CsvOutputDialect, err = ParseOutputDialect(dialect)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	parquetCompressType, err := flags.GetString(flagParquetCompress)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	conf.ParquetCompressType, err = parseParquetCompressType(parquetCompressType)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	conf.ParquetPageSize, err = parseSizeFlag(flags, flagParquetPageSize)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	conf.ParquetRowGroupSize, err = parseSizeFlag(flags, flagParquetRowGroupSize)
-	if err != nil {
-		return errors.Trace(err)
-	}
-
-	conf.PDAddr, err = flags.GetString(flagPDAddr)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	conf.ClusterSSLCA, err = flags.GetString(flagClusterSSLCA)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	conf.ClusterSSLCert, err = flags.GetString(flagClusterSSLCert)
-	if err != nil {
-		return errors.Trace(err)
-	}
-	conf.ClusterSSLKey, err = flags.GetString(flagClusterSSLKey)
+	conf.CompressType, err = ParseCompressType(compressType)
 	if err != nil {
 		return errors.Trace(err)
 	}
 
 	for k, v := range params {
-		conf.SessionParams[strings.ToLower(k)] = v
+		conf.SessionParams[k] = v
 	}
 
 	err = conf.BackendOptions.ParseFromFlags(pflag.CommandLine)
@@ -762,122 +556,6 @@ func (conf *Config) ParseFromFlags(flags *pflag.FlagSet) error {
 	}
 
 	return nil
-}
-
-func validateColumnFilterOptions(conf *Config, flagName string) error {
-	if conf.SQL != "" {
-		return errors.Errorf("can't specify both --sql and --%s at the same time", flagName)
-	}
-	return nil
-}
-
-func outputTemplateUsesIndex(tmpl *template.Template, templateName string) bool {
-	if tmpl == nil {
-		return false
-	}
-
-	type templateVisitState struct {
-		name          string
-		inConditional bool
-	}
-	visitedTemplate := make(map[templateVisitState]struct{})
-
-	var visitTemplate func(name string, inConditional bool) bool
-	var visitNode func(node parse.Node, inConditional bool) bool
-	visitTemplate = func(name string, inConditional bool) bool {
-		state := templateVisitState{name: name, inConditional: inConditional}
-		if _, ok := visitedTemplate[state]; ok {
-			return false
-		}
-		visitedTemplate[state] = struct{}{}
-
-		t := tmpl.Lookup(name)
-		if t == nil || t.Tree == nil || t.Tree.Root == nil {
-			return false
-		}
-
-		return visitNode(t.Tree.Root, inConditional)
-	}
-
-	visitNode = func(node parse.Node, inConditional bool) bool {
-		if node == nil {
-			return false
-		}
-
-		switch n := node.(type) {
-		case *parse.ListNode:
-			if n == nil {
-				return false
-			}
-			for _, child := range n.Nodes {
-				if visitNode(child, inConditional) {
-					return true
-				}
-			}
-		case *parse.ActionNode:
-			if n == nil {
-				return false
-			}
-			if inConditional {
-				return false
-			}
-			return isStandaloneOutputIndexAction(n)
-		case *parse.TemplateNode:
-			if n == nil {
-				return false
-			}
-			return visitTemplate(n.Name, inConditional)
-		case *parse.IfNode:
-			if n == nil {
-				return false
-			}
-			if visitNode(n.List, true) {
-				return true
-			}
-			return visitNode(n.ElseList, true)
-		case *parse.RangeNode:
-			if n == nil {
-				return false
-			}
-			if visitNode(n.List, true) {
-				return true
-			}
-			return visitNode(n.ElseList, true)
-		case *parse.WithNode:
-			if n == nil {
-				return false
-			}
-			if visitNode(n.List, true) {
-				return true
-			}
-			return visitNode(n.ElseList, true)
-		}
-
-		return false
-	}
-
-	return visitTemplate(templateName, false)
-}
-
-func isStandaloneOutputIndexAction(action *parse.ActionNode) bool {
-	if action == nil || action.Pipe == nil {
-		return false
-	}
-
-	// A standalone {{.Index}} must be a single command with a single argument.
-	if len(action.Pipe.Decl) != 0 || len(action.Pipe.Cmds) != 1 {
-		return false
-	}
-	cmd := action.Pipe.Cmds[0]
-	if cmd == nil || len(cmd.Args) != 1 {
-		return false
-	}
-
-	field, ok := cmd.Args[0].(*parse.FieldNode)
-	if !ok {
-		return false
-	}
-	return len(field.Ident) == 1 && field.Ident[0] == "Index"
 }
 
 // ParseFileSize parses file size from tables-list and filter arguments
@@ -900,7 +578,7 @@ func ParseTableFilter(tablesList, filters []string) (filter.Filter, error) {
 	}
 
 	// only parse -T when -f is default value. otherwise bail out.
-	if !slices.Equal(filters, []string{"*.*", DefaultTableFilter}) {
+	if !sameStringArray(filters, []string{"*.*", DefaultTableFilter}) {
 		return nil, errors.New("cannot pass --tables-list and --filter together")
 	}
 
@@ -936,54 +614,33 @@ func GetConfTables(tablesList []string) (DatabaseTables, error) {
 	return dbTables, nil
 }
 
-// ParseOutputDialect parses output dialect string to Dialect
-func ParseOutputDialect(outputDialect string) (CSVDialect, error) {
-	switch strings.ToLower(outputDialect) {
-	case "", "default":
-		return CSVDialectDefault, nil
-	case "snowflake":
-		return CSVDialectSnowflake, nil
-	case "redshift":
-		return CSVDialectRedshift, nil
-	case "bigquery":
-		return CSVDialectBigQuery, nil
+// ParseCompressType parses compressType string to storage.CompressType
+func ParseCompressType(compressType string) (storage.CompressType, error) {
+	switch compressType {
+	case "", "no-compression":
+		return storage.NoCompression, nil
+	case "gzip", "gz":
+		return storage.Gzip, nil
+	case "snappy":
+		return storage.Snappy, nil
+	case "zstd", "zst":
+		return storage.Zstd, nil
 	default:
-		return CSVDialectDefault, errors.Errorf("unknown output dialect %s", outputDialect)
+		return storage.NoCompression, errors.Errorf("unknown compress type %s", compressType)
 	}
 }
 
-func parseSizeFlag(flags *pflag.FlagSet, flagName string) (int64, error) {
-	size, err := flags.GetString(flagName)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	bytes, err := units.RAMInBytes(size)
-	if err != nil {
-		return 0, errors.Annotatef(err, "failed to parse --%s", flagName)
-	}
-	return bytes, nil
-}
-
-// parseParquetCompressType parses the parquet compression flag value.
-// Empty means the flag is not configured, so Dumpling uses the parquet default.
-func parseParquetCompressType(compressType string) (compressedio.CompressType, error) {
-	if compressType == "" {
-		return parquetfile.DefaultCompressionType, nil
-	}
-	return compressedio.ParseCompressType(compressType)
-}
-
-func (conf *Config) createExternalStorage(ctx context.Context) (storeapi.Storage, error) {
+func (conf *Config) createExternalStorage(ctx context.Context) (storage.ExternalStorage, error) {
 	if conf.ExtStorage != nil {
 		return conf.ExtStorage, nil
 	}
-	b, err := objstore.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
+	b, err := storage.ParseBackend(conf.OutputDirPath, &conf.BackendOptions)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 
 	// TODO: support setting httpClient with certification later
-	return objstore.New(ctx, b, &storeapi.Options{})
+	return storage.New(ctx, b, &storage.ExternalStorageOptions{})
 }
 
 const (
@@ -1009,10 +666,9 @@ const (
 )
 
 var (
-	decodeRegionVersion    = semver.New("3.0.0")
-	gcSafePointVersion     = semver.New("4.0.0")
-	tableSampleVersion     = semver.New("5.0.0-nightly")
-	minNewTerminologyMySQL = semver.New("8.4.0") // first MySQL version to no longer support MASTER/SLAVE/etc
+	decodeRegionVersion = semver.New("3.0.0")
+	gcSafePointVersion  = semver.New("4.0.0")
+	tableSampleVersion  = semver.New("5.0.0-nightly")
 )
 
 func adjustConfig(conf *Config, fns ...func(*Config) error) error {
@@ -1031,7 +687,6 @@ func buildTLSConfig(conf *Config) error {
 		util.WithCertAndKeyPath(conf.Security.CertPath, conf.Security.KeyPath),
 		util.WithCAContent(conf.Security.SSLCABytes),
 		util.WithCertAndKeyContent(conf.Security.SSLCertBytes, conf.Security.SSLKeyBytes),
-		util.WithMinTLSVersion(conf.MinTLSVersion),
 	)
 	if err != nil {
 		return errors.Trace(err)
@@ -1043,9 +698,6 @@ func buildTLSConfig(conf *Config) error {
 func validateSpecifiedSQL(conf *Config) error {
 	if conf.SQL != "" && conf.Where != "" {
 		return errors.New("can't specify both --sql and --where at the same time. Please try to combine them into --sql")
-	}
-	if conf.SQL != "" && len(conf.Partitions) > 0 {
-		return errors.New("can't specify both --sql and --partitions at the same time")
 	}
 	return nil
 }
@@ -1064,75 +716,10 @@ func adjustFileFormat(conf *Config) error {
 			return errors.Errorf("unsupported config.FileType '%s' when we specify --sql, please unset --filetype or set it to 'csv'", conf.FileType)
 		}
 	case FileFormatCSVString:
-	case FileFormatParquetString:
-		if conf.CompressType != compressedio.NoCompression {
-			return errors.Errorf("parquet does not support --compress, please unset it or use --parquet-compress instead")
-		}
 	default:
 		return errors.Errorf("unknown config.FileType '%s'", conf.FileType)
 	}
 	return nil
-}
-
-// GeneratedColumnsMode is the value of --include-generated-columns.
-type GeneratedColumnsMode string
-
-const (
-	// GeneratedColumnsNone skips the values of all generated columns.
-	GeneratedColumnsNone GeneratedColumnsMode = "none"
-	// GeneratedColumnsStored includes the values of STORED generated columns.
-	GeneratedColumnsStored GeneratedColumnsMode = "stored"
-	// GeneratedColumnsVirtual is reserved for including VIRTUAL generated columns.
-	GeneratedColumnsVirtual GeneratedColumnsMode = "virtual"
-	// GeneratedColumnsAll is reserved for including all generated columns.
-	GeneratedColumnsAll GeneratedColumnsMode = "all"
-)
-
-func parseGeneratedColumnsMode(value string) (GeneratedColumnsMode, error) {
-	mode := GeneratedColumnsMode(strings.ToLower(strings.TrimSpace(value)))
-	switch mode {
-	case "", GeneratedColumnsNone:
-		return GeneratedColumnsNone, nil
-	case GeneratedColumnsStored:
-		return mode, nil
-	case GeneratedColumnsVirtual, GeneratedColumnsAll:
-		return "", errors.Errorf("--%s=%s is not supported yet, supported values: none, stored", flagIncludeGeneratedColumns, mode)
-	default:
-		return "", errors.Errorf("invalid --%s value '%s', supported values: none, stored", flagIncludeGeneratedColumns, value)
-	}
-}
-
-// validateIncludeGeneratedColumns must run after adjustFileFormat resolves the file type.
-func validateIncludeGeneratedColumns(conf *Config) error {
-	mode, err := parseGeneratedColumnsMode(string(conf.IncludeGeneratedColumns))
-	if err != nil {
-		return err
-	}
-	conf.IncludeGeneratedColumns = mode
-	if mode == GeneratedColumnsNone {
-		return nil
-	}
-	option := fmt.Sprintf("--%s=%s", flagIncludeGeneratedColumns, mode)
-	switch {
-	case conf.SQL != "":
-		return errors.Errorf("can't specify both %s and --%s at the same time", option, flagSQL)
-	case conf.Where != "":
-		// Stored generated columns become chunk key candidates, and the chunk
-		// splitter doesn't cover NULL chunk keys when --where is set.
-		return errors.Errorf("can't specify both %s and --%s at the same time", option, flagWhere)
-	case len(conf.columnFilter.Filters) > 0:
-		return errors.Errorf("can't specify %s with --%s or --%s", option, flagColumnFilter, flagColumnFilterFile)
-	case conf.NoData:
-		return errors.Errorf("can't specify both %s and --%s at the same time", option, flagNoData)
-	case conf.FileType == FileFormatSQLTextString:
-		// INSERT statements that assign values to generated columns can't be imported back.
-		return errors.Errorf("%s is only supported with --%s csv or parquet", option, flagFiletype)
-	}
-	return nil
-}
-
-func (conf *Config) includeStoredGeneratedColumns() bool {
-	return conf.IncludeGeneratedColumns == GeneratedColumnsStored
 }
 
 func matchMysqlBugversion(info version.ServerInfo) bool {
@@ -1146,21 +733,4 @@ func matchMysqlBugversion(info version.ServerInfo) bool {
 	bugVersionStart := semver.New("8.0.2")
 	bugVersionEnd := semver.New("8.0.23")
 	return bugVersionStart.LessThan(*currentVersion) && currentVersion.LessThan(*bugVersionEnd)
-}
-
-func normalizePartitions(partitions []string) []string {
-	seen := make(map[string]struct{}, len(partitions))
-	result := make([]string, 0, len(partitions))
-	for _, p := range partitions {
-		p = strings.ToLower(strings.TrimSpace(p))
-		if p == "" {
-			continue
-		}
-		if _, ok := seen[p]; ok {
-			continue
-		}
-		seen[p] = struct{}{}
-		result = append(result, p)
-	}
-	return result
 }

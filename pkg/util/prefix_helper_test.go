@@ -19,10 +19,10 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -41,7 +41,7 @@ func TestPrefix(t *testing.T) {
 		require.NoError(t, err)
 	}()
 
-	ctx := &mockContext{10000000, make(map[fmt.Stringer]any), s, nil}
+	ctx := &mockContext{10000000, make(map[fmt.Stringer]interface{}), s, nil}
 	err = ctx.fillTxn()
 	require.NoError(t, err)
 	txn, err := ctx.GetTxn()
@@ -84,16 +84,16 @@ func TestPrefixFilter(t *testing.T) {
 
 type mockContext struct {
 	prefix int
-	values map[fmt.Stringer]any
+	values map[fmt.Stringer]interface{}
 	kv.Storage
 	txn kv.Transaction
 }
 
-func (c *mockContext) SetValue(key fmt.Stringer, value any) {
+func (c *mockContext) SetValue(key fmt.Stringer, value interface{}) {
 	c.values[key] = value
 }
 
-func (c *mockContext) Value(key fmt.Stringer) any {
+func (c *mockContext) Value(key fmt.Stringer) interface{} {
 	value := c.values[key]
 	return value
 }
@@ -137,5 +137,5 @@ func (c *mockContext) CommitTxn() error {
 }
 
 func encodeInt(n int) []byte {
-	return fmt.Appendf(nil, "%d", n)
+	return []byte(fmt.Sprintf("%d", n))
 }

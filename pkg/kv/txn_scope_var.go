@@ -15,7 +15,7 @@
 package kv
 
 import (
-	"github.com/pingcap/tidb/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
 	"github.com/tikv/client-go/v2/oracle"
 )
 

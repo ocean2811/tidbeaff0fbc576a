@@ -17,7 +17,7 @@ package txn
 import (
 	"bytes"
 
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 )
 
 // UnionIter implements kv.Iterator
@@ -119,17 +119,18 @@ func (iter *UnionIter) updateCur() error {
 				// record from snapshot comes first
 				iter.curIsDirty = false
 				break
-			}
-			// record from dirty comes first
-			if len(iter.dirtyIt.Value()) == 0 {
-				// jump over this deletion
-				if err := iter.dirtyNext(); err != nil {
-					return err
+			} else {
+				// record from dirty comes first
+				if len(iter.dirtyIt.Value()) == 0 {
+					// jump over this deletion
+					if err := iter.dirtyNext(); err != nil {
+						return err
+					}
+					continue
 				}
-				continue
+				iter.curIsDirty = true
+				break
 			}
-			iter.curIsDirty = true
-			break
 		}
 	}
 	return nil

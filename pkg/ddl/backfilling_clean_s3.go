@@ -19,105 +19,59 @@ import (
 	"encoding/json"
 	"strconv"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/framework/scheduler"
-	dxfstorage "github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/lightning/backend/external"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/disttask/framework/dispatcher"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/disttask/framework/proto"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
-var _ scheduler.Cleaner = (*BackfillCleaner)(nil)
+var _ dispatcher.CleanUpRoutine = (*BackfillCleanUpS3)(nil)
 
-// BackfillCleaner implements scheduler.Cleaner.
-type BackfillCleaner struct {
+// BackfillCleanUpS3 implements dispatcher.CleanUpRoutine.
+type BackfillCleanUpS3 struct {
 }
 
-func newBackfillCleaner() scheduler.Cleaner {
-	return &BackfillCleaner{}
+func newBackfillCleanUpS3() dispatcher.CleanUpRoutine {
+	return &BackfillCleanUpS3{}
 }
 
-// Clean implements scheduler.Cleaner.
-func (*BackfillCleaner) Clean(ctx context.Context, task *proto.Task) error {
-	var taskMeta BackfillTaskMeta
-	if err := json.Unmarshal(task.Meta, &taskMeta); err != nil {
+// CleanUp implements the CleanUpRoutine.CleanUp interface.
+func (*BackfillCleanUpS3) CleanUp(ctx context.Context, task *proto.Task) error {
+	var gTaskMeta BackfillGlobalMeta
+	if err := json.Unmarshal(task.Meta, &gTaskMeta); err != nil {
 		return err
 	}
-	// No cleanup is needed when the task does not use cloud storage.
-	if len(taskMeta.CloudStorageURI) == 0 {
+	// Not use cloud storage, no need to cleanUp.
+	if len(gTaskMeta.CloudStorageURI) == 0 {
 		return nil
 	}
-	backend, err := objstore.ParseBackend(taskMeta.CloudStorageURI, nil)
-	logger := logutil.Logger(ctx).With(zap.Int64("task-id", task.ID))
+	backend, err := storage.ParseBackend(gTaskMeta.CloudStorageURI, nil)
 	if err != nil {
-		logger.Warn("failed to parse cloud storage uri", zap.Error(err))
+		logutil.Logger(ctx).Warn("failed to parse cloud storage uri", zap.Error(err))
 		return err
 	}
-	extStore, err := objstore.NewWithDefaultOpt(ctx, backend)
+	extStore, err := storage.NewWithDefaultOpt(ctx, backend)
 	if err != nil {
-		logger.Warn("failed to create cloud storage", zap.Error(err))
+		logutil.Logger(ctx).Warn("failed to create cloud storage", zap.Error(err))
 		return err
 	}
-	prefix := strconv.Itoa(int(task.ID))
-	err = globalsort.CleanUpFiles(ctx, extStore, prefix)
+	prefix := strconv.Itoa(int(gTaskMeta.Job.ID))
+	err = external.CleanUpFiles(ctx, extStore, prefix)
 	if err != nil {
-		logger.Warn("cannot cleanup cloud storage files", zap.Error(err))
+		logutil.Logger(ctx).Warn("cannot cleanup cloud storage files", zap.Error(err))
 		return err
 	}
-
-	// for old task meta version, we use job ID as prefix to clean up files.
-	if taskMeta.Version < BackfillTaskMetaVersion1 {
-		oldPrefix := strconv.Itoa(int(taskMeta.Job.ID))
-		err = globalsort.CleanUpFiles(ctx, extStore, oldPrefix)
-		if err != nil {
-			logger.Warn("cannot cleanup cloud storage files", zap.Error(err))
-			return err
-		}
-	}
-	// send metering data for nextgen kernel, only for succeed backfill tasks,
-	// we don't meter merge temp index tasks
-	if kerneltype.IsNextGen() && task.State == proto.TaskStateSucceed && !taskMeta.MergeTempIndex {
-		if err = sendMeterOnClean(ctx, task, logger); err != nil {
-			logger.Warn("failed to send metering data on cleanup", zap.Error(err))
-			return err
-		}
-	}
-
-	redactCloudStorageURI(ctx, task, &taskMeta)
+	redactCloudStorageURI(ctx, task, &gTaskMeta)
 	return nil
-}
-
-func sendMeterOnClean(ctx context.Context, task *proto.Task, logger *zap.Logger) error {
-	taskManager, err := dxfstorage.GetTaskManager()
-	if err != nil {
-		return err
-	}
-	subtasks, err := taskManager.GetAllSubtasksByStepAndState(ctx, task.ID, proto.BackfillStepReadIndex, proto.SubtaskStateSucceed)
-	if err != nil {
-		return err
-	}
-	var rowCount, indexKVSize int64
-	for _, st := range subtasks {
-		summary := &execute.SubtaskSummary{}
-		if err = json.Unmarshal([]byte(st.Summary), summary); err != nil {
-			return errors.Trace(err)
-		}
-		rowCount += summary.RowCnt.Load()
-		indexKVSize += summary.Processed.Load()
-	}
-	return handle.SendRowAndSizeMeterData(ctx, task, rowCount, 0, indexKVSize, logger)
 }
 
 func redactCloudStorageURI(
 	ctx context.Context,
-	task *proto.Task,
-	origin *BackfillTaskMeta,
+	gTask *proto.Task,
+	origin *BackfillGlobalMeta,
 ) {
 	origin.CloudStorageURI = ast.RedactURL(origin.CloudStorageURI)
 	metaBytes, err := json.Marshal(origin)
@@ -125,5 +79,5 @@ func redactCloudStorageURI(
 		logutil.Logger(ctx).Warn("failed to marshal task meta", zap.Error(err))
 		return
 	}
-	task.Meta = metaBytes
+	gTask.Meta = metaBytes
 }

@@ -17,12 +17,11 @@ package stmtsummary
 import (
 	"container/list"
 	"math"
-	"slices"
 	"sync"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 )
 
 // stmtSummaryByDigestEvicted contents digests evicted from stmtSummaryByDigestMap
@@ -39,8 +38,8 @@ type stmtSummaryByDigestEvictedElement struct {
 	beginTime int64
 	// endTime is the end time of current interval
 	endTime int64
-	// count is the number of digest being evicted
-	count int64
+	// digestKeyMap contains *Kinds* of digest being evicted
+	digestKeyMap map[string]struct{}
 	// otherSummary contains summed up information of evicted elements
 	otherSummary *stmtSummaryByDigestElement
 }
@@ -55,23 +54,22 @@ func newStmtSummaryByDigestEvicted() *stmtSummaryByDigestEvicted {
 // spawn a new pointer to stmtSummaryByDigestEvictedElement
 func newStmtSummaryByDigestEvictedElement(beginTime int64, endTime int64) *stmtSummaryByDigestEvictedElement {
 	return &stmtSummaryByDigestEvictedElement{
-		beginTime: beginTime,
-		endTime:   endTime,
+		beginTime:    beginTime,
+		endTime:      endTime,
+		digestKeyMap: make(map[string]struct{}),
 		otherSummary: &stmtSummaryByDigestElement{
-			beginTime: beginTime,
-			endTime:   endTime,
-			stmtSummaryStats: stmtSummaryStats{
-				authUsers:    make(map[string]struct{}),
-				minLatency:   time.Duration(math.MaxInt64),
-				backoffTypes: make(map[string]int),
-				firstSeen:    time.Unix(endTime, 0),
-			},
+			beginTime:    beginTime,
+			endTime:      endTime,
+			authUsers:    make(map[string]struct{}),
+			minLatency:   time.Duration(math.MaxInt64),
+			backoffTypes: make(map[string]int),
+			firstSeen:    time.Unix(endTime, 0),
 		},
 	}
 }
 
 // AddEvicted is used add an evicted record to stmtSummaryByDigestEvicted
-func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *StmtDigestKey, evictedValue *stmtSummaryByDigest, historySize int) {
+func (ssbde *stmtSummaryByDigestEvicted) AddEvicted(evictedKey *stmtSummaryByDigestKey, evictedValue *stmtSummaryByDigest, historySize int) {
 	if evictedValue == nil {
 		return
 	}
@@ -153,9 +151,9 @@ func (ssbde *stmtSummaryByDigestEvicted) Clear() {
 }
 
 // add an evicted record to stmtSummaryByDigestEvictedElement
-func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *StmtDigestKey, digestValue *stmtSummaryByDigestElement) {
+func (seElement *stmtSummaryByDigestEvictedElement) addEvicted(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) {
 	if digestKey != nil {
-		seElement.count++
+		seElement.digestKeyMap[string(digestKey.Hash())] = struct{}{}
 		addInfo(seElement.otherSummary, digestValue)
 	}
 }
@@ -170,7 +168,7 @@ const (
 // if matches, it will add the digest and return enum match
 // if digest too old, it will return enum tooOld and do nothing
 // if digest too young, it will return enum tooYoung and do nothing
-func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *StmtDigestKey, digestValue *stmtSummaryByDigestElement) (statement int) {
+func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *stmtSummaryByDigestKey, digestValue *stmtSummaryByDigestElement) (statement int) {
 	if seElement == nil || digestValue == nil {
 		return isTooYoung
 	}
@@ -181,47 +179,28 @@ func (seElement *stmtSummaryByDigestEvictedElement) matchAndAdd(digestKey *StmtD
 		return isMatch
 	} else if eEndTime <= sBeginTime {
 		return isTooOld
+	} else {
+		return isTooYoung
 	}
-	return isTooYoung
 }
 
 // ToEvictedCountDatum converts history evicted record to `evicted count` record's datum
 func (ssbde *stmtSummaryByDigestEvicted) ToEvictedCountDatum() [][]types.Datum {
-	type evictedCount struct {
-		beginTime int64
-		endTime   int64
-		count     int64
-	}
-
-	ssbde.Lock()
-	evictedCounts := make([]evictedCount, 0, ssbde.history.Len())
+	records := make([][]types.Datum, 0, ssbde.history.Len())
 	for e := ssbde.history.Back(); e != nil; e = e.Prev() {
-		element := e.Value.(*stmtSummaryByDigestEvictedElement)
-		evictedCounts = append(evictedCounts, evictedCount{
-			beginTime: element.beginTime,
-			endTime:   element.endTime,
-			count:     element.count,
-		})
-	}
-	ssbde.Unlock()
-
-	records := make([][]types.Datum, 0, len(evictedCounts))
-	for _, evicted := range evictedCounts {
-		records = append(records, evictedCountToDatum(evicted.beginTime, evicted.endTime, evicted.count))
+		if record := e.Value.(*stmtSummaryByDigestEvictedElement).toEvictedCountDatum(); record != nil {
+			records = append(records, record)
+		}
 	}
 	return records
 }
 
 // toEvictedCountDatum converts evicted record to `EvictedCount` record's datum
 func (seElement *stmtSummaryByDigestEvictedElement) toEvictedCountDatum() []types.Datum {
-	return evictedCountToDatum(seElement.beginTime, seElement.endTime, seElement.count)
-}
-
-func evictedCountToDatum(beginTime, endTime, count int64) []types.Datum {
 	datum := types.MakeDatums(
-		types.NewTime(types.FromGoTime(time.Unix(beginTime, 0)), mysql.TypeTimestamp, 0),
-		types.NewTime(types.FromGoTime(time.Unix(endTime, 0)), mysql.TypeTimestamp, 0),
-		count,
+		types.NewTime(types.FromGoTime(time.Unix(seElement.beginTime, 0)), mysql.TypeTimestamp, 0),
+		types.NewTime(types.FromGoTime(time.Unix(seElement.endTime, 0)), mysql.TypeTimestamp, 0),
+		int64(len(seElement.digestKeyMap)),
 	)
 	return datum
 }
@@ -231,12 +210,11 @@ func (ssMap *stmtSummaryByDigestMap) ToEvictedCountDatum() [][]types.Datum {
 }
 
 func (ssbde *stmtSummaryByDigestEvicted) collectHistorySummaries(historySize int) []*stmtSummaryByDigestEvictedElement {
-	lst := make([]*stmtSummaryByDigestEvictedElement, 0, min(ssbde.history.Len(), historySize))
-	for element := ssbde.history.Back(); element != nil && len(lst) < historySize; element = element.Prev() {
+	lst := make([]*stmtSummaryByDigestEvictedElement, 0, ssbde.history.Len())
+	for element := ssbde.history.Front(); element != nil && len(lst) < historySize; element = element.Next() {
 		seElement := element.Value.(*stmtSummaryByDigestEvictedElement)
 		lst = append(lst, seElement)
 	}
-	slices.Reverse(lst)
 	return lst
 }
 
@@ -324,19 +302,6 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	if addTo.maxRocksdbBlockReadByte < addWith.maxRocksdbBlockReadByte {
 		addTo.maxRocksdbBlockReadByte = addWith.maxRocksdbBlockReadByte
 	}
-	addTo.iaExecCount += addWith.iaExecCount
-	addTo.sumIARemoteReadSegmentCount += addWith.sumIARemoteReadSegmentCount
-	if addTo.maxIARemoteReadSegmentCount < addWith.maxIARemoteReadSegmentCount {
-		addTo.maxIARemoteReadSegmentCount = addWith.maxIARemoteReadSegmentCount
-	}
-	addTo.sumIARemoteReadSegmentSize += addWith.sumIARemoteReadSegmentSize
-	if addTo.maxIARemoteReadSegmentSize < addWith.maxIARemoteReadSegmentSize {
-		addTo.maxIARemoteReadSegmentSize = addWith.maxIARemoteReadSegmentSize
-	}
-	addTo.sumIARemoteReadSegmentWaitTime += addWith.sumIARemoteReadSegmentWaitTime
-	if addTo.maxIARemoteReadSegmentWaitTime < addWith.maxIARemoteReadSegmentWaitTime {
-		addTo.maxIARemoteReadSegmentWaitTime = addWith.maxIARemoteReadSegmentWaitTime
-	}
 
 	// txn
 	addTo.commitCount += addWith.commitCount
@@ -399,10 +364,6 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	if addTo.maxMem < addWith.maxMem {
 		addTo.maxMem = addWith.maxMem
 	}
-	addTo.sumMemArbitration += addWith.sumMemArbitration
-	if addTo.maxMemArbitration < addWith.maxMemArbitration {
-		addTo.maxMemArbitration = addWith.maxMemArbitration
-	}
 	addTo.sumDisk += addWith.sumDisk
 	if addTo.maxDisk < addWith.maxDisk {
 		addTo.maxDisk = addWith.maxDisk
@@ -419,8 +380,6 @@ func addInfo(addTo *stmtSummaryByDigestElement, addWith *stmtSummaryByDigestElem
 	addTo.sumPDTotal += addWith.sumPDTotal
 	addTo.sumBackoffTotal += addWith.sumBackoffTotal
 	addTo.sumWriteSQLRespTotal += addWith.sumWriteSQLRespTotal
-	addTo.sumTidbCPU += addWith.sumTidbCPU
-	addTo.sumTikvCPU += addWith.sumTikvCPU
 
 	addTo.sumErrors += addWith.sumErrors
 

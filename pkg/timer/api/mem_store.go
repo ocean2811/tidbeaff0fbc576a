@@ -23,7 +23,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/timeutil"
 )
 
 type memStoreWatcher struct {
@@ -84,8 +84,6 @@ func (s *memoryStoreCore) Create(_ context.Context, record *TimerRecord) (string
 		record.EventStatus = SchedEventIdle
 	}
 
-	normalizeTimeFields(record)
-
 	if _, ok := s.id2Timers[record.ID]; ok {
 		return "", errors.Trace(ErrTimerExists)
 	}
@@ -139,7 +137,6 @@ func (s *memoryStoreCore) Update(_ context.Context, timerID string, update *Time
 		return err
 	}
 
-	normalizeTimeFields(newRecord)
 	if err = newRecord.Validate(); err != nil {
 		return err
 	}
@@ -305,22 +302,4 @@ func getMemStoreTimeZoneLoc(tz string) *time.Location {
 	}
 
 	return timeutil.SystemLocation()
-}
-
-func normalizeTimeFields(record *TimerRecord) {
-	if record.Location == nil {
-		return
-	}
-
-	if !record.Watermark.IsZero() {
-		record.Watermark = record.Watermark.In(record.Location)
-	}
-
-	if !record.EventStart.IsZero() {
-		record.EventStart = record.EventStart.In(record.Location)
-	}
-
-	if !record.CreateTime.IsZero() {
-		record.CreateTime = record.CreateTime.In(record.Location)
-	}
 }

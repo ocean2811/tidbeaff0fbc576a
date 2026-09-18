@@ -20,12 +20,13 @@ import (
 	"testing"
 
 	"github.com/dgryski/go-farm"
-	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggfuncs"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,23 +42,23 @@ func genApproxDistinctMergePartialResult(begin, end uint64) string {
 }
 
 func TestMergePartialResult4Count(t *testing.T) {
-	tester := buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 0, 5, 5, 3, 8)
+	tester := buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 5, 3, 8)
 	testMergePartialResult(t, tester)
 
-	tester = buildAggTester(ast.AggFuncApproxCountDistinct, mysql.TypeLonglong, 0, 5, genApproxDistinctMergePartialResult(0, 5), genApproxDistinctMergePartialResult(2, 5), 5)
+	tester = buildAggTester(ast.AggFuncApproxCountDistinct, mysql.TypeLonglong, 5, genApproxDistinctMergePartialResult(0, 5), genApproxDistinctMergePartialResult(2, 5), 5)
 	testMergePartialResult(t, tester)
 }
 
 func TestCount(t *testing.T) {
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeFloat, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeDouble, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeNewDecimal, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeString, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeDate, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeDuration, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, 0, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeFloat, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDouble, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeNewDecimal, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeString, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDate, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDuration, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, 5, 0, 5),
 	}
 	for i, test := range tests {
 		t.Run(fmt.Sprintf("%s_%d", test.funcName, i), func(t *testing.T) {
@@ -81,14 +82,14 @@ func TestCount(t *testing.T) {
 	}
 
 	tests3 := []aggTest{
-		buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeFloat, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeDouble, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeNewDecimal, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeString, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeDate, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeDuration, 0, 5, 0, 5),
-		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, 0, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeFloat, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDouble, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeNewDecimal, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeString, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDate, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDuration, 5, 0, 5),
+		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, 5, 0, 5),
 	}
 	for _, test := range tests3 {
 		testAggFunc(t, test)
@@ -114,39 +115,39 @@ func TestCount(t *testing.T) {
 
 func TestMemCount(t *testing.T) {
 	tests := []aggMemTest{
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeLonglong, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeFloat, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeFloat, 5,
 			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeDouble, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeNewDecimal, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeString, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeString, 5,
 			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeDate, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeDate, 5,
 			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeDuration, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4CountSize, defaultUpdateMemDeltaGens, false),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeLonglong, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4CountDistinctIntSize+hack.DefBucketMemoryUsageForSetInt64, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeFloat, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeFloat, 5,
 			aggfuncs.DefPartialResult4CountDistinctRealSize+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeDouble, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeDouble, 5,
 			aggfuncs.DefPartialResult4CountDistinctRealSize+hack.DefBucketMemoryUsageForSetFloat64, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeNewDecimal, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeNewDecimal, 5,
 			aggfuncs.DefPartialResult4CountDistinctDecimalSize+hack.DefBucketMemoryUsageForSetString, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeString, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeString, 5,
 			aggfuncs.DefPartialResult4CountDistinctStringSize+hack.DefBucketMemoryUsageForSetString, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeDate, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeDate, 5,
 			aggfuncs.DefPartialResult4CountWithDistinctSize+hack.DefBucketMemoryUsageForSetString, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeDuration, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeDuration, 5,
 			aggfuncs.DefPartialResult4CountDistinctDurationSize+hack.DefBucketMemoryUsageForSetInt64, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncCount, mysql.TypeJSON, 0, 5,
+		buildAggMemTester(ast.AggFuncCount, mysql.TypeJSON, 5,
 			aggfuncs.DefPartialResult4CountWithDistinctSize+hack.DefBucketMemoryUsageForSetString, distinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeLonglong, 0, 5,
+		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeLonglong, 5,
 			aggfuncs.DefPartialResult4ApproxCountDistinctSize, approxCountDistinctUpdateMemDeltaGens, true),
-		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeString, 0, 5,
+		buildAggMemTester(ast.AggFuncApproxCountDistinct, mysql.TypeString, 5,
 			aggfuncs.DefPartialResult4ApproxCountDistinctSize, approxCountDistinctUpdateMemDeltaGens, true),
 	}
 	for i, test := range tests {
@@ -157,7 +158,7 @@ func TestMemCount(t *testing.T) {
 }
 
 func TestWriteTime(t *testing.T) {
-	tt, err := types.ParseDate(types.DefaultStmtNoWarningContext, "2020-11-11")
+	tt, err := types.ParseDate(stmtctx.NewStmtCtx(), "2020-11-11")
 	require.NoError(t, err)
 
 	buf := make([]byte, 16)
@@ -175,14 +176,14 @@ func BenchmarkCount(b *testing.B) {
 
 	rowNum := 50000
 	tests := []aggTest{
-		buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, 0, rowNum, 0, rowNum),
-		buildAggTester(ast.AggFuncCount, mysql.TypeFloat, 0, rowNum, 0, rowNum),
-		buildAggTester(ast.AggFuncCount, mysql.TypeDouble, 0, rowNum, 0, rowNum),
-		buildAggTester(ast.AggFuncCount, mysql.TypeNewDecimal, 0, rowNum, 0, rowNum),
-		buildAggTester(ast.AggFuncCount, mysql.TypeString, 0, rowNum, 0, rowNum),
-		buildAggTester(ast.AggFuncCount, mysql.TypeDate, 0, rowNum, 0, rowNum),
-		buildAggTester(ast.AggFuncCount, mysql.TypeDuration, 0, rowNum, 0, rowNum),
-		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, 0, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeLonglong, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeFloat, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDouble, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeNewDecimal, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeString, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDate, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeDuration, rowNum, 0, rowNum),
+		buildAggTester(ast.AggFuncCount, mysql.TypeJSON, rowNum, 0, rowNum),
 	}
 	for _, test := range tests {
 		benchmarkAggFunc(b, ctx, test)

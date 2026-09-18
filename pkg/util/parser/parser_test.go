@@ -17,7 +17,7 @@ package parser_test
 import (
 	"testing"
 
-	utilparser "github.com/pingcap/tidb/pkg/util/parser"
+	utilparser "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/parser"
 	"github.com/stretchr/testify/require"
 )
 

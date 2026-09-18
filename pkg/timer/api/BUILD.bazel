@@ -10,7 +10,7 @@ go_library(
         "store.go",
         "timer.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/timer/api",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/timer/api",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/duration",
@@ -19,7 +19,6 @@ go_library(
         "//pkg/util/timeutil",
         "@com_github_google_uuid//:uuid",
         "@com_github_pingcap_errors//:errors",
-        "@com_github_pingcap_failpoint//:failpoint",
         "@com_github_robfig_cron_v3//:cron",
         "@org_uber_go_zap//:zap",
     ],

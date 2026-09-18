@@ -18,7 +18,6 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -26,39 +25,36 @@ import (
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/gcutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/util/callback"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/external"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/gcutil"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/testutils"
 )
 
 // GetMaxRowID is used for test.
 func GetMaxRowID(store kv.Storage, priority int, t table.Table, startHandle, endHandle kv.Key) (kv.Key, error) {
-	return ddl.GetRangeEndKey(ddl.NewReorgContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
+	return ddl.GetRangeEndKey(ddl.NewJobContext(), store, priority, t.RecordPrefix(), startHandle, endHandle)
 }
 
 func TestIssue23872(t *testing.T) {
@@ -123,7 +119,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1 12"))
 	is := domain.GetDomain(tk.Session()).InfoSchema()
-	tbl1, err := is.TableByName(context.Background(), ast.NewCIStr("ctwl_db"), ast.NewCIStr("t1"))
+	tbl1, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	tbl1Info := tbl1.Meta()
 	require.Nil(t, tbl1Info.ForeignKeys)
@@ -131,7 +127,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	col := tbl1Info.Columns[0]
 	hasNotNull := mysql.HasNotNullFlag(col.GetFlag())
 	require.True(t, hasNotNull)
-	tbl2, err := is.TableByName(context.Background(), ast.NewCIStr("ctwl_db"), ast.NewCIStr("t2"))
+	tbl2, err := is.TableByName(model.NewCIStr("ctwl_db"), model.NewCIStr("t2"))
 	require.NoError(t, err)
 	tbl2Info := tbl2.Meta()
 	require.Nil(t, tbl2Info.ForeignKeys)
@@ -145,7 +141,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	tk.MustExec("insert into t1 set c2=11")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1 11"))
 	is = domain.GetDomain(tk.Session()).InfoSchema()
-	tbl1, err = is.TableByName(context.Background(), ast.NewCIStr("ctwl_db1"), ast.NewCIStr("t1"))
+	tbl1, err = is.TableByName(model.NewCIStr("ctwl_db1"), model.NewCIStr("t1"))
 	require.NoError(t, err)
 	require.Nil(t, tbl1.Meta().ForeignKeys)
 
@@ -159,7 +155,7 @@ func TestCreateTableWithLike(t *testing.T) {
 	// Test create table like for partition table.
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	tk.MustExec("use test")
-	tk.MustExec("set @@session.tidb_scatter_region='table'")
+	tk.MustExec("set @@global.tidb_scatter_region=1")
 	tk.MustExec("drop table if exists partition_t")
 	tk.MustExec("create table partition_t (a int, b int,index(a)) partition by hash (a) partitions 3")
 	tk.MustExec("drop table if exists t1")
@@ -221,12 +217,6 @@ func TestCreateTableWithLike(t *testing.T) {
 
 	tk.MustExec("drop database ctwl_db")
 	tk.MustExec("drop database ctwl_db1")
-
-	// Test information_schema.columns copiability.
-	// See https://github.com/pingcap/tidb/issues/42030.
-	tk.MustExec("use test")
-	tk.MustExec("create table cc like information_schema.columns;")
-	tk.MustExec("insert into cc select * from information_schema.columns;")
 }
 
 func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
@@ -239,7 +229,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create global temporary table temporary_table (a int, b int,index(a)) on commit delete rows")
 	tk.MustExec("drop table if exists temporary_table_t1")
 	err := tk.ExecToErr("create table temporary_table_t1 like temporary_table")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
 	tk.MustExec("drop table if exists temporary_table")
 
 	// Test create temporary table like.
@@ -249,7 +239,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists auto_random_table")
 	tk.MustExec("drop table if exists auto_random_temporary_global")
 	err = tk.ExecToErr("create global temporary table auto_random_temporary_global like auto_random_table on commit delete rows")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("auto_random").Error(), err.Error())
 
 	// Test pre split regions.
 	tk.MustExec("drop table if exists table_pre_split")
@@ -257,13 +247,13 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists table_pre_split")
 	tk.MustExec("drop table if exists temporary_table_pre_split")
 	err = tk.ExecToErr("create global temporary table temporary_table_pre_split like table_pre_split ON COMMIT DELETE ROWS")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
 
 	// Test shard_row_id_bits.
 	tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
 	err = tk.ExecToErr("create table shard_row_id_table (a int) shard_row_id_bits = 5")
 	err = tk.ExecToErr("create global temporary table shard_row_id_temporary_table like shard_row_id_table on commit delete rows")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
 	tk.MustExec("create table shard_row_id_table_plus (a int)")
 	tk.MustExec("create global temporary table shard_row_id_temporary_table_plus (a int) on commit delete rows")
 	defer tk.MustExec("drop table if exists shard_row_id_table, shard_row_id_temporary_table, shard_row_id_table_plus, shard_row_id_temporary_table_plus")
@@ -281,7 +271,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec(`create global temporary table test_gv_ddl_temp like test_gv_ddl on commit delete rows;`)
 	defer tk.MustExec("drop table if exists test_gv_ddl_temp, test_gv_ddl")
 	is := sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_gv_ddl"))
+	table, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_gv_ddl"))
 	require.NoError(t, err)
 	testCases := []struct {
 		generatedExprString string
@@ -310,7 +300,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists test_foreign_key, t1")
 	tk.MustExec("create global temporary table test_foreign_key_temp like test_foreign_key on commit delete rows")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("test_foreign_key_temp"))
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("test_foreign_key_temp"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
 	require.Equal(t, 0, len(tableInfo.ForeignKeys))
@@ -338,14 +328,14 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("drop table if exists tb5, tb6")
 	tk.MustExec("create global temporary table tb5(id int) on commit delete rows")
 	err = tk.ExecToErr("create table tb6 like tb5")
-	require.EqualError(t, err, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	defer tk.MustExec("drop table if exists tb5, tb6")
 
 	// Test from->global temporary, to->global temporary.
 	tk.MustExec("drop table if exists tb7, tb8")
 	tk.MustExec("create global temporary table tb7(id int) on commit delete rows")
 	err = tk.ExecToErr("create global temporary table tb8 like tb7 on commit delete rows")
-	require.EqualError(t, err, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
+	require.EqualError(t, err, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error())
 	defer tk.MustExec("drop table if exists tb7, tb8")
 
 	// Test from->normal, to->local temporary
@@ -363,25 +353,25 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("drop table if exists tb13, tb14")
 	tk.MustExec("create temporary table tb13 (i int primary key, j int)")
 	err = tk.ExecToErr("create temporary table tb14 like tb13")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
 	defer tk.MustExec("drop table if exists tb13, tb14")
 	// Test from->local temporary, to->normal
 	tk.MustExec("drop table if exists tb15, tb16")
 	tk.MustExec("create temporary table tb15 (i int primary key, j int)")
 	err = tk.ExecToErr("create table tb16 like tb15")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("create table like").Error(), err.Error())
 	defer tk.MustExec("drop table if exists tb15, tb16")
 
 	tk.MustExec("drop table if exists table_pre_split, tmp_pre_split")
 	tk.MustExec("create table table_pre_split(id int) shard_row_id_bits=2 pre_split_regions=2")
 	err = tk.ExecToErr("create temporary table tmp_pre_split like table_pre_split")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("pre split regions").Error(), err.Error())
 	defer tk.MustExec("drop table if exists table_pre_split, tmp_pre_split")
 
 	tk.MustExec("drop table if exists table_shard_row_id, tmp_shard_row_id")
 	tk.MustExec("create table table_shard_row_id(id int) shard_row_id_bits=2")
 	err = tk.ExecToErr("create temporary table tmp_shard_row_id like table_shard_row_id")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("shard_row_id_bits").Error(), err.Error())
 	defer tk.MustExec("drop table if exists table_shard_row_id, tmp_shard_row_id")
 
 	tk.MustExec("drop table if exists partition_table, tmp_partition_table")
@@ -394,7 +384,7 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	tk.MustExec("create table foreign_key_table2 (c int,d int,foreign key (d) references foreign_key_table1 (b))")
 	tk.MustExec("create temporary table foreign_key_tmp like foreign_key_table2")
 	is = sessiontxn.GetTxnManager(tk.Session()).GetTxnInfoSchema()
-	table, err = is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("foreign_key_tmp"))
+	table, err = is.TableByName(model.NewCIStr("test"), model.NewCIStr("foreign_key_tmp"))
 	require.NoError(t, err)
 	tableInfo = table.Meta()
 	require.Equal(t, 0, len(tableInfo.ForeignKeys))
@@ -409,20 +399,20 @@ func TestCreateTableWithLikeAtTemporaryMode(t *testing.T) {
 	defer tk.MustExec("drop table if exists placement_table1")
 
 	err = tk.ExecToErr("create global temporary table g_tmp_placement1 like placement_table1 on commit delete rows")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
 	err = tk.ExecToErr("create temporary table l_tmp_placement1 like placement_table1")
-	require.Equal(t, plannererrors.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
+	require.Equal(t, core.ErrOptOnTemporaryTable.GenWithStackByArgs("placement").Error(), err.Error())
 }
 
-func createMockStore(t *testing.T) (store kv.Storage) {
-	vardef.SetSchemaLease(200 * time.Millisecond)
+func createMockStoreAndDomain(t *testing.T) (store kv.Storage, dom *domain.Domain) {
+	session.SetSchemaLease(200 * time.Millisecond)
 	session.DisableStats4Test()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Microsecond)
 
 	var err error
-	store, err = teststore.NewMockStoreWithoutBootstrap()
+	store, err = mockstore.NewMockStore()
 	require.NoError(t, err)
-	dom, err := session.BootstrapSession(store)
+	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		dom.Close()
@@ -433,11 +423,11 @@ func createMockStore(t *testing.T) (store kv.Storage) {
 
 // TestCancelAddIndex1 tests canceling ddl job when the add index worker is not started.
 func TestCancelAddIndexPanic(t *testing.T) {
-	store := createMockStore(t)
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/errorMockPanic", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/errorMockPanic", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/errorMockPanic"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/errorMockPanic"))
 	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
@@ -445,15 +435,20 @@ func TestCancelAddIndexPanic(t *testing.T) {
 
 	tkCancel := testkit.NewTestKit(t, store)
 	defer tk.MustExec("drop table t")
-	for i := range 5 {
+	for i := 0; i < 5; i++ {
 		tk.MustExec("insert into t values (?, ?)", i, i)
 	}
 	var checkErr error
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	oldReorgWaitTimeout := ddl.ReorgWaitTimeout
+	ddl.ReorgWaitTimeout = 50 * time.Millisecond
+	defer func() { ddl.ReorgWaitTimeout = oldReorgWaitTimeout }()
+	hook := &callback.TestDDLCallback{Do: dom}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionAddIndex && job.State == model.JobStateRunning && job.SchemaState == model.StateWriteReorganization && job.SnapshotVer != 0 {
 			tkCancel.MustQuery(fmt.Sprintf("admin cancel ddl jobs %d", job.ID))
 		}
-	})
+	}
+	dom.DDL().SetHook(hook)
 	rs, err := tk.Exec("alter table t add index idx_c2(c2)")
 	if rs != nil {
 		require.NoError(t, rs.Close())
@@ -465,7 +460,7 @@ func TestCancelAddIndexPanic(t *testing.T) {
 }
 
 func TestRecoverTableWithTTL(t *testing.T) {
-	store := createMockStore(t)
+	store, _ := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -503,20 +498,20 @@ func TestRecoverTableWithTTL(t *testing.T) {
 	tk.MustExec("create table t_recover1 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover1")
 	tk.MustExec("recover table t_recover1")
-	tk.MustQuery("show create table t_recover1").Check(testkit.Rows("t_recover1 CREATE TABLE `t_recover1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
+	tk.MustQuery("show create table t_recover1").Check(testkit.Rows("t_recover1 CREATE TABLE `t_recover1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
 	// recover table with job id
 	tk.MustExec("create table t_recover2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover2")
 	jobID := getDDLJobID("t_recover2", "drop table")
 	tk.MustExec(fmt.Sprintf("recover table BY JOB %d", jobID))
-	tk.MustQuery("show create table t_recover2").Check(testkit.Rows("t_recover2 CREATE TABLE `t_recover2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
+	tk.MustQuery("show create table t_recover2").Check(testkit.Rows("t_recover2 CREATE TABLE `t_recover2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
 	// flashback table
 	tk.MustExec("create table t_recover3 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop table t_recover3")
 	tk.MustExec("flashback table t_recover3")
-	tk.MustQuery("show create table t_recover3").Check(testkit.Rows("t_recover3 CREATE TABLE `t_recover3` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
+	tk.MustQuery("show create table t_recover3").Check(testkit.Rows("t_recover3 CREATE TABLE `t_recover3` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 
 	// flashback database
 	tk.MustExec("create database if not exists test_recover2")
@@ -524,12 +519,12 @@ func TestRecoverTableWithTTL(t *testing.T) {
 	tk.MustExec("create table test_recover2.t2 (t timestamp) TTL=`t`+INTERVAL 1 DAY")
 	tk.MustExec("drop database test_recover2")
 	tk.MustExec("flashback database test_recover2")
-	tk.MustQuery("show create table test_recover2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
-	tk.MustQuery("show create table test_recover2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='24h' */"))
+	tk.MustQuery("show create table test_recover2.t1").Check(testkit.Rows("t1 CREATE TABLE `t1` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
+	tk.MustQuery("show create table test_recover2.t2").Check(testkit.Rows("t2 CREATE TABLE `t2` (\n  `t` timestamp NULL DEFAULT NULL\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin /*T![ttl] TTL=`t` + INTERVAL 1 DAY */ /*T![ttl] TTL_ENABLE='OFF' */ /*T![ttl] TTL_JOB_INTERVAL='1h' */"))
 }
 
 func TestRecoverTableByJobID(t *testing.T) {
-	store := createMockStore(t)
+	store, _ := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -644,215 +639,8 @@ func TestRecoverTableByJobID(t *testing.T) {
 	require.Equal(t, false, gcEnable)
 }
 
-func TestRecoverTableUsesRealStartTSForQueuedDropTable(t *testing.T) {
-	store := createMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("create database if not exists test_recover")
-	tk.MustExec("use test_recover")
-	tk.MustExec("drop table if exists t_recover_snapshot")
-	tk.MustExec("create table t_recover_snapshot (id int primary key, col_a int, col_b int)")
-	tk.MustExec("insert into t_recover_snapshot values (1, 11, 21)")
-
-	defer func(originGC bool) {
-		if originGC {
-			util.EmulatorGCEnable()
-		} else {
-			util.EmulatorGCDisable()
-		}
-	}(util.IsEmulatorGCEnable())
-	util.EmulatorGCDisable()
-
-	var pauseSchedule atomic.Bool
-	waitSchCh := make(chan struct{})
-	var closeSchedule sync.Once
-	releaseSchedule := func() {
-		pauseSchedule.Store(false)
-		closeSchedule.Do(func() { close(waitSchCh) })
-	}
-	t.Cleanup(releaseSchedule)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
-		if pauseSchedule.Load() {
-			<-waitSchCh
-		}
-	})
-	pauseSchedule.Store(true)
-
-	submittedCh := make(chan struct{}, 2)
-	submitGate := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
-		submittedCh <- struct{}{}
-		<-submitGate
-	})
-	waitSubmitted := func() {
-		select {
-		case <-submittedCh:
-			submitGate <- struct{}{}
-		case <-time.After(5 * time.Second):
-			require.FailNow(t, "DDL job was not submitted")
-		}
-	}
-
-	// Two independent sessions are needed so the drop-table job can be queued
-	// after drop-column is submitted but before drop-column has changed metadata.
-	tkAlter := testkit.NewTestKit(t, store)
-	tkAlter.MustExec("use test_recover")
-	alterDoneCh := make(chan error, 1)
-	go func() {
-		_, err := tkAlter.Exec("alter table t_recover_snapshot drop column col_a")
-		alterDoneCh <- err
-	}()
-	waitSubmitted()
-
-	tkDrop := testkit.NewTestKit(t, store)
-	tkDrop.MustExec("use test_recover")
-	dropDoneCh := make(chan error, 1)
-	go func() {
-		_, err := tkDrop.Exec("drop table t_recover_snapshot")
-		dropDoneCh <- err
-	}()
-	waitSubmitted()
-
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted")
-	releaseSchedule()
-	require.NoError(t, <-alterDoneCh)
-	require.NoError(t, <-dropDoneCh)
-
-	getHistoryJobID := func(jobType string) int64 {
-		rows := tk.MustQuery(fmt.Sprintf(
-			"admin show ddl jobs where db_name = 'test_recover' and table_name = 't_recover_snapshot' and job_type = '%s'",
-			jobType,
-		)).Rows()
-		require.NotEmpty(t, rows)
-		jobID, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
-		require.NoError(t, err)
-		return jobID
-	}
-
-	dropJobID := getHistoryJobID("drop table")
-	dropJob, err := ddl.GetHistoryJobByID(tk.Session(), dropJobID)
-	require.NoError(t, err)
-	require.NotNil(t, dropJob)
-	require.Greater(t, dropJob.RealStartTS, dropJob.StartTS)
-
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(-48 * time.Hour).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	tk.MustExec("delete from mysql.tidb where variable_name in ('tikv_gc_safe_point','tikv_gc_enable')")
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-	require.NoError(t, gcutil.EnableGC(tk.Session()))
-
-	tk.MustExec(fmt.Sprintf("recover table by job %d", dropJobID))
-	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'test_recover' and table_name = 't_recover_snapshot' order by ordinal_position").Check(testkit.Rows("id", "col_b"))
-	tk.MustQuery("select id, col_b from t_recover_snapshot").Check(testkit.Rows("1 21"))
-
-	recoverJobID := getHistoryJobID("recover table")
-	recoverJob, err := ddl.GetHistoryJobByID(tk.Session(), recoverJobID)
-	require.NoError(t, err)
-	require.NotNil(t, recoverJob)
-	require.NotNil(t, recoverJob.BinlogInfo.TableInfo)
-	colNames := make([]string, 0, len(recoverJob.BinlogInfo.TableInfo.Columns))
-	for _, col := range recoverJob.BinlogInfo.TableInfo.Columns {
-		colNames = append(colNames, col.Name.L)
-	}
-	require.Equal(t, []string{"id", "col_b"}, colNames)
-}
-
-func TestFlashbackDatabaseUsesRealStartTSForQueuedDropSchema(t *testing.T) {
-	store := createMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("drop database if exists test_recover_schema_snapshot")
-	tk.MustExec("create database test_recover_schema_snapshot")
-	tk.MustExec("create table test_recover_schema_snapshot.t (id int primary key, col_a int, col_b int)")
-	tk.MustExec("insert into test_recover_schema_snapshot.t values (1, 11, 21)")
-
-	defer func(originGC bool) {
-		if originGC {
-			util.EmulatorGCEnable()
-		} else {
-			util.EmulatorGCDisable()
-		}
-	}(util.IsEmulatorGCEnable())
-	util.EmulatorGCDisable()
-
-	var pauseSchedule atomic.Bool
-	waitSchCh := make(chan struct{})
-	var closeSchedule sync.Once
-	releaseSchedule := func() {
-		pauseSchedule.Store(false)
-		closeSchedule.Do(func() { close(waitSchCh) })
-	}
-	t.Cleanup(releaseSchedule)
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeLoadAndDeliverJobs", func() {
-		if pauseSchedule.Load() {
-			<-waitSchCh
-		}
-	})
-	pauseSchedule.Store(true)
-
-	submittedCh := make(chan struct{}, 2)
-	submitGate := make(chan struct{})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted", func() {
-		submittedCh <- struct{}{}
-		<-submitGate
-	})
-	waitSubmitted := func() {
-		select {
-		case <-submittedCh:
-			submitGate <- struct{}{}
-		case <-time.After(5 * time.Second):
-			require.FailNow(t, "DDL job was not submitted")
-		}
-	}
-
-	tkAlter := testkit.NewTestKit(t, store)
-	tkAlter.MustExec("use test_recover_schema_snapshot")
-	alterDoneCh := make(chan error, 1)
-	go func() {
-		_, err := tkAlter.Exec("alter table t drop column col_a")
-		alterDoneCh <- err
-	}()
-	waitSubmitted()
-
-	tkDrop := testkit.NewTestKit(t, store)
-	dropDoneCh := make(chan error, 1)
-	go func() {
-		_, err := tkDrop.Exec("drop database test_recover_schema_snapshot")
-		dropDoneCh <- err
-	}()
-	waitSubmitted()
-
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/waitJobSubmitted")
-	releaseSchedule()
-	require.NoError(t, <-alterDoneCh)
-	require.NoError(t, <-dropDoneCh)
-
-	rows := tk.MustQuery("admin show ddl jobs where db_name = 'test_recover_schema_snapshot' and job_type = 'drop schema'").Rows()
-	require.NotEmpty(t, rows)
-	dropJobID, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
-	require.NoError(t, err)
-	dropJob, err := ddl.GetHistoryJobByID(tk.Session(), dropJobID)
-	require.NoError(t, err)
-	require.NotNil(t, dropJob)
-	require.Greater(t, dropJob.RealStartTS, dropJob.StartTS)
-
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(-48 * time.Hour).Format(gcTimeFormat)
-	safePointSQL := `INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', '')
-			       ON DUPLICATE KEY
-			       UPDATE variable_value = '%[1]s'`
-	tk.MustExec("delete from mysql.tidb where variable_name in ('tikv_gc_safe_point','tikv_gc_enable')")
-	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
-	require.NoError(t, gcutil.EnableGC(tk.Session()))
-
-	tk.MustExec("flashback database test_recover_schema_snapshot")
-	tk.MustQuery("select column_name from information_schema.columns where table_schema = 'test_recover_schema_snapshot' and table_name = 't' order by ordinal_position").Check(testkit.Rows("id", "col_b"))
-	tk.MustQuery("select id, col_b from test_recover_schema_snapshot.t").Check(testkit.Rows("1 21"))
-}
-
 func TestRecoverTableByJobIDFail(t *testing.T) {
-	store := createMockStore(t)
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -893,17 +681,19 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	hook := &callback.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
+			require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
-	})
+	}
+	dom.DDL().SetHook(hook)
 
 	// do recover table.
 	tk.MustExec(fmt.Sprintf("recover table by job %d", jobID))
 	require.NoError(t, failpoint.Disable("tikvclient/mockCommitError"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockRecoverTableCommitErr"))
 
 	// make sure enable GC after recover table.
 	enable, err := gcutil.CheckGCEnable(tk.Session())
@@ -918,7 +708,7 @@ func TestRecoverTableByJobIDFail(t *testing.T) {
 }
 
 func TestRecoverTableByTableNameFail(t *testing.T) {
-	store := createMockStore(t)
+	store, dom := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("create database if not exists test_recover")
 	tk.MustExec("use test_recover")
@@ -950,17 +740,19 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 	tk.MustExec(fmt.Sprintf(safePointSQL, timeBeforeDrop))
 
 	// set hook
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	hook := &callback.TestDDLCallback{}
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		if job.Type == model.ActionRecoverTable {
 			require.NoError(t, failpoint.Enable("tikvclient/mockCommitError", `return(true)`))
-			require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
+			require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockRecoverTableCommitErr", `return(true)`))
 		}
-	})
+	}
+	dom.DDL().SetHook(hook)
 
 	// do recover table.
 	tk.MustExec("recover table t_recover")
 	require.NoError(t, failpoint.Disable("tikvclient/mockCommitError"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/mockRecoverTableCommitErr"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockRecoverTableCommitErr"))
 
 	// make sure enable GC after recover table.
 	enable, err := gcutil.CheckGCEnable(tk.Session())
@@ -975,15 +767,18 @@ func TestRecoverTableByTableNameFail(t *testing.T) {
 }
 
 func TestCancelJobByErrorCountLimit(t *testing.T) {
-	store := createMockStore(t)
+	store, _ := createMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockExceedErrorLimit", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockExceedErrorLimit", `return(true)`))
+	defer func() {
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockExceedErrorLimit"))
+	}()
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	limit := vardef.GetDDLErrorCountLimit()
+	limit := variable.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 16")
-	err := util.LoadGlobalVars(tk.Session(), vardef.TiDBDDLErrorCountLimit)
+	err := util.LoadDDLVars(tk.Session())
 	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
@@ -994,34 +789,37 @@ func TestCancelJobByErrorCountLimit(t *testing.T) {
 func TestTruncateTableUpdateSchemaVersionErr(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError", `return(true)`)
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockTruncateTableUpdateVersionError", `return(true)`))
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 
-	limit := vardef.GetDDLErrorCountLimit()
+	limit := variable.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 5")
+	err := util.LoadDDLVars(tk.Session())
+	require.NoError(t, err)
 	defer tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %d", limit))
 
 	tk.MustExec("create table t (a int)")
-	err := tk.ExecToErr("truncate table t")
+	err = tk.ExecToErr("truncate table t")
 	require.EqualError(t, err, "[ddl:-1]DDL job rollback, error msg: mock update version error")
 	// Disable fail point.
-	testfailpoint.Disable(t, "github.com/pingcap/tidb/pkg/ddl/mockTruncateTableUpdateVersionError")
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/mockTruncateTableUpdateVersionError"))
 	tk.MustExec("truncate table t")
 }
 
 func TestCanceledJobTakeTime(t *testing.T) {
-	store := testkit.CreateMockStore(t)
+	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t_cjtt(a int)")
 
+	hook := &callback.TestDDLCallback{}
 	once := sync.Once{}
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/ddl/beforeRunOneJobStep", func(job *model.Job) {
+	hook.OnJobRunBeforeExported = func(job *model.Job) {
 		once.Do(func() {
 			ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnDDL)
 			err := kv.RunInNewTxn(ctx, store, false, func(ctx context.Context, txn kv.Transaction) error {
-				m := meta.NewMutator(txn)
+				m := meta.NewMeta(txn)
 				err := m.GetAutoIDAccessors(job.SchemaID, job.TableID).Del()
 				if err != nil {
 					return err
@@ -1030,7 +828,8 @@ func TestCanceledJobTakeTime(t *testing.T) {
 			})
 			require.NoError(t, err)
 		})
-	})
+	}
+	dom.DDL().SetHook(hook)
 
 	originalWT := ddl.GetWaitTimeWhenErrorOccurred()
 	ddl.SetWaitTimeWhenErrorOccurred(1 * time.Second)
@@ -1041,13 +840,13 @@ func TestCanceledJobTakeTime(t *testing.T) {
 	require.Less(t, sub, ddl.GetWaitTimeWhenErrorOccurred())
 }
 
-func TestTableLocksDisable(t *testing.T) {
+func TestTableLocksEnable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (a int)")
 
-	// Test for disable table lock config.
+	// Test for enable table lock config.
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.EnableTableLock = false
@@ -1071,7 +870,7 @@ func TestAutoRandom(t *testing.T) {
 	databaseName, tableName := "auto_random_db", "t"
 	tk.MustExec("set @@allow_auto_random_explicit_insert = true")
 
-	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...any) {
+	assertInvalidAutoRandomErr := func(sql string, errMsg string, args ...interface{}) {
 		err := tk.ExecToErr(sql)
 		require.EqualError(t, err, dbterror.ErrInvalidAutoRandom.GenWithStackByArgs(fmt.Sprintf(errMsg, args...)).Error())
 	}
@@ -1310,7 +1109,7 @@ func TestAutoRandomWithPreSplitRegion(t *testing.T) {
 	origin := atomic.LoadUint32(&ddl.EnableSplitTableRegion)
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	defer atomic.StoreUint32(&ddl.EnableSplitTableRegion, origin)
-	tk.MustExec("set @@session.tidb_scatter_region='table'")
+	tk.MustExec("set @@global.tidb_scatter_region=1")
 
 	// Test pre-split table region for auto_random table.
 	tk.MustExec("create table t (a bigint auto_random(2) primary key clustered, b int) pre_split_regions=2")
@@ -1378,11 +1177,11 @@ func TestForbidUnsupportedCollations(t *testing.T) {
 func TestCreateTableNoBlock(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/checkOwnerCheckAllVersionsWaitTime", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/ddl/checkOwnerCheckAllVersionsWaitTime"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/checkOwnerCheckAllVersionsWaitTime"))
 	}()
-	save := vardef.GetDDLErrorCountLimit()
+	save := variable.GetDDLErrorCountLimit()
 	tk.MustExec("set @@global.tidb_ddl_error_count_limit = 1")
 	defer func() {
 		tk.MustExec(fmt.Sprintf("set @@global.tidb_ddl_error_count_limit = %v", save))
@@ -1443,13 +1242,10 @@ func TestGetReverseKey(t *testing.T) {
 
 	// Get table ID for split.
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("db_get"), ast.NewCIStr("test_get"))
+	tbl, err := is.TableByName(model.NewCIStr("db_get"), model.NewCIStr("test_get"))
 	require.NoError(t, err)
 	// Split the table.
 	tableStart := tablecodec.GenTableRecordPrefix(tbl.Meta().ID)
-	if kerneltype.IsNextGen() {
-		tableStart = store.GetCodec().EncodeKey(tableStart)
-	}
 	cluster.SplitKeys(tableStart, tableStart.PrefixNext(), 4)
 
 	tk.MustQuery("select * from test_get order by a").Check(testkit.Rows("-9223372036854775808 -9223372036854775808",
@@ -1484,68 +1280,19 @@ func TestGetReverseKey(t *testing.T) {
 	checkRet(startKey, endKey, endKey)
 }
 
-func TestAlterTableCompression(t *testing.T) {
+func TestLocalTemporaryTableBlockedDDL(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int)")
-
-	// Test COMPRESSION='NONE' should succeed
-	tk.MustExec("alter table t compression='NONE'")
-
-	// Test COMPRESSION='ZLIB' should fail
-	err := tk.ExecToErr("alter table t compression='ZLIB'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported")
-
-	// Test COMPRESSION='LZ4' should fail
-	err = tk.ExecToErr("alter table t compression='LZ4'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported")
-
-	// Test an invalid COMPRESSION following another option should fail
-	// without applying the preceding option.
-	err = tk.ExecToErr("alter table t comment='should not apply', compression='ZLIB'")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported")
-	createTable := tk.MustQuery("show create table t").Rows()[0][1].(string)
-	require.NotContains(t, createTable, "should not apply")
-
-	tk.MustExec("drop table t")
-}
-
-func TestForbiddenDDLInNextGen(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("those forbidden DDLs are only for next-gen")
-	}
-	store, _ := testkit.CreateMockStoreAndDomain(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id int)")
-	tk.MustExec(`CREATE TABLE IF NOT EXISTS pt (
-		table_id BIGINT(64) NOT NULL,
-		sample_num BIGINT(64) NOT NULL DEFAULT 0,
-		sample_rate DOUBLE NOT NULL DEFAULT -1,
-		buckets BIGINT(64) NOT NULL DEFAULT 0,
-		topn BIGINT(64) NOT NULL DEFAULT -1,
-		column_choice enum('DEFAULT','ALL','PREDICATE','LIST') NOT NULL DEFAULT 'DEFAULT',
-		column_ids TEXT(19372),
-		PRIMARY KEY (table_id) CLUSTERED
-	) partition by range(table_id)(partition p0 values less than MAXVALUE);`)
-
-	for _, sql := range []string{
-		`drop database sys`,
-		`drop database mysql`,
-		`drop table mysql.tidb_global_task`,
-		`truncate table mysql.tidb_global_task`,
-		`rename table mysql.tidb_global_task to test.t1`,
-		`rename table test.t to test.t1, mysql.tidb_global_task to test.t2`,
-		`alter table mysql.analyze_options partition by hash(table_id) partitions 8`,
-		`alter table pt exchange partition p0 with table mysql.analyze_options`,
-	} {
-		t.Run(sql, func(t *testing.T) {
-			require.ErrorIs(t, tk.ExecToErr(sql), dbterror.ErrForbiddenDDL)
-		})
-	}
+	tk.MustExec("create table t1 (id int)")
+	tk.MustExec("create temporary table tmp1 (id int primary key, a int unique, b int)")
+	require.ErrorIs(t, tk.ExecToErr("rename table tmp1 to tmp2"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add column c int"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("alter table tmp1 add index b(b)"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("create index a on tmp1(b)"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("drop index a on tmp1"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 read"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables tmp1 write"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("lock tables t1 read, tmp1 read"), dbterror.ErrUnsupportedLocalTempTableDDL)
+	require.ErrorIs(t, tk.ExecToErr("admin cleanup table lock tmp1"), dbterror.ErrUnsupportedLocalTempTableDDL)
 }

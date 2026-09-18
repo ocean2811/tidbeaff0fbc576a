@@ -22,7 +22,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/pingcap/tidb/build/linter/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -158,9 +158,4 @@ func getLLLIssuesForFile(filename string, maxLineLen int, tabSpaces string) ([]r
 	}
 
 	return res, nil
-}
-
-func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
-	util.SkipAnalyzer(Analyzer)
 }

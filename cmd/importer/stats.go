@@ -22,11 +22,11 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	stats "github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/statistics/handle/storage"
-	"github.com/pingcap/tidb/pkg/statistics/util"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	stats "github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"go.uber.org/zap"
 )
 
@@ -96,10 +96,13 @@ func getValidPrefix(lower, upper string) string {
 func (h *histogram) getAvgLen(maxLen int) int {
 	l := h.Bounds.NumRows()
 	totalLen := 0
-	for i := range l {
+	for i := 0; i < l; i++ {
 		totalLen += len(h.Bounds.GetRow(i).GetString(0))
 	}
-	avg := min(totalLen/l, maxLen)
+	avg := totalLen / l
+	if avg > maxLen {
+		avg = maxLen
+	}
 	if avg == 0 {
 		avg = 1
 	}

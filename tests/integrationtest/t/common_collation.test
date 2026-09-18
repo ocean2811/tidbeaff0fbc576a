@@ -1,3 +1,4 @@
+set tidb_cost_model_version=1;
 drop table if exists t;
 create table t(a char(10) collate utf8mb4_unicode_ci, b char(10) collate utf8mb4_general_ci);
 insert into t values ('啊', '撒旦');
@@ -7,7 +8,7 @@ select coercibility(convert('a' using utf8mb4));
 select coercibility(convert('a' using utf8mb4) collate utf8mb4_general_ci);
 
 # test for coercibility and collation with json type
-# see details from https://github.com/pingcap/tidb/issues/31541 and https://github.com/pingcap/tidb/issues/31320#issuecomment-1010599311
+# see details from https://github.com/ocean2811/tidbeaff0fbc576a/issues/31541 and https://github.com/ocean2811/tidbeaff0fbc576a/issues/31320#issuecomment-1010599311
 drop table if exists t;
 create table t (a char(20), b blob(100), c text, d json, e timestamp, f set('a一','b二','c三','d四'), g text, h enum('a一','b二','c三','d四') default 'c三');
 insert into t values ('你好', '你好', '你好', '{\"测试\": \"你好\"}', '2018-10-13', 1, '你好', 'a一');

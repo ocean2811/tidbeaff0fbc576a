@@ -17,11 +17,11 @@ package aggfuncs_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/executor/aggfuncs"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/aggfuncs"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldType) (memDelta int64) {
@@ -34,12 +34,12 @@ func getEvaluatedMemDelta(row *chunk.Row, dataType *types.FieldType) (memDelta i
 	return
 }
 
-func lastValueEvaluateRowUpdateMemDeltaGens(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
+func lastValueEvaluateRowUpdateMemDeltaGens(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 	memDeltas = make([]int64, 0)
 	lastMemDelta := int64(0)
-	for range param.srcChk.NumRows() {
-		row := param.srcChk.GetRow(0)
-		curMemDelta := getEvaluatedMemDelta(&row, param.keyType)
+	for i := 0; i < srcChk.NumRows(); i++ {
+		row := srcChk.GetRow(0)
+		curMemDelta := getEvaluatedMemDelta(&row, dataType)
 		memDeltas = append(memDeltas, curMemDelta-lastMemDelta)
 		lastMemDelta = curMemDelta
 	}
@@ -47,14 +47,14 @@ func lastValueEvaluateRowUpdateMemDeltaGens(param updateMemDeltaGensParams) (mem
 }
 
 func nthValueEvaluateRowUpdateMemDeltaGens(nth int) updateMemDeltaGens {
-	return func(param updateMemDeltaGensParams) (memDeltas []int64, err error) {
+	return func(srcChk *chunk.Chunk, dataType *types.FieldType) (memDeltas []int64, err error) {
 		memDeltas = make([]int64, 0)
-		for range param.srcChk.NumRows() {
+		for i := 0; i < srcChk.NumRows(); i++ {
 			memDeltas = append(memDeltas, int64(0))
 		}
-		if nth < param.srcChk.NumRows() {
-			row := param.srcChk.GetRow(nth - 1)
-			memDeltas[nth-1] = getEvaluatedMemDelta(&row, param.keyType)
+		if nth < srcChk.NumRows() {
+			row := srcChk.GetRow(nth - 1)
+			memDeltas[nth-1] = getEvaluatedMemDelta(&row, dataType)
 		}
 		return memDeltas, nil
 	}

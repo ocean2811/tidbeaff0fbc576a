@@ -17,8 +17,8 @@ package session
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
 )
 
 // Advisory Locks are the locks in GET_LOCK() and RELEASE_LOCK().
@@ -37,7 +37,6 @@ import (
 type advisoryLock struct {
 	ctx            context.Context
 	session        *session
-	clean          func()
 	referenceCount int
 	owner          uint64
 }
@@ -62,7 +61,7 @@ func (a *advisoryLock) ReferenceCount() int {
 func (a *advisoryLock) Close() {
 	_, err := a.session.ExecuteInternal(a.ctx, "ROLLBACK")
 	terror.Log(err)
-	a.clean()
+	a.session.Close()
 }
 
 // GetLock acquires a new advisory lock using a pessimistic transaction.

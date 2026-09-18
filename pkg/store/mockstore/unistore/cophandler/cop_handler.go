@@ -18,9 +18,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/golang/protobuf/proto"
@@ -28,55 +26,25 @@ import (
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/client"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/dbreader"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/kverrors"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/aggregation"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/client"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/lockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/dbreader"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/kverrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
 	"github.com/pingcap/tipb/go-tipb"
 )
-
-var globalLocationMap *locationMap = newLocationMap()
-
-type locationMap struct {
-	lmap map[string]*time.Location
-	mu   sync.RWMutex
-}
-
-func newLocationMap() *locationMap {
-	return &locationMap{
-		lmap: make(map[string]*time.Location),
-	}
-}
-
-func (l *locationMap) getLocation(name string) (*time.Location, bool) {
-	l.mu.RLock()
-	defer l.mu.RUnlock()
-	result, ok := l.lmap[name]
-	return result, ok
-}
-
-func (l *locationMap) setLocation(name string, value *time.Location) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.lmap[name] = value
-}
 
 // MPPCtx is the mpp execution context
 type MPPCtx struct {
@@ -111,7 +79,6 @@ func HandleCopRequestWithMPPCtx(dbReader *dbreader.DBReader, lockStore *lockstor
 
 type dagContext struct {
 	*evalContext
-	keyspaceID    uint32
 	dbReader      *dbreader.DBReader
 	lockStore     *lockstore.MemStore
 	resolvedLocks []uint64
@@ -122,40 +89,27 @@ type dagContext struct {
 
 // ExecutorListsToTree converts a list of executors to a tree.
 func ExecutorListsToTree(exec []*tipb.Executor) *tipb.Executor {
-	appendChild := func(parent *tipb.Executor, child *tipb.Executor) {
-		switch parent.Tp {
+	i := len(exec) - 1
+	rootExec := exec[i]
+	for i--; 0 <= i; i-- {
+		switch exec[i+1].Tp {
 		case tipb.ExecType_TypeAggregation:
-			parent.Aggregation.Child = child
+			exec[i+1].Aggregation.Child = exec[i]
 		case tipb.ExecType_TypeProjection:
-			parent.Projection.Child = child
+			exec[i+1].Projection.Child = exec[i]
 		case tipb.ExecType_TypeTopN:
-			parent.TopN.Child = child
+			exec[i+1].TopN.Child = exec[i]
 		case tipb.ExecType_TypeLimit:
-			parent.Limit.Child = child
+			exec[i+1].Limit.Child = exec[i]
 		case tipb.ExecType_TypeSelection:
-			parent.Selection.Child = child
+			exec[i+1].Selection.Child = exec[i]
 		case tipb.ExecType_TypeStreamAgg:
-			parent.Aggregation.Child = child
-		case tipb.ExecType_TypeIndexLookUp:
-			parent.IndexLookup.Children = append(parent.IndexLookup.Children, child)
+			exec[i+1].Aggregation.Child = exec[i]
 		default:
-			panic("unsupported dag parent executor type: " + parent.Tp.String())
+			panic("unsupported dag executor type")
 		}
 	}
-
-	for i := range len(exec) - 1 {
-		child := exec[i]
-		parentIdx := i + 1
-		if child.ParentIdx != nil {
-			parentIdx = int(*child.ParentIdx)
-		}
-		if parentIdx <= i || parentIdx >= len(exec) {
-			panic(fmt.Sprintf("invalid parentIdx: %d, for index: %d", parentIdx, i))
-		}
-		appendChild(exec[parentIdx], child)
-	}
-
-	return exec[len(exec)-1]
+	return rootExec
 }
 
 // handleCopDAGRequest handles coprocessor DAG request using MPP executors.
@@ -187,21 +141,20 @@ func handleCopDAGRequest(dbReader *dbreader.DBReader, lockStore *lockstore.MemSt
 		return resp
 	}
 
-	exec, chunks, intermediateOutput, lastRange, counts, ndvs, err := buildAndRunMPPExecutor(dagCtx, dagReq, req.PagingSize)
+	exec, chunks, lastRange, counts, ndvs, err := buildAndRunMPPExecutor(dagCtx, dagReq, req.PagingSize)
 
-	sc := dagCtx.sctx.GetSessionVars().StmtCtx
 	if err != nil {
 		errMsg := err.Error()
 		if strings.HasPrefix(errMsg, ErrExecutorNotSupportedMsg) {
 			resp.OtherError = err.Error()
 			return resp
 		}
-		return genRespWithMPPExec(nil, nil, lastRange, nil, nil, exec, dagReq, err, sc.GetWarnings(), time.Since(startTime))
+		return genRespWithMPPExec(nil, lastRange, nil, nil, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 	}
-	return genRespWithMPPExec(chunks, intermediateOutput, lastRange, counts, ndvs, exec, dagReq, err, sc.GetWarnings(), time.Since(startTime))
+	return genRespWithMPPExec(chunks, lastRange, counts, ndvs, exec, dagReq, err, dagCtx.sc.GetWarnings(), time.Since(startTime))
 }
 
-func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (mppExec, []tipb.Chunk, []*tipb.IntermediateOutput, *coprocessor.KeyRange, []int64, []int64, error) {
+func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (mppExec, []tipb.Chunk, *coprocessor.KeyRange, []int64, []int64, error) {
 	rootExec := dagReq.RootExecutor
 	if rootExec == nil {
 		rootExec = ExecutorListsToTree(dagReq.Executors)
@@ -213,9 +166,8 @@ func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingS
 		counts = make([]int64, len(dagCtx.keyRanges))
 		ndvs = make([]int64, len(dagCtx.keyRanges))
 	}
-
 	builder := &mppExecBuilder{
-		sctx:     dagCtx.sctx,
+		sc:       dagCtx.sc,
 		dbReader: dagCtx.dbReader,
 		dagReq:   dagReq,
 		dagCtx:   dagCtx,
@@ -231,18 +183,17 @@ func buildAndRunMPPExecutor(dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingS
 	}
 	exec, err := builder.buildMPPExecutor(rootExec)
 	if err != nil {
-		return nil, nil, nil, nil, nil, nil, err
+		return nil, nil, nil, nil, nil, err
 	}
-
-	chunks, intermediateOutputs, err := mppExecute(exec, dagCtx, dagReq, pagingSize)
+	chunks, err := mppExecute(exec, dagCtx, dagReq, pagingSize)
 	if lastRange != nil && len(lastRange.Start) == 0 && len(lastRange.End) == 0 {
 		// When should this happen, something is wrong?
 		lastRange = nil
 	}
-	return exec, chunks, intermediateOutputs, lastRange, counts, ndvs, err
+	return exec, chunks, lastRange, counts, ndvs, err
 }
 
-func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (chunks []tipb.Chunk, intermediateOutputs []*tipb.IntermediateOutput, err error) {
+func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest, pagingSize uint64) (chunks []tipb.Chunk, err error) {
 	err = exec.open()
 	defer func() {
 		err := exec.stop()
@@ -254,104 +205,45 @@ func mppExecute(exec mppExec, dagCtx *dagContext, dagReq *tipb.DAGRequest, pagin
 		return
 	}
 
-	var intermediateOutputExecutors []mppExec
-	if channels := dagReq.GetIntermediateOutputChannels(); len(channels) > 0 {
-		intermediateOutputs = make([]*tipb.IntermediateOutput, len(channels))
-		intermediateOutputExecutors = make([]mppExec, len(channels))
-		allExecs := flattenMppExec(exec, nil)
-		for i, ch := range channels {
-			intermediateOutputs[i] = &tipb.IntermediateOutput{
-				EncodeType: dagReq.EncodeType,
-			}
-			intermediateOutputExecutors[i] = allExecs[ch.ExecutorIdx]
-		}
-	}
-
 	var totalRows uint64
 	var chk *chunk.Chunk
 	fields := exec.getFieldTypes()
 	for {
 		chk, err = exec.next()
-		if err != nil {
+		if err != nil || chk == nil || chk.NumRows() == 0 {
 			return
 		}
 
-		curRowCnt := 0
-		if chk != nil && chk.NumRows() > 0 {
-			curRowCnt += chk.NumRows()
-			chunks, err = encodeChunk(dagCtx.sctx.GetSessionVars().StmtCtx, dagReq.EncodeType, fields, dagReq.OutputOffsets, chk, chunks)
-			if err != nil {
-				return
-			}
-		}
-
-		for i, e := range intermediateOutputExecutors {
-			intermediateChunks := e.takeIntermediateResults()
-			if len(intermediateChunks) == 0 {
-				continue
-			}
-			for _, iChk := range intermediateChunks {
-				curRowCnt += iChk.NumRows()
-				output := intermediateOutputs[i]
-				channel := dagReq.GetIntermediateOutputChannels()[i]
-				output.Chunks, err = encodeChunk(
-					dagCtx.sctx.GetSessionVars().StmtCtx,
-					output.EncodeType,
-					e.getIntermediateFieldTypes(),
-					channel.OutputOffsets,
-					iChk,
-					output.Chunks,
-				)
-
-				if err != nil {
-					return
-				}
-			}
-		}
-
-		if curRowCnt == 0 {
-			return
-		}
-		totalRows += uint64(curRowCnt)
-		if dagReq.EncodeType == tipb.EncodeType_TypeChunk {
+		switch dagReq.EncodeType {
+		case tipb.EncodeType_TypeDefault:
+			chunks, err = useDefaultEncoding(chk, dagCtx, dagReq, fields, chunks)
+		case tipb.EncodeType_TypeChunk:
+			chunks = useChunkEncoding(chk, dagReq, fields, chunks)
 			if pagingSize > 0 {
+				totalRows += uint64(chk.NumRows())
 				if totalRows > pagingSize {
 					return
 				}
 			}
+		default:
+			err = fmt.Errorf("unsupported DAG request encode type %s", dagReq.EncodeType)
+		}
+		if err != nil {
+			return
 		}
 	}
 }
 
-func encodeChunk(
-	sc *stmtctx.StatementContext,
-	encodeType tipb.EncodeType,
-	fields []*types.FieldType,
-	outputOffsets []uint32,
-	chk *chunk.Chunk,
-	chunks []tipb.Chunk,
-) ([]tipb.Chunk, error) {
-	switch encodeType {
-	case tipb.EncodeType_TypeDefault:
-		return useDefaultEncoding(chk, sc, fields, outputOffsets, chunks)
-	case tipb.EncodeType_TypeChunk:
-		return useChunkEncoding(chk, fields, outputOffsets, chunks), nil
-	default:
-		return nil, fmt.Errorf("unsupported DAG request encode type %s", encodeType)
-	}
-}
-
-func useDefaultEncoding(chk *chunk.Chunk, sc *stmtctx.StatementContext,
-	fields []*types.FieldType, outputOffsets []uint32, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
+func useDefaultEncoding(chk *chunk.Chunk, dagCtx *dagContext, dagReq *tipb.DAGRequest,
+	fields []*types.FieldType, chunks []tipb.Chunk) ([]tipb.Chunk, error) {
 	var buf []byte
 	var datums []types.Datum
 	var err error
 	numRows := chk.NumRows()
-	errCtx := sc.ErrCtx()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		datums = datums[:0]
-		if outputOffsets != nil {
-			for _, j := range outputOffsets {
+		if dagReq.OutputOffsets != nil {
+			for _, j := range dagReq.OutputOffsets {
 				datums = append(datums, chk.GetRow(i).GetDatum(int(j), fields[j]))
 			}
 		} else {
@@ -359,8 +251,7 @@ func useDefaultEncoding(chk *chunk.Chunk, sc *stmtctx.StatementContext,
 				datums = append(datums, chk.GetRow(i).GetDatum(j, ft))
 			}
 		}
-		buf, err = codec.EncodeValue(sc.TimeZone(), buf[:0], datums...)
-		err = errCtx.HandleError(err)
+		buf, err = codec.EncodeValue(dagCtx.sc, buf[:0], datums...)
 		if err != nil {
 			return nil, errors.Trace(err)
 		}
@@ -369,12 +260,12 @@ func useDefaultEncoding(chk *chunk.Chunk, sc *stmtctx.StatementContext,
 	return chunks, nil
 }
 
-func useChunkEncoding(chk *chunk.Chunk, fields []*types.FieldType, outputOffsets []uint32, chunks []tipb.Chunk) []tipb.Chunk {
-	if outputOffsets != nil {
-		offsets := make([]int, len(outputOffsets))
-		newFields := make([]*types.FieldType, len(outputOffsets))
-		for i := range outputOffsets {
-			offset := outputOffsets[i]
+func useChunkEncoding(chk *chunk.Chunk, dagReq *tipb.DAGRequest, fields []*types.FieldType, chunks []tipb.Chunk) []tipb.Chunk {
+	if dagReq.OutputOffsets != nil {
+		offsets := make([]int, len(dagReq.OutputOffsets))
+		newFields := make([]*types.FieldType, len(dagReq.OutputOffsets))
+		for i := 0; i < len(dagReq.OutputOffsets); i++ {
+			offset := dagReq.OutputOffsets[i]
 			offsets[i] = int(offset)
 			newFields[i] = fields[offset]
 		}
@@ -403,40 +294,27 @@ func buildDAG(reader *dbreader.DBReader, lockStore *lockstore.MemStore, req *cop
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
-	var tz *time.Location
+	sc := flagsToStatementContext(dagReq.Flags)
 	switch dagReq.TimeZoneName {
 	case "":
-		tz = time.FixedZone("UTC", int(dagReq.TimeZoneOffset))
+		sc.SetTimeZone(time.FixedZone("UTC", int(dagReq.TimeZoneOffset)))
 	case "System":
-		tz = time.Local
+		sc.SetTimeZone(time.Local)
 	default:
-		var ok bool
-		tz, ok = globalLocationMap.getLocation(dagReq.TimeZoneName)
-		if !ok {
-			tz, err = time.LoadLocation(dagReq.TimeZoneName)
-			if err != nil {
-				return nil, nil, errors.Trace(err)
-			}
-			globalLocationMap.setLocation(dagReq.TimeZoneName, tz)
+		tz, err := time.LoadLocation(dagReq.TimeZoneName)
+		if err != nil {
+			return nil, nil, errors.Trace(err)
 		}
-	}
-	sctx := flagsAndTzToSessionContext(dagReq.Flags, tz)
-	if dagReq.DivPrecisionIncrement != nil {
-		sctx.GetSessionVars().DivPrecisionIncrement = int(*dagReq.DivPrecisionIncrement)
-	} else {
-		sctx.GetSessionVars().DivPrecisionIncrement = vardef.DefDivPrecisionIncrement
+		sc.SetTimeZone(tz)
 	}
 	ctx := &dagContext{
-		evalContext:   &evalContext{sctx: sctx},
+		evalContext:   &evalContext{sc: sc},
 		dbReader:      reader,
 		lockStore:     lockStore,
 		dagReq:        dagReq,
 		keyRanges:     req.Ranges,
 		startTS:       req.StartTs,
 		resolvedLocks: req.Context.ResolvedLocks,
-	}
-	if reqCtx := req.Context; reqCtx != nil {
-		ctx.keyspaceID = reqCtx.GetKeyspaceId()
 	}
 	return ctx, dagReq, err
 }
@@ -447,13 +325,13 @@ func getAggInfo(ctx *dagContext, pbAgg *tipb.Aggregation) ([]aggregation.Aggrega
 	var err error
 	for _, expr := range pbAgg.AggFunc {
 		var aggExpr aggregation.Aggregation
-		aggExpr, _, err = aggregation.NewDistAggFunc(expr, ctx.fieldTps, ctx.sctx.GetExprCtx())
+		aggExpr, err = aggregation.NewDistAggFunc(expr, ctx.fieldTps, ctx.sc)
 		if err != nil {
 			return nil, nil, errors.Trace(err)
 		}
 		aggs = append(aggs, aggExpr)
 	}
-	groupBys, err := convertToExprs(ctx.sctx, ctx.fieldTps, pbAgg.GetGroupBy())
+	groupBys, err := convertToExprs(ctx.sc, ctx.fieldTps, pbAgg.GetGroupBy())
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
@@ -470,10 +348,10 @@ func getTopNInfo(ctx *evalContext, topN *tipb.TopN) (heap *topNHeap, conds []exp
 		totalCount: int(topN.Limit),
 		topNSorter: topNSorter{
 			orderByItems: topN.OrderBy,
-			sc:           ctx.sctx.GetSessionVars().StmtCtx,
+			sc:           ctx.sc,
 		},
 	}
-	if conds, err = convertToExprs(ctx.sctx, ctx.fieldTps, pbConds); err != nil {
+	if conds, err = convertToExprs(ctx.sc, ctx.fieldTps, pbConds); err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
@@ -484,11 +362,12 @@ type evalContext struct {
 	columnInfos []*tipb.ColumnInfo
 	fieldTps    []*types.FieldType
 	primaryCols []int64
-	sctx        sessionctx.Context
+	sc          *stmtctx.StatementContext
 }
 
 func (e *evalContext) setColumnInfo(cols []*tipb.ColumnInfo) {
-	e.columnInfos = slices.Clone(cols)
+	e.columnInfos = make([]*tipb.ColumnInfo, len(cols))
+	copy(e.columnInfos, cols)
 
 	e.fieldTps = make([]*types.FieldType, 0, len(e.columnInfos))
 	for _, col := range e.columnInfos {
@@ -542,14 +421,18 @@ func newRowDecoder(columnInfos []*tipb.ColumnInfo, fieldTps []*types.FieldType, 
 	return rowcodec.NewChunkDecoder(cols, pkCols, def, timeZone), nil
 }
 
-// flagsAndTzToSessionContext creates a sessionctx.Context from a `tipb.SelectRequest.Flags`.
-func flagsAndTzToSessionContext(flags uint64, tz *time.Location) sessionctx.Context {
+// flagsToStatementContext creates a StatementContext from a `tipb.SelectRequest.Flags`.
+func flagsToStatementContext(flags uint64) *stmtctx.StatementContext {
 	sc := stmtctx.NewStmtCtx()
-	sc.InitFromPBFlagAndTz(flags, tz)
-	sctx := mock.NewContextDeprecated()
-	sctx.GetSessionVars().StmtCtx = sc
-	sctx.GetSessionVars().TimeZone = tz
-	return sctx
+	sc.IgnoreTruncate.Store((flags & model.FlagIgnoreTruncate) > 0)
+	sc.TruncateAsWarning = (flags & model.FlagTruncateAsWarning) > 0
+	sc.InInsertStmt = (flags & model.FlagInInsertStmt) > 0
+	sc.InSelectStmt = (flags & model.FlagInSelectStmt) > 0
+	sc.InDeleteStmt = (flags & model.FlagInUpdateOrDeleteStmt) > 0
+	sc.OverflowAsWarning = (flags & model.FlagOverflowAsWarning) > 0
+	sc.IgnoreZeroInDate = (flags & model.FlagIgnoreZeroInDate) > 0
+	sc.DividedByZeroAsWarning = (flags & model.FlagDividedByZeroAsWarning) > 0
+	return sc
 }
 
 // ErrLocked is returned when trying to Read/Write on a locked key. Client should
@@ -579,39 +462,29 @@ func (e *ErrLocked) Error() string {
 	return fmt.Sprintf("key is locked, key: %q, Type: %v, primary: %q, startTS: %v", e.Key, e.LockType, e.Primary, e.StartTS)
 }
 
-func flattenMppExec(exec mppExec, execs []mppExec) []mppExec {
-	if execs == nil {
-		execs = make([]mppExec, 0, 3)
-	}
-	for _, child := range exec.getChildren() {
-		execs = flattenMppExec(child, execs)
-	}
-	execs = append(execs, exec)
-	return execs
-}
-
-func genRespWithMPPExec(chunks []tipb.Chunk, intermediateOutput []*tipb.IntermediateOutput, lastRange *coprocessor.KeyRange, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []contextutil.SQLWarn, dur time.Duration) *coprocessor.Response {
+func genRespWithMPPExec(chunks []tipb.Chunk, lastRange *coprocessor.KeyRange, counts, ndvs []int64, exec mppExec, dagReq *tipb.DAGRequest, err error, warnings []stmtctx.SQLWarn, dur time.Duration) *coprocessor.Response {
 	resp := &coprocessor.Response{
 		Range: lastRange,
 	}
 	selResp := &tipb.SelectResponse{
-		Error:               toPBError(err),
-		Chunks:              chunks,
-		OutputCounts:        counts,
-		IntermediateOutputs: intermediateOutput,
-		Ndvs:                ndvs,
-		EncodeType:          dagReq.EncodeType,
+		Error:        toPBError(err),
+		Chunks:       chunks,
+		OutputCounts: counts,
+		Ndvs:         ndvs,
+		EncodeType:   dagReq.EncodeType,
 	}
-	if dagReq.GetCollectExecutionSummaries() {
-		executors := dagReq.Executors
-		mppExecs := flattenMppExec(exec, make([]mppExec, 0, len(executors)))
+	executors := dagReq.Executors
+	if dagReq.CollectExecutionSummaries != nil && *dagReq.CollectExecutionSummaries {
 		// for simplicity, we assume all executors to be spending the same amount of time as the request
 		timeProcessed := uint64(dur / time.Nanosecond)
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(executors))
+		e := exec
 		for i := len(executors) - 1; 0 <= i; i-- {
-			e := mppExecs[i]
 			execSummary[i] = e.buildSummary()
 			execSummary[i].TimeProcessedNs = &timeProcessed
+			if i != 0 {
+				e = exec.child()
+			}
 		}
 		selResp.ExecutionSummaries = execSummary
 	}
@@ -633,8 +506,7 @@ func genRespWithMPPExec(chunks []tipb.Chunk, intermediateOutput []*tipb.Intermed
 		TimeDetail: &kvrpcpb.TimeDetail{ProcessWallTimeMs: uint64(dur / time.Millisecond)},
 	}
 	resp.ExecDetailsV2 = &kvrpcpb.ExecDetailsV2{
-		TimeDetail:   resp.ExecDetails.TimeDetail,
-		ScanDetailV2: exec.scanDetail(),
+		TimeDetail: resp.ExecDetails.TimeDetail,
 	}
 	data, mErr := proto.Marshal(selResp)
 	if mErr != nil {
@@ -701,7 +573,7 @@ func extractKVRanges(startKey, endKey []byte, keyRanges []*coprocessor.KeyRange,
 }
 
 func reverseKVRanges(kvRanges []kv.KeyRange) {
-	for i := range len(kvRanges) / 2 {
+	for i := 0; i < len(kvRanges)/2; i++ {
 		j := len(kvRanges) - i - 1
 		kvRanges[i], kvRanges[j] = kvRanges[j], kvRanges[i]
 	}

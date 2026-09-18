@@ -21,19 +21,20 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/coprocessor"
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
-	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/privilege"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/timeutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/tracing"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -43,7 +44,7 @@ func copHandlerCtx(ctx context.Context, req *coprocessor.Request) context.Contex
 		return ctx
 	}
 
-	traceInfo := &tracing.TraceInfo{
+	traceInfo := &model.TraceInfo{
 		ConnectionID: source.ConnectionId,
 		SessionAlias: source.SessionAlias,
 	}
@@ -70,18 +71,18 @@ func NewCoprocessorDAGHandler(sctx sessionctx.Context) *CoprocessorDAGHandler {
 func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coprocessor.Request) *coprocessor.Response {
 	ctx = copHandlerCtx(ctx, req)
 
-	e, err := h.buildDAGExecutor(ctx, req)
+	e, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return h.buildErrorResponse(err)
 	}
 
-	err = exec.Open(ctx, e)
+	err = e.Open(ctx)
 	if err != nil {
 		return h.buildErrorResponse(err)
 	}
 
 	chk := exec.TryNewCacheChunk(e)
-	tps := e.RetFieldTypes()
+	tps := e.Base().RetFieldTypes()
 	var totalChunks, partChunks []tipb.Chunk
 	memTracker := h.sctx.GetSessionVars().StmtCtx.MemTracker
 	for {
@@ -102,7 +103,7 @@ func (h *CoprocessorDAGHandler) HandleRequest(ctx context.Context, req *coproces
 		}
 		totalChunks = append(totalChunks, partChunks...)
 	}
-	if err := exec.Close(e); err != nil {
+	if err := e.Close(); err != nil {
 		return h.buildErrorResponse(err)
 	}
 	return h.buildUnaryResponse(totalChunks)
@@ -113,18 +114,18 @@ func (h *CoprocessorDAGHandler) HandleStreamRequest(ctx context.Context, req *co
 	ctx = copHandlerCtx(ctx, req)
 	logutil.Logger(ctx).Debug("handle coprocessor stream request")
 
-	e, err := h.buildDAGExecutor(ctx, req)
+	e, err := h.buildDAGExecutor(req)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
 	}
 
-	err = exec.Open(ctx, e)
+	err = e.Open(ctx)
 	if err != nil {
 		return stream.Send(h.buildErrorResponse(err))
 	}
 
 	chk := exec.TryNewCacheChunk(e)
-	tps := e.RetFieldTypes()
+	tps := e.Base().RetFieldTypes()
 	for {
 		chk.Reset()
 		if err = exec.Next(ctx, e, chk); err != nil {
@@ -154,7 +155,7 @@ func (h *CoprocessorDAGHandler) buildResponseAndSendToStream(chk *chunk.Chunk, t
 	return nil
 }
 
-func (h *CoprocessorDAGHandler) buildDAGExecutor(ctx context.Context, req *coprocessor.Request) (exec.Executor, error) {
+func (h *CoprocessorDAGHandler) buildDAGExecutor(req *coprocessor.Request) (exec.Executor, error) {
 	if req.GetTp() != kv.ReqTypeDAG {
 		return nil, errors.Errorf("unsupported request type %d", req.GetTp())
 	}
@@ -171,35 +172,35 @@ func (h *CoprocessorDAGHandler) buildDAGExecutor(ctx context.Context, req *copro
 				Username: dagReq.User.UserName,
 				Hostname: dagReq.User.UserHost,
 			}
-			authName, authHost, success := pm.MatchIdentity(ctx, dagReq.User.UserName, dagReq.User.UserHost, false)
+			authName, authHost, success := pm.MatchIdentity(dagReq.User.UserName, dagReq.User.UserHost, false)
 			if success && pm.GetAuthWithoutVerification(authName, authHost) {
 				h.sctx.GetSessionVars().User.AuthUsername = authName
 				h.sctx.GetSessionVars().User.AuthHostname = authHost
-				h.sctx.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(ctx, authName, authHost)
+				h.sctx.GetSessionVars().ActiveRoles = pm.GetDefaultRoles(authName, authHost)
 			}
 		}
 	}
 
 	stmtCtx := h.sctx.GetSessionVars().StmtCtx
-
+	stmtCtx.SetFlagsFromPBFlag(dagReq.Flags)
 	tz, err := timeutil.ConstructTimeZone(dagReq.TimeZoneName, int(dagReq.TimeZoneOffset))
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	h.sctx.GetSessionVars().TimeZone = tz
-	stmtCtx.InitFromPBFlagAndTz(dagReq.Flags, tz)
 
+	stmtCtx.SetTimeZone(tz)
+	h.sctx.GetSessionVars().TimeZone = tz
 	h.dagReq = dagReq
 	is := h.sctx.GetInfoSchema().(infoschema.InfoSchema)
 	// Build physical plan.
-	bp := core.NewPBPlanBuilder(h.sctx.GetPlanCtx(), is, req.Ranges)
+	bp := core.NewPBPlanBuilder(h.sctx, is, req.Ranges)
 	plan, err := bp.Build(dagReq.Executors)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
 	plan = core.InjectExtraProjection(plan)
 	// Build executor.
-	b := newExecutorBuilder(ctx, h.sctx, is, nil)
+	b := newExecutorBuilder(h.sctx, is, nil)
 	return b.build(plan), nil
 }
 
@@ -220,7 +221,7 @@ func (h *CoprocessorDAGHandler) buildUnaryResponse(chunks []tipb.Chunk) *coproce
 		Chunks:     chunks,
 		EncodeType: h.dagReq.EncodeType,
 	}
-	if h.dagReq.GetCollectExecutionSummaries() {
+	if h.dagReq.CollectExecutionSummaries != nil && *h.dagReq.CollectExecutionSummaries {
 		execSummary := make([]*tipb.ExecutorExecutionSummary, len(h.dagReq.Executors))
 		for i := range execSummary {
 			// TODO: Add real executor execution summary information.
@@ -255,7 +256,7 @@ func (h *CoprocessorDAGHandler) buildStreamResponse(chunk *tipb.Chunk) *coproces
 
 func (*CoprocessorDAGHandler) buildErrorResponse(err error) *coprocessor.Response {
 	return &coprocessor.Response{
-		OtherError: errors.ErrorStack(err),
+		OtherError: err.Error(),
 	}
 }
 
@@ -276,13 +277,11 @@ func (h *CoprocessorDAGHandler) encodeDefault(chk *chunk.Chunk, tps []*types.Fie
 	stmtCtx := h.sctx.GetSessionVars().StmtCtx
 	requestedRow := make([]byte, 0)
 	chunks := []tipb.Chunk{}
-	errCtx := stmtCtx.ErrCtx()
-	for i := range chk.NumRows() {
+	for i := 0; i < chk.NumRows(); i++ {
 		requestedRow = requestedRow[:0]
 		row := chk.GetRow(i)
 		for _, ordinal := range colOrdinal {
-			data, err := codec.EncodeValue(stmtCtx.TimeZone(), nil, row.GetDatum(int(ordinal), tps[ordinal]))
-			err = errCtx.HandleError(err)
+			data, err := codec.EncodeValue(stmtCtx, nil, row.GetDatum(int(ordinal), tps[ordinal]))
 			if err != nil {
 				return nil, err
 			}

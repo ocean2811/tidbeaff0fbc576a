@@ -24,14 +24,11 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
-	"github.com/pingcap/tidb/pkg/store"
-	"github.com/pingcap/tidb/pkg/store/driver"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/zap"
 )
@@ -58,9 +55,9 @@ var (
 func main() {
 	flag.Parse()
 	flag.PrintDefaults()
-	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", "", logutil.EmptyFileLogConfig, false))
+	err := logutil.InitLogger(logutil.NewLogConfig(*logLevel, logutil.DefaultLogFormat, "", logutil.EmptyFileLogConfig, false))
 	terror.MustNil(err)
-	err = store.Register(config.StoreTypeTiKV, &driver.TiKVDriver{})
+	err = store.Register("tikv", driver.TiKVDriver{})
 	terror.MustNil(err)
 	ut := newBenchDB()
 	works := strings.Split(*runJobs, "|")
@@ -91,23 +88,18 @@ func main() {
 
 type benchDB struct {
 	store   tikv.Storage
-	session sessionapi.Session
+	session session.Session
 }
 
 func newBenchDB() *benchDB {
 	// Create TiKV store and disable GC as we will trigger GC manually.
 	store, err := store.New("tikv://" + *addr + "?disableGC=true")
 	terror.MustNil(err)
-	// maybe close below components, but it's for test anyway.
-	ctx := context.Background()
-	config.GetGlobalConfig().Store = config.StoreTypeTiKV
-	err = ddl.StartOwnerManager(ctx, store)
-	terror.MustNil(err)
 	_, err = session.BootstrapSession(store)
 	terror.MustNil(err)
 	se, err := session.CreateSession(store)
 	terror.MustNil(err)
-	_, err = se.ExecuteInternal(ctx, "use test")
+	_, err = se.ExecuteInternal(context.Background(), "use test")
 	terror.MustNil(err)
 
 	return &benchDB{
@@ -116,7 +108,7 @@ func newBenchDB() *benchDB {
 	}
 }
 
-func (ut *benchDB) mustExec(sql string, args ...any) {
+func (ut *benchDB) mustExec(sql string, args ...interface{}) {
 	// executeInternal only return one resultSet for this.
 	rs, err := ut.session.ExecuteInternal(context.Background(), sql, args...)
 	defer func() {
@@ -208,11 +200,11 @@ func (ut *benchDB) truncateTable() {
 func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 	var (
 		sum, first, last time.Duration
-		minv             = time.Minute
-		maxv             = time.Nanosecond
+		min              = time.Minute
+		max              = time.Nanosecond
 	)
 	cLogf("%s started", name)
-	for range count {
+	for i := 0; i < count; i++ {
 		before := time.Now()
 		f()
 		dur := time.Since(before)
@@ -220,16 +212,16 @@ func (ut *benchDB) runCountTimes(name string, count int, f func()) {
 			first = dur
 		}
 		last = dur
-		if dur < minv {
-			minv = dur
+		if dur < min {
+			min = dur
 		}
-		if dur > maxv {
-			maxv = dur
+		if dur > max {
+			max = dur
 		}
 		sum += dur
 	}
 	cLogf("%s done, avg %s, count %d, sum %s, first %s, last %s, max %s, min %s\n\n",
-		name, sum/time.Duration(count), count, sum, first, last, maxv, minv)
+		name, sum/time.Duration(count), count, sum, first, last, max, min)
 }
 
 // #nosec G404
@@ -240,7 +232,7 @@ func (ut *benchDB) insertRows(spec string) {
 	ut.runCountTimes("insert", loopCount, func() {
 		ut.mustExec("begin")
 		buf := make([]byte, *blobSize/2)
-		for range *batchSize {
+		for i := 0; i < *batchSize; i++ {
 			if id == end {
 				break
 			}
@@ -260,7 +252,7 @@ func (ut *benchDB) updateRandomRows(spec string) {
 	var runCount = 0
 	ut.runCountTimes("update-random", loopCount, func() {
 		ut.mustExec("begin")
-		for range *batchSize {
+		for i := 0; i < *batchSize; i++ {
 			if runCount == totalCount {
 				break
 			}
@@ -301,12 +293,12 @@ func (ut *benchDB) query(spec string) {
 	})
 }
 
-func cLogf(format string, args ...any) {
+func cLogf(format string, args ...interface{}) {
 	str := fmt.Sprintf(format, args...)
 	fmt.Println("\033[0;32m" + str + "\033[0m\n")
 }
 
-func cLog(args ...any) {
+func cLog(args ...interface{}) {
 	str := fmt.Sprint(args...)
 	fmt.Println("\033[0;32m" + str + "\033[0m\n")
 }

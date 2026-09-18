@@ -17,8 +17,8 @@ package kv
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -33,7 +33,6 @@ func TestError(t *testing.T) {
 		ErrNotImplemented,
 		ErrWriteConflict,
 		ErrWriteConflictInTiDB,
-		ErrSharedLockLost,
 	}
 
 	for _, err := range kvErrs {

@@ -16,8 +16,8 @@ package tikv
 
 import (
 	"github.com/pingcap/kvproto/pkg/tikvpb"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/pd"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/mvcc"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/pd"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/mvcc"
 )
 
 // InnerServer defines the inner server interface.

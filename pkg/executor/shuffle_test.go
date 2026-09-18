@@ -17,11 +17,11 @@ package executor
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -59,7 +59,7 @@ func TestPartitionRangeSplitter(t *testing.T) {
 	obtained, err := splitter.split(ctx, input, obtained)
 	require.NoError(t, err)
 	require.Len(t, obtained, len(expected))
-	for i := range obtained {
+	for i := 0; i < len(obtained); i++ {
 		require.Equal(t, expected[i], obtained[i])
 	}
 }

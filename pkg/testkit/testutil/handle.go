@@ -20,17 +20,17 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 )
 
 // MustNewCommonHandle create a common handle with given values.
-func MustNewCommonHandle(t *testing.T, values ...any) kv.Handle {
-	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx().TimeZone(), nil, types.MakeDatums(values...)...)
+func MustNewCommonHandle(t *testing.T, values ...interface{}) kv.Handle {
+	encoded, err := codec.EncodeKey(stmtctx.NewStmtCtx(), nil, types.MakeDatums(values...)...)
 	require.NoError(t, err)
 	ch, err := kv.NewCommonHandle(encoded)
 	require.NoError(t, err)

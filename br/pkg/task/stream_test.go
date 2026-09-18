@@ -15,7 +15,6 @@
 package task
 
 import (
-	"bytes"
 	"context"
 	"encoding/binary"
 	"fmt"
@@ -25,13 +24,10 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/metautil"
-	logclient "github.com/pingcap/tidb/br/pkg/restore/log_client"
-	"github.com/pingcap/tidb/br/pkg/stream"
-	"github.com/pingcap/tidb/br/pkg/utils/consts"
-	"github.com/pingcap/tidb/br/pkg/utils/iter"
-	"github.com/pingcap/tidb/pkg/objstore"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/metautil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/stream"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
@@ -43,59 +39,6 @@ func TestShiftTS(t *testing.T) {
 
 	delta := oracle.GetTimeFromTS(startTS).Sub(oracle.GetTimeFromTS(shiftTS))
 	require.Equal(t, delta, streamShiftDuration)
-}
-
-func TestShouldOpenPiTRAddIndexSQLStorage(t *testing.T) {
-	tests := []struct {
-		name string
-		cfg  RestoreConfig
-		want bool
-	}{
-		{
-			name: "empty storage",
-			cfg:  RestoreConfig{},
-			want: false,
-		},
-		{
-			name: "full flow opens storage",
-			cfg: RestoreConfig{
-				PiTRAddIndexSQLStorage: "local:///tmp/pitr-add-index",
-			},
-			want: true,
-		},
-		{
-			name: "phase 1 does not open storage",
-			cfg: RestoreConfig{
-				PiTRAddIndexSQLStorage: "local:///tmp/pitr-add-index",
-				RestorePhase:           1,
-			},
-			want: false,
-		},
-		{
-			name: "phase 2 opens storage",
-			cfg: RestoreConfig{
-				PiTRAddIndexSQLStorage: "local:///tmp/pitr-add-index",
-				RestorePhase:           2,
-			},
-			want: true,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			require.Equal(t, tt.want, shouldOpenPiTRAddIndexSQLStorage(&tt.cfg))
-		})
-	}
-}
-
-func TestMarkRestoreConcurrencyPerStoreAdjusted(t *testing.T) {
-	cfg := RestoreConfig{}
-	cfg.ConcurrencyPerStore.Value = 132
-
-	cfg.ConcurrencyPerStore = markRestoreConcurrencyPerStoreAdjusted(cfg.ConcurrencyPerStore)
-
-	require.Equal(t, uint(132), cfg.ConcurrencyPerStore.Value)
-	require.True(t, cfg.ConcurrencyPerStore.Modified)
 }
 
 func TestCheckLogRange(t *testing.T) {
@@ -167,13 +110,42 @@ func TestCheckLogRange(t *testing.T) {
 	}
 }
 
+type fakeResolvedInfo struct {
+	storeID    int64
+	resolvedTS uint64
+}
+
+func fakeMetaFiles(ctx context.Context, tempDir string, infos []fakeResolvedInfo) error {
+	backupMetaDir := filepath.Join(tempDir, stream.GetStreamBackupMetaPrefix())
+	s, err := storage.NewLocalStorage(backupMetaDir)
+	if err != nil {
+		return errors.Trace(err)
+	}
+
+	for _, info := range infos {
+		meta := &backuppb.Metadata{
+			StoreId:    info.storeID,
+			ResolvedTs: info.resolvedTS,
+		}
+		buff, err := meta.Marshal()
+		if err != nil {
+			return errors.Trace(err)
+		}
+		filename := fmt.Sprintf("%d_%d.meta", info.storeID, info.resolvedTS)
+		if err = s.WriteFile(ctx, filename, buff); err != nil {
+			return errors.Trace(err)
+		}
+	}
+	return nil
+}
+
 func fakeCheckpointFiles(
 	ctx context.Context,
 	tmpDir string,
 	infos []fakeGlobalCheckPoint,
 ) error {
 	cpDir := filepath.Join(tmpDir, stream.GetStreamBackupGlobalCheckpointPrefix())
-	s, err := objstore.NewLocalStorage(cpDir)
+	s, err := storage.NewLocalStorage(cpDir)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -182,7 +154,7 @@ func fakeCheckpointFiles(
 	for _, info := range infos {
 		filename := fmt.Sprintf("%v.ts", info.storeID)
 		buff := make([]byte, 8)
-		binary.LittleEndian.PutUint64(buff, info.globalCheckpoint)
+		binary.LittleEndian.PutUint64(buff, info.global_checkpoint)
 		if _, err := s.Create(ctx, filename, nil); err != nil {
 			return errors.Trace(err)
 		}
@@ -198,28 +170,28 @@ func fakeCheckpointFiles(
 }
 
 type fakeGlobalCheckPoint struct {
-	storeID          int64
-	globalCheckpoint uint64
+	storeID           int64
+	global_checkpoint uint64
 }
 
 func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	ctx := context.Background()
 	tmpdir := t.TempDir()
-	s, err := objstore.NewLocalStorage(tmpdir)
+	s, err := storage.NewLocalStorage(tmpdir)
 	require.Nil(t, err)
 
 	infos := []fakeGlobalCheckPoint{
 		{
-			storeID:          1,
-			globalCheckpoint: 98,
+			storeID:           1,
+			global_checkpoint: 98,
 		},
 		{
-			storeID:          2,
-			globalCheckpoint: 90,
+			storeID:           2,
+			global_checkpoint: 90,
 		},
 		{
-			storeID:          2,
-			globalCheckpoint: 99,
+			storeID:           2,
+			global_checkpoint: 99,
 		},
 	}
 
@@ -231,107 +203,10 @@ func TestGetGlobalCheckpointFromStorage(t *testing.T) {
 	require.Equal(t, ts, uint64(99))
 }
 
-func TestHasAnyWriteCFLogFile(t *testing.T) {
-	makeLogFile := func(cf string) *logclient.LogDataFileInfo {
-		return &logclient.LogDataFileInfo{
-			DataFileInfo: &backuppb.DataFileInfo{
-				Cf: cf,
-			},
-		}
-	}
-	defaultFile := makeLogFile(consts.DefaultCF)
-	writeFile := makeLogFile(consts.WriteCF)
-
-	cases := []struct {
-		name  string
-		files []*logclient.LogDataFileInfo
-		want  *logclient.LogDataFileInfo
-	}{
-		{
-			name: "empty",
-		},
-		{
-			name:  "default only",
-			files: []*logclient.LogDataFileInfo{defaultFile},
-		},
-		{
-			name: "ignore default before write",
-			files: []*logclient.LogDataFileInfo{
-				defaultFile,
-				writeFile,
-			},
-			want: writeFile,
-		},
-		{
-			name: "write only",
-			files: []*logclient.LogDataFileInfo{
-				writeFile,
-			},
-			want: writeFile,
-		},
-	}
-
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			file, err := hasAnyWriteCFLogFile(context.Background(), iter.FromSlice(c.files))
-			require.NoError(t, err)
-			require.Same(t, c.want, file)
-		})
-	}
-
-	_, err := hasAnyWriteCFLogFile(context.Background(), iter.Fail[*logclient.LogDataFileInfo](errors.New("failed to read log file")))
-	require.Error(t, err)
-}
-
-func TestGetMaxRecoverableCheckpointFromStoragePrefersResumeState(t *testing.T) {
-	ctx := context.Background()
-	tmpdir := t.TempDir()
-	s, err := objstore.NewLocalStorage(tmpdir)
-	require.Nil(t, err)
-
-	err = fakeCheckpointFiles(ctx, tmpdir, []fakeGlobalCheckPoint{
-		{
-			storeID:          1,
-			globalCheckpoint: 99,
-		},
-	})
-	require.Nil(t, err)
-
-	err = s.WriteFile(ctx, resumeStateFileName, []byte(`{"last_checkpoint":88}`))
-	require.Nil(t, err)
-
-	ts, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
-	require.Nil(t, err)
-	require.Equal(t, uint64(88), ts)
-}
-
-func TestGetMaxRecoverableCheckpointFromStorageFallbackToGlobalCheckpoint(t *testing.T) {
-	ctx := context.Background()
-	tmpdir := t.TempDir()
-	s, err := objstore.NewLocalStorage(tmpdir)
-	require.Nil(t, err)
-
-	err = fakeCheckpointFiles(ctx, tmpdir, []fakeGlobalCheckPoint{
-		{
-			storeID:          1,
-			globalCheckpoint: 98,
-		},
-		{
-			storeID:          2,
-			globalCheckpoint: 99,
-		},
-	})
-	require.Nil(t, err)
-
-	ts, err := getMaxRecoverableCheckpointFromStorage(ctx, s)
-	require.Nil(t, err)
-	require.Equal(t, uint64(99), ts)
-}
-
 func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	var fullBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := objstore.NewLocalStorage(testDir)
+	storage, err := storage.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -346,49 +221,15 @@ func TestGetLogRangeWithFullBackupDir(t *testing.T) {
 	cfg := Config{
 		Storage: testDir,
 	}
-	_, err = getLogInfo(context.TODO(), &cfg)
-	require.ErrorIs(t, err, berrors.ErrStorageUnknown)
-	require.ErrorContains(t, err, "the storage has been used for full backup")
-
-	t.Run("full backup ts checks backupmeta compatibility", func(t *testing.T) {
-		testDir := t.TempDir()
-		storage, err := objstore.NewLocalStorage(testDir)
-		require.NoError(t, err)
-
-		const fullBackupTS uint64 = 223344
-		const fullClusterID uint64 = 556677
-		m := backuppb.BackupMeta{
-			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
-			ClusterVersion:      "8.5.6",
-			BrVersion:           "v8.5.6",
-			EndVersion:          fullBackupTS,
-			ClusterId:           fullClusterID,
-		}
-		data, err := proto.Marshal(&m)
-		require.NoError(t, err)
-		require.NoError(t, storage.WriteFile(context.TODO(), metautil.MetaFile, data))
-
-		restoreCfg := &RestoreConfig{
-			Config: Config{
-				CheckRequirements: true,
-			},
-			FullBackupStorage: testDir,
-		}
-		_, _, err = getFullBackupTS(context.TODO(), restoreCfg)
-		require.ErrorContains(t, err, "requires schema version")
-
-		restoreCfg.CheckRequirements = false
-		startTS, clusterID, err := getFullBackupTS(context.TODO(), restoreCfg)
-		require.NoError(t, err)
-		require.Equal(t, fullBackupTS, startTS)
-		require.Equal(t, fullClusterID, clusterID)
-	})
+	_, err = getLogRange(context.TODO(), &cfg)
+	require.Error(t, err, errors.Annotate(berrors.ErrStorageUnknown,
+		"the storage has been used for full backup"))
 }
 
 func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	var startLogBackupTS uint64 = 123456
 	testDir := t.TempDir()
-	storage, err := objstore.NewLocalStorage(testDir)
+	storage, err := storage.NewLocalStorage(testDir)
 	require.Nil(t, err)
 
 	m := backuppb.BackupMeta{
@@ -403,144 +244,7 @@ func TestGetLogRangeWithLogBackupDir(t *testing.T) {
 	cfg := Config{
 		Storage: testDir,
 	}
-	logInfo, err := getLogInfo(context.TODO(), &cfg)
+	logInfo, err := getLogRange(context.TODO(), &cfg)
 	require.Nil(t, err)
 	require.Equal(t, logInfo.logMinTS, startLogBackupTS)
-
-	t.Run("log info checks backupmeta compatibility", func(t *testing.T) {
-		testDir := t.TempDir()
-		storage, err := objstore.NewLocalStorage(testDir)
-		require.NoError(t, err)
-
-		m := backuppb.BackupMeta{
-			BackupSchemaVersion: backuppb.BackupSchemaVersion + 1,
-			ClusterVersion:      "8.5.6",
-			BrVersion:           "v8.5.6",
-			StartVersion:        startLogBackupTS,
-		}
-		data, err := proto.Marshal(&m)
-		require.NoError(t, err)
-		require.NoError(t, storage.WriteFile(context.TODO(), metautil.MetaFile, data))
-
-		cfg := Config{
-			Storage:           testDir,
-			CheckRequirements: true,
-		}
-		_, err = getLogInfo(context.TODO(), &cfg)
-		require.ErrorContains(t, err, "requires schema version")
-
-		cfg.CheckRequirements = false
-		logInfo, err := getLogInfo(context.TODO(), &cfg)
-		require.NoError(t, err)
-		require.Equal(t, startLogBackupTS, logInfo.logMinTS)
-	})
-}
-
-func TestGetExternalStorageOptions(t *testing.T) {
-	cfg := Config{}
-	u, err := objstore.ParseBackend("s3://bucket/path", nil)
-	require.NoError(t, err)
-	options := getExternalStorageOptions(&cfg, u)
-	require.NotNil(t, options.HTTPClient)
-}
-
-func TestBuildKeyRangesFromSchemasReplace(t *testing.T) {
-	testCases := []struct {
-		name                  string
-		schemasReplace        *stream.SchemasReplace
-		snapshotRange         [2]int64
-		expectedRangeCount    int
-		expectedLogMessage    string
-		hasValidSnapshotRange bool
-	}{
-		{
-			name: "with valid snapshot range and log restore tables",
-			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
-					1: {
-						Name:        "test_db",
-						FilteredOut: false,
-						TableMap: map[int64]*stream.TableReplace{
-							// snapshot tables (within range [100, 200))
-							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
-							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
-							// log restore tables (outside range)
-							300: {TableID: 300, Name: "table3", FilteredOut: false, PartitionMap: map[int64]int64{301: 301, 302: 302}},
-						},
-					},
-				},
-			},
-			snapshotRange:         [2]int64{100, 200},
-			expectedRangeCount:    2, // snapshot range + log restore range
-			hasValidSnapshotRange: true,
-		},
-		{
-			name: "with valid snapshot range, no log restore tables",
-			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
-					2: {
-						Name:        "test_db",
-						FilteredOut: false,
-						TableMap: map[int64]*stream.TableReplace{
-							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
-							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
-						},
-					},
-				},
-			},
-			snapshotRange:         [2]int64{100, 200},
-			expectedRangeCount:    1, // only snapshot range
-			hasValidSnapshotRange: true,
-		},
-		{
-			name: "without valid snapshot range",
-			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{
-					3: {
-						Name:        "test_db",
-						FilteredOut: false,
-						TableMap: map[int64]*stream.TableReplace{
-							150: {TableID: 150, Name: "table1", FilteredOut: false, PartitionMap: map[int64]int64{}},
-							160: {TableID: 160, Name: "table2", FilteredOut: false, PartitionMap: map[int64]int64{}},
-							300: {TableID: 300, Name: "table3", FilteredOut: false, PartitionMap: map[int64]int64{}},
-						},
-					},
-				},
-			},
-			snapshotRange:         [2]int64{},
-			expectedRangeCount:    1, // fallback range covering all tables
-			hasValidSnapshotRange: false,
-		},
-		{
-			name: "empty schemas replace",
-			schemasReplace: &stream.SchemasReplace{
-				DbReplaceMap: map[stream.UpstreamID]*stream.DBReplace{},
-			},
-			snapshotRange:         [2]int64{100, 200},
-			expectedRangeCount:    1, // only snapshot range
-			hasValidSnapshotRange: true,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			// Create a mock LogRestoreConfig
-			cfg := &LogRestoreConfig{
-				RestoreConfig: &RestoreConfig{}, // Initialize the embedded RestoreConfig
-				tableMappingManager: &stream.TableMappingManager{
-					PreallocatedRange: tc.snapshotRange,
-				},
-			}
-
-			keyRanges := buildKeyRangesFromSchemasReplace(tc.schemasReplace, cfg)
-			require.Equal(t, tc.expectedRangeCount, len(keyRanges))
-
-			// Verify that all ranges are properly formed (start < end)
-			for i, keyRange := range keyRanges {
-				require.True(t, len(keyRange[0]) > 0, "start key should not be empty for range %d", i)
-				require.True(t, len(keyRange[1]) > 0, "end key should not be empty for range %d", i)
-				require.True(t, bytes.Compare(keyRange[0], keyRange[1]) < 0, "start key should be less than end key for range %d", i)
-			}
-		})
-	}
 }

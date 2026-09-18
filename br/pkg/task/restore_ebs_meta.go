@@ -18,17 +18,18 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/aws"
-	"github.com/pingcap/tidb/br/pkg/config"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/summary"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/aws"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/config"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/glue"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/pdutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/summary"
 	"github.com/spf13/cobra"
 	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
@@ -115,7 +116,8 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 	var (
 		tlsConf *tls.Config
 	)
-	if len(h.cfg.PD) == 0 {
+	pdAddress := strings.Join(h.cfg.PD, ",")
+	if len(pdAddress) == 0 {
 		return errors.Annotate(berrors.ErrInvalidArgument, "pd address can not be empty")
 	}
 
@@ -130,7 +132,7 @@ func (h *restoreEBSMetaHelper) preRestore(ctx context.Context) error {
 		}
 	}
 
-	controller, err := pdutil.NewPdController(ctx, h.cfg.KeyspaceName, h.cfg.PD, tlsConf, securityOption)
+	controller, err := pdutil.NewPdController(ctx, pdAddress, tlsConf, securityOption)
 	if err != nil {
 		log.Error("fail to create pd controller", zap.Error(err))
 		return errors.Trace(err)
@@ -203,7 +205,7 @@ func (h *restoreEBSMetaHelper) doRestore(ctx context.Context, progress glue.Prog
 	}
 
 	if h.cfg.SkipAWS {
-		for i := range int(h.metaInfo.GetStoreCount()) {
+		for i := 0; i < int(h.metaInfo.GetStoreCount()); i++ {
 			progress.Inc()
 			log.Info("mock: create volume from snapshot finished.", zap.Int("index", i))
 			time.Sleep(800 * time.Millisecond)
@@ -228,7 +230,7 @@ func (h *restoreEBSMetaHelper) restoreVolumes(progress glue.Progress) (map[strin
 		err         error
 		totalSize   int64
 		// a map whose key is available zone, and value is the snapshot id array
-		snapshotsIDsMap = make(map[string][]string)
+		snapshotsIDsMap = make(map[string][]*string)
 	)
 	ec2Session, err = aws.NewEC2Session(h.cfg.CloudAPIConcurrency, h.cfg.S3.Region)
 	if err != nil {

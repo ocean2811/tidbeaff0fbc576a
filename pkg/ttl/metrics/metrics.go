@@ -19,7 +19,7 @@ import (
 	"math"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -254,9 +254,4 @@ func UpdateDelayMetrics(records map[int64]*DelayMetricsRecord) {
 	for delay, v := range scheduleMetrics {
 		metrics.TTLWatermarkDelay.With(prometheus.Labels{metrics.LblType: "schedule", metrics.LblName: delay}).Set(v)
 	}
-}
-
-// ClearDelayMetrics clears the metrics of TTL delay
-func ClearDelayMetrics() {
-	metrics.TTLWatermarkDelay.Reset()
 }

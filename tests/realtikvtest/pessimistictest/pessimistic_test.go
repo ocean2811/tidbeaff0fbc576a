@@ -26,33 +26,30 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	storeerr "github.com/pingcap/tidb/pkg/store/driver/error"
-	"github.com/pingcap/tidb/pkg/store/gcworker"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	storeerr "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver/error"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/gcworker"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/external"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/deadlockhistory"
+	"github.com/ocean2811/tidbeaff0fbc576a/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 	tikvcfg "github.com/tikv/client-go/v2/config"
 	"github.com/tikv/client-go/v2/oracle"
@@ -268,7 +265,7 @@ func TestSingleStatementRollback(t *testing.T) {
 	}
 
 	var cluster testutils.Cluster
-	store := testkit.CreateMockStore(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
+	store := realtikvtest.CreateMockStoreAndSetup(t, mockstore.WithClusterInspector(func(c testutils.Cluster) {
 		mockstore.BootstrapWithSingleStore(c)
 		cluster = c
 	}))
@@ -284,7 +281,7 @@ func TestSingleStatementRollback(t *testing.T) {
 
 	dom := domain.GetDomain(tk1.Session())
 	is := dom.InfoSchema()
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr("single_statement"))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr("single_statement"))
 	require.NoError(t, err)
 	tblID := tbl.Meta().ID
 
@@ -669,10 +666,10 @@ func TestAsyncRollBackNoWait(t *testing.T) {
 	// test get ts failed for handlePessimisticLockError when using nowait
 	// even though async rollback for pessimistic lock may rollback later locked key if get ts failed from pd
 	// the txn correctness should be ensured
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/ExecStmtGetTsError", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/ExecStmtGetTsError", "return"))
 	require.NoError(t, failpoint.Enable("tikvclient/beforeAsyncPessimisticRollback", "sleep(100)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/ExecStmtGetTsError"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/ExecStmtGetTsError"))
 		require.NoError(t, failpoint.Disable("tikvclient/beforeAsyncPessimisticRollback"))
 	}()
 	tk.MustExec("begin pessimistic")
@@ -688,7 +685,7 @@ func TestAsyncRollBackNoWait(t *testing.T) {
 	tk2.MustQuery("select * from tk where c1 = 5 for update nowait").Check(testkit.Rows("5 17"))
 	tk3.MustExec("begin pessimistic")
 
-	// TODO: @coocood skip the following test in https://github.com/pingcap/tidb/pull/13553/
+	// TODO: @coocood skip the following test in https://github.com/ocean2811/tidbeaff0fbc576a/pull/13553/
 	// Remove this code block and figure out why it's skipped.
 	// ----------------------
 	tk2.MustExec("rollback")
@@ -732,8 +729,8 @@ func TestWaitLockKill(t *testing.T) {
 	go func() {
 		time.Sleep(500 * time.Millisecond)
 		sessVars := tk2.Session().GetSessionVars()
-		sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-		require.True(t, exeerrors.ErrQueryInterrupted.Equal(sessVars.SQLKiller.HandleSignal())) // Send success.
+		succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+		require.True(t, succ)
 		wg.Wait()
 	}()
 	_, err := tk2.Exec("update test_kill set c = c + 1 where id = 1")
@@ -760,12 +757,13 @@ func TestKillStopTTLManager(t *testing.T) {
 	tk2.MustExec("begin pessimistic")
 	tk.MustQuery("select * from test_kill where id = 1 for update")
 	sessVars := tk.Session().GetSessionVars()
-	sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	require.True(t, exeerrors.ErrQueryInterrupted.Equal(sessVars.SQLKiller.HandleSignal())) // Send success.
+	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	require.True(t, succ)
 
 	// This query should success rather than returning a ResolveLock error.
 	tk2.MustExec("update test_kill set c = c + 1 where id = 1")
-	sessVars.SQLKiller.Reset()
+	succ = atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)
+	require.True(t, succ)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
@@ -833,8 +831,8 @@ func TestInnodbLockWaitTimeout(t *testing.T) {
 	tk2.MustExec("set innodb_lock_wait_timeout = 2")
 	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 2"))
 	// to check whether it will set to innodb_lock_wait_timeout to max value
-	tk2.MustExec("set innodb_lock_wait_timeout = 1073741825")
-	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 1073741824"))
+	tk2.MustExec("set innodb_lock_wait_timeout = 3602")
+	tk2.MustQuery(`show variables like "innodb_lock_wait_timeout"`).Check(testkit.Rows("innodb_lock_wait_timeout 3600"))
 	tk2.MustExec("set innodb_lock_wait_timeout = 2")
 
 	tk3 := testkit.NewTestKit(t, store)
@@ -1174,7 +1172,7 @@ func TestPessimisticReadCommitted(t *testing.T) {
 	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
 	tk1.MustExec("set tidb_txn_mode = 'pessimistic'")
 
-	// Avoid issue https://github.com/pingcap/tidb/issues/41792
+	// Avoid issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/41792
 	tk.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 	tk1.MustExec("set @@tidb_pessimistic_txn_fair_locking = 0")
 
@@ -1616,9 +1614,9 @@ func TestGenerateColPointGet(t *testing.T) {
 	tk.MustExec("use test")
 
 	defer func() {
-		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", vardef.DefTiDBRowFormatV2))
+		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", variable.DefTiDBRowFormatV2))
 	}()
-	tests2 := []int{vardef.DefTiDBRowFormatV1, vardef.DefTiDBRowFormatV2}
+	tests2 := []int{variable.DefTiDBRowFormatV1, variable.DefTiDBRowFormatV2}
 	for _, rowFormat := range tests2 {
 		tk.MustExec(fmt.Sprintf("set global tidb_row_format_version = %d", rowFormat))
 		tk.MustExec("drop table if exists tu")
@@ -1719,13 +1717,13 @@ func TestKillWaitLockTxn(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	sessVars := tk.Session().GetSessionVars()
 	// lock query in tk is killed, the ttl manager will stop
-	sessVars.SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	require.True(t, exeerrors.ErrQueryInterrupted.Equal(sessVars.SQLKiller.HandleSignal())) // Send success.
+	succ := atomic.CompareAndSwapUint32(&sessVars.Killed, 0, 1)
+	require.True(t, succ)
 	err := <-errCh
 	require.NoError(t, err)
 	_, _ = tk.Exec("rollback")
 	// reset kill
-	sessVars.SQLKiller.Reset()
+	atomic.CompareAndSwapUint32(&sessVars.Killed, 1, 0)
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 }
@@ -2275,9 +2273,6 @@ func Test1PCWithSchemaChange(t *testing.T) {
 }
 
 func TestPlanCacheSchemaChange(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("fast reorg is always enabled on nextgen")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tmp := testkit.NewTestKit(t, store)
 	tmp.MustExec("set tidb_enable_prepared_plan_cache=ON")
@@ -2407,7 +2402,7 @@ func TestTransactionIsolationAndForeignKey(t *testing.T) {
 	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
 	tk.MustExec("begin pessimistic")
 	tk.MustExec("insert into t2 values (1,1)")
-	tk.MustGetDBError("insert into t2 values (2,2)", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 values (2,2)", plannercore.ErrNoReferencedRow2)
 	tk2.MustExec("insert into t1 values (2)")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1", "2"))
 	tk.MustExec("insert into t2 values (2,2)")
@@ -2438,7 +2433,7 @@ func TestIssue28011(t *testing.T) {
 	for _, tt := range []struct {
 		name      string
 		lockQuery string
-		finalRows [][]any
+		finalRows [][]interface{}
 	}{
 		{"Update", "update t set b = 'x' where a = 'a'", testkit.Rows("a x", "b y", "c z")},
 		{"BatchUpdate", "update t set b = 'x' where a in ('a', 'b', 'c')", testkit.Rows("a x", "b y", "c x")},
@@ -2462,13 +2457,32 @@ func TestIssue28011(t *testing.T) {
 	}
 }
 
+func createTable(part bool, columnNames []string, columnTypes []string) string {
+	var str string
+	str = "create table t("
+	if part {
+		str = "create table t_part("
+	}
+	first := true
+	for i, colName := range columnNames {
+		if first {
+			first = false
+		} else {
+			str += ","
+		}
+		str += fmt.Sprintf("%s %s", colName, columnTypes[i])
+	}
+	str += ", primary key(c_int, c_str)"
+	str += ")"
+	if part {
+		str += "partition by hash(c_int) partitions 8"
+	}
+	return str
+}
+
 func TestPessimisticAutoCommitTxn(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
-	defer config.RestoreFunc()()
-	// false case
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.PessimisticTxn.PessimisticAutoCommit.Store(false)
-	})
+
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 
@@ -2490,113 +2504,21 @@ func TestPessimisticAutoCommitTxn(t *testing.T) {
 	require.Regexp(t, ".*handle:\\[-1 1\\].*", explain)
 	require.NotRegexp(t, ".*handle:\\[-1 1\\].*, lock.*", explain)
 
-	// true case
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
-	})
+	originCfg := config.GetGlobalConfig()
+	defer config.StoreGlobalConfig(originCfg)
+	newCfg := *originCfg
+	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
+	config.StoreGlobalConfig(&newCfg)
 
 	rows = tk.MustQuery("explain update t set i = -i").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
 	require.Regexp(t, ".*SelectLock.*", explain)
 	rows = tk.MustQuery("explain update t set i = -i where i = -1").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
-	require.Regexpf(t, ".*handle:-1, lock.*", explain, "rows: %v", rows)
+	require.Regexp(t, ".*handle:-1, lock.*", explain)
 	rows = tk.MustQuery("explain update t set i = -i where i in (-1, 1)").Rows()
 	explain = fmt.Sprintf("%v", rows[1])
 	require.Regexp(t, ".*handle:\\[-1 1\\].*, lock.*", explain)
-}
-
-func TestPessimisticAutoCommitStatementTypes(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set tidb_txn_mode = 'pessimistic'")
-	tk.MustExec("set autocommit = on")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (id int primary key, val int)")
-
-	// Save original config
-	originCfg := config.GetGlobalConfig()
-	defer config.StoreGlobalConfig(originCfg)
-
-	// Test with pessimistic-auto-commit disabled (default)
-	newCfg := *originCfg
-	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(false)
-	config.StoreGlobalConfig(&newCfg)
-
-	// Helper function to check transaction mode
-	checkTxnMode := func(sql string, expectedPessimistic bool, description string) {
-		// Clear any existing transaction state
-		tk.MustExec("rollback")
-
-		// Execute the statement
-		if strings.Contains(sql, "SELECT") || strings.Contains(sql, "EXPLAIN") {
-			tk.MustQuery(sql)
-		} else {
-			tk.MustExec(sql)
-		}
-
-		// For autocommit statements, the transaction is typically committed immediately
-		// So we need to check the session variables or use a different approach
-		sessionVars := tk.Session().GetSessionVars()
-
-		// Check the TxnCtx mode (this persists information about the last transaction)
-		isPessimistic := sessionVars.TxnCtx.IsPessimistic
-
-		if expectedPessimistic {
-			require.True(t, isPessimistic, "%s should use pessimistic transaction", description)
-		} else {
-			require.False(t, isPessimistic, "%s should use optimistic transaction", description)
-		}
-
-		// Clean up
-		tk.MustExec("rollback")
-	}
-
-	// With pessimistic-auto-commit disabled, all autocommit DML should be optimistic
-	checkTxnMode("INSERT INTO t VALUES (1, 10)", false, "INSERT with pessimistic-auto-commit disabled")
-	checkTxnMode("UPDATE t SET val = 20 WHERE id = 1", false, "UPDATE with pessimistic-auto-commit disabled")
-	checkTxnMode("DELETE FROM t WHERE id = 1", false, "DELETE with pessimistic-auto-commit disabled")
-	checkTxnMode("SELECT * FROM t", false, "SELECT with pessimistic-auto-commit disabled")
-
-	// Now enable pessimistic-auto-commit
-	newCfg.PessimisticTxn.PessimisticAutoCommit.Store(true)
-	config.StoreGlobalConfig(&newCfg)
-
-	// DML statements should now use pessimistic mode
-	checkTxnMode("INSERT INTO t VALUES (2, 20)", true, "INSERT with pessimistic-auto-commit enabled")
-	checkTxnMode("UPDATE t SET val = 30 WHERE id = 2", true, "UPDATE with pessimistic-auto-commit enabled")
-	checkTxnMode("DELETE FROM t WHERE id = 2", true, "DELETE with pessimistic-auto-commit enabled")
-
-	// Non-DML statements should still use optimistic mode
-	checkTxnMode("SELECT * FROM t FOR UPDATE", false, "SELECT with pessimistic-auto-commit enabled")
-
-	// EXPLAIN statements use the mode that the underlying statement would use
-	// This ensures EXPLAIN shows the correct plan that would be generated for execution
-	checkTxnMode("EXPLAIN INSERT INTO t VALUES (3, 30)", true, "EXPLAIN INSERT with pessimistic-auto-commit enabled")
-	checkTxnMode("EXPLAIN UPDATE t SET val = 40 WHERE id = 3", true, "EXPLAIN UPDATE with pessimistic-auto-commit enabled")
-	checkTxnMode("EXPLAIN DELETE FROM t WHERE id = 3", true, "EXPLAIN DELETE with pessimistic-auto-commit enabled")
-
-	// Test PREPARE/EXECUTE statements
-	tk.MustExec("PREPARE insert_stmt FROM 'INSERT INTO t VALUES (?, ?)'")
-	tk.MustExec("PREPARE update_stmt FROM 'UPDATE t SET val = ? WHERE id = ?'")
-	tk.MustExec("PREPARE delete_stmt FROM 'DELETE FROM t WHERE id = ?'")
-	tk.MustExec("PREPARE select_stmt FROM 'SELECT * FROM t WHERE id = ?'")
-
-	// EXECUTE with DML should use pessimistic mode
-	tk.MustExec("SET @id1 = 4, @val1 = 40")
-	checkTxnMode("EXECUTE insert_stmt USING @id1, @val1", true, "EXECUTE INSERT with pessimistic-auto-commit enabled")
-
-	tk.MustExec("SET @id2 = 4, @val2 = 50")
-	checkTxnMode("EXECUTE update_stmt USING @val2, @id2", true, "EXECUTE UPDATE with pessimistic-auto-commit enabled")
-
-	tk.MustExec("SET @id3 = 4")
-	checkTxnMode("EXECUTE delete_stmt USING @id3", true, "EXECUTE DELETE with pessimistic-auto-commit enabled")
-
-	// EXECUTE with SELECT should use optimistic mode
-	tk.MustExec("SET @id4 = 1")
-	checkTxnMode("EXECUTE select_stmt USING @id4", false, "EXECUTE SELECT with pessimistic-auto-commit enabled")
 }
 
 func TestPessimisticLockOnPartition(t *testing.T) {
@@ -2760,11 +2682,7 @@ func TestLazyUniquenessCheck(t *testing.T) {
 	tk2.MustExec("insert into t3 values (1, 2)")
 	err = tk.ExecToErr("commit")
 	require.ErrorContains(t, err, "[kv:9007]Write conflict")
-	if kerneltype.IsClassic() {
-		require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
-	} else {
-		require.ErrorContains(t, err, "reason=NotLockedKeyConflict")
-	}
+	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
 
 	// case: DML returns error => abort txn
 	tk.MustExec("create table t4 (id int primary key, v int, key i1(v))")
@@ -2897,7 +2815,7 @@ func TestLazyUniquenessCheckWithStatementRetry(t *testing.T) {
 }
 
 func TestRCPointWriteLockIfExists(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/assertPessimisticLockErr", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertPessimisticLockErr", "return"))
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 
 	tk := testkit.NewTestKit(t, store)
@@ -2917,7 +2835,7 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk.MustQuery("show variables like 'transaction_isolation'").Check(testkit.Rows("transaction_isolation READ-COMMITTED"))
 
 	tableID := external.GetTableByName(t, tk, "test", "t1").Meta().ID
-	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1))
+	idxVal, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1))
 	require.NoError(t, err)
 	secIdxKey1 := tablecodec.EncodeIndexSeekKey(tableID, 1, idxVal)
 	key1 := tablecodec.EncodeRowKeyWithHandle(tableID, kv.IntHandle(1))
@@ -3000,7 +2918,7 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	txnCtx = tk.Session().GetSessionVars().TxnCtx
 	val, ok := txnCtx.GetKeyInPessimisticLockCache(secIdxKey1)
 	require.Equal(t, true, ok)
-	handle, err := tablecodec.DecodeHandleInIndexValue(val)
+	handle, err := tablecodec.DecodeHandleInUniqueIndexValue(val, false)
 	require.NoError(t, err)
 	require.Equal(t, kv.IntHandle(1), handle)
 	_, ok = txnCtx.GetKeyInPessimisticLockCache(key1)
@@ -3052,7 +2970,7 @@ func TestRCPointWriteLockIfExists(t *testing.T) {
 	tk.MustExec("rollback")
 	tk2.MustExec("rollback")
 
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/assertPessimisticLockErr"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/assertPessimisticLockErr"))
 }
 
 func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
@@ -3087,11 +3005,7 @@ func TestLazyUniquenessCheckWithInconsistentReadResult(t *testing.T) {
 	tk2.MustExec("insert into t2 values (2, 1)")
 	tk.MustQuery("select * from t2 use index(primary) for update").Check(testkit.Rows("1 1", "2 1"))
 	err = tk.ExecToErr("commit")
-	if kerneltype.IsClassic() {
-		require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
-	} else {
-		require.ErrorContains(t, err, "reason=NotLockedKeyConflict")
-	}
+	require.ErrorContains(t, err, "reason=LazyUniquenessCheck")
 }
 
 func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
@@ -3104,7 +3018,7 @@ func TestLazyUniquenessCheckWithSavepoint(t *testing.T) {
 	require.ErrorContains(t, err, "savepoint is not supported in pessimistic transactions when in-place constraint check is disabled")
 }
 
-func mustExecAsync(tk *testkit.TestKit, sql string, args ...any) <-chan struct{} {
+func mustExecAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan struct{} {
 	ch := make(chan struct{})
 	go func() {
 		defer func() { ch <- struct{}{} }()
@@ -3113,7 +3027,7 @@ func mustExecAsync(tk *testkit.TestKit, sql string, args ...any) <-chan struct{}
 	return ch
 }
 
-func mustQueryAsync(tk *testkit.TestKit, sql string, args ...any) <-chan *testkit.Result {
+func mustQueryAsync(tk *testkit.TestKit, sql string, args ...interface{}) <-chan *testkit.Result {
 	ch := make(chan *testkit.Result)
 	go func() {
 		ch <- tk.MustQuery(sql, args...)
@@ -3121,7 +3035,7 @@ func mustQueryAsync(tk *testkit.TestKit, sql string, args ...any) <-chan *testki
 	return ch
 }
 
-func mustTimeout[T any](t *testing.T, ch <-chan T, timeout time.Duration) {
+func mustTimeout[T interface{}](t *testing.T, ch <-chan T, timeout time.Duration) {
 	select {
 	case res := <-ch:
 		require.FailNow(t, fmt.Sprintf("received signal when not expected: %v", res))
@@ -3129,7 +3043,7 @@ func mustTimeout[T any](t *testing.T, ch <-chan T, timeout time.Duration) {
 	}
 }
 
-func mustRecv[T any](t *testing.T, ch <-chan T) T {
+func mustRecv[T interface{}](t *testing.T, ch <-chan T) T {
 	select {
 	case <-time.After(time.Second):
 	case res := <-ch:
@@ -3148,9 +3062,6 @@ func mustLocked(t *testing.T, store kv.Storage, stmt string) {
 }
 
 func TestFairLockingBasic(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3241,9 +3152,6 @@ func TestFairLockingBasic(t *testing.T) {
 }
 
 func TestFairLockingInsert(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3279,9 +3187,6 @@ func TestFairLockingInsert(t *testing.T) {
 }
 
 func TestFairLockingLockWithConflictIdempotency(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3309,9 +3214,6 @@ func TestFairLockingLockWithConflictIdempotency(t *testing.T) {
 }
 
 func TestFairLockingRetry(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3347,8 +3249,8 @@ func TestFairLockingRetry(t *testing.T) {
 	mustTimeout(t, res, time.Millisecond*50)
 
 	// Pause on pessimistic retry.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/pessimisticSelectForUpdateRetry", "pause"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/pessimisticDMLRetry", "pause"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/pessimisticSelectForUpdateRetry", "pause"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/pessimisticDMLRetry", "pause"))
 	tk2.MustExec("commit")
 	mustTimeout(t, res, time.Millisecond*50)
 
@@ -3356,8 +3258,8 @@ func TestFairLockingRetry(t *testing.T) {
 	mustLocked("select * from t2 where id = 10 for update nowait")
 
 	// Still locked after the retry.
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/pessimisticSelectForUpdateRetry"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/pessimisticDMLRetry"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/pessimisticSelectForUpdateRetry"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/pessimisticDMLRetry"))
 	mustRecv(t, res)
 	mustLocked("select * from t2 where id = 10 for update nowait")
 
@@ -3379,8 +3281,8 @@ func TestFairLockingRetry(t *testing.T) {
 
 	tk2.MustExec("update t1 set v = 11 where id = 1")
 	// Pause on pessimistic retry.
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/pessimisticSelectForUpdateRetry", "pause"))
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/pessimisticDMLRetry", "pause"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/pessimisticSelectForUpdateRetry", "pause"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/pessimisticDMLRetry", "pause"))
 	tk2.MustExec("commit")
 	mustTimeout(t, res, time.Millisecond*50)
 
@@ -3388,8 +3290,8 @@ func TestFairLockingRetry(t *testing.T) {
 	mustLocked("select * from t2 where id = 10 for update nowait")
 
 	// The lock is released after the pessimistic retry, but the other row is locked instead.
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/pessimisticSelectForUpdateRetry"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/pessimisticDMLRetry"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/pessimisticSelectForUpdateRetry"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/pessimisticDMLRetry"))
 	mustRecv(t, res)
 	tk2.MustExec("begin pessimistic")
 	tk2.MustQuery("select * from t2 where id = 10 for update").Check(testkit.Rows("10 100"))
@@ -3444,9 +3346,6 @@ func TestIssue40114(t *testing.T) {
 }
 
 func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
-	}
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("set tx_isolation = 'READ-COMMITTED'")
@@ -3465,12 +3364,12 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
 	tk2.MustExec("insert into t values (1, 2)")
-	require.NoError(t, failpoint.EnableWith("github.com/pingcap/tidb/pkg/store/driver/txn/lockedWithConflictOccurs", "return", func() error {
+	require.NoError(t, failpoint.EnableWith("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver/txn/lockedWithConflictOccurs", "return", func() error {
 		lockedWithConflictCounter++
 		return nil
 	}))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/driver/txn/lockedWithConflictOccurs"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver/txn/lockedWithConflictOccurs"))
 	}()
 	ch := mustQueryAsync(tk, "select * from t where a = 1 for update")
 	mustTimeout(t, ch, time.Millisecond*100)
@@ -3494,75 +3393,25 @@ func TestPointLockNonExistentKeyWithFairLockingUnderRC(t *testing.T) {
 	tk.MustExec("commit")
 }
 
-func TestIssue66571(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("tidb_pessimistic_txn_fair_locking is not supported in the next generation of TiDB")
-	}
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-
-	test := func(isRetried bool, isPrimaryChanged bool) {
-		tk := testkit.NewTestKit(t, store)
-		tk2 := testkit.NewTestKit(t, store)
-
-		additionalInitStmt := ""
-		earlyConflictingStmt := ""
-		testedStmt := "update t set v = v + 1 where uk = 10"
-		expectedFinalData := []string{"1 10 101"}
-
-		if isRetried {
-			if !isPrimaryChanged {
-				additionalInitStmt = "insert into t values (0, 0, 10)"
-				earlyConflictingStmt = "update t set v = 200 where uk = 10"
-				expectedFinalData = []string{"0 0 10", "1 10 201"}
-			} else {
-				additionalInitStmt = "insert into t values (0, 0, 9)"
-				earlyConflictingStmt = "update t set v = 10 where id = 0"
-				testedStmt = `
-					with 
-						x as (select /*+ MERGE() */ * from t where id = 0) 
-					update x join t on x.v = t.uk set t.v = t.v + 1 where t.uk = 10`
-				expectedFinalData = []string{"0 0 10", "1 10 101"}
-			}
-		}
-
-		defer setLockTTL(100).restore()
-		tk.MustExec("set @@tidb_pessimistic_txn_fair_locking=1")
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (id int primary key, uk int unique, v int)")
-		if additionalInitStmt != "" {
-			tk.MustExec(additionalInitStmt)
-		}
-		tk.MustExec("insert into t values (1, 10, 100)")
-		tk2.MustExec("use test")
-		tk2.MustExec("set innodb_lock_wait_timeout = 1")
-
-		tk.MustExec("begin pessimistic")
-		if earlyConflictingStmt != "" {
-			tk3 := testkit.NewTestKit(t, store)
-			tk3.MustExec("use test")
-			tk3.MustExec(earlyConflictingStmt)
-		}
-		tk.MustExec(testedStmt)
-
-		tk2.MustExec("begin pessimistic")
-		err := tk2.ExecToErr("update t set v = v + 2 where uk = 10")
-		require.Error(t, err)
-		require.ErrorIs(t, err, storeerr.ErrLockWaitTimeout)
-		tk2.MustExec("commit")
-
-		tk.MustExec("commit")
-
-		tk.MustQuery("select * from t").Check(testkit.Rows(expectedFinalData...))
-	}
-
-	test(false, false)
-	test(true, false)
-	test(true, true)
-}
-
 func TestIssueBatchResolveLocks(t *testing.T) {
 	store, domain := realtikvtest.CreateMockStoreAndDomainAndSetup(t)
+
+	if *realtikvtest.WithRealTiKV {
+		// Disable in-memory pessimistic lock since it cannot be scanned in current implementation.
+		// TODO: Remove this after supporting scan lock for in-memory pessimistic lock.
+		tkcfg := testkit.NewTestKit(t, store)
+		res := tkcfg.MustQuery("show config where name = 'pessimistic-txn.in-memory' and type = 'tikv'").Rows()
+		if len(res) > 0 && res[0][3].(string) == "true" {
+			tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"false\"")
+			tkcfg.MustQuery("show warnings").Check(testkit.Rows())
+			defer func() {
+				tkcfg.MustExec("set config tikv `pessimistic-txn.in-memory`=\"true\"")
+			}()
+			time.Sleep(time.Second)
+		} else {
+			t.Log("skip disabling in-memory pessimistic lock, current config:", res)
+		}
+	}
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -3601,7 +3450,7 @@ func TestIssueBatchResolveLocks(t *testing.T) {
 	}()
 
 	// ----------------
-	// Simulate issue https://github.com/pingcap/tidb/issues/43243
+	// Simulate issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/43243
 
 	tk.MustExec("begin pessimistic")
 	tk2.MustExec("begin pessimistic")
@@ -3629,7 +3478,7 @@ func TestIssueBatchResolveLocks(t *testing.T) {
 	tk.MustExec("commit")
 
 	// ----------------
-	// Simulate issue https://github.com/pingcap/tidb/issues/45134
+	// Simulate issue https://github.com/ocean2811/tidbeaff0fbc576a/issues/45134
 	tk.MustExec("begin pessimistic")
 	tk.MustQuery("select * from t3 where id = 1 for update").Check(testkit.Rows("1 1"))
 	tk.MustExec("rollback")
@@ -3639,7 +3488,7 @@ func TestIssueBatchResolveLocks(t *testing.T) {
 	// Simulate a later GC that should resolve all stale lock produced in above steps.
 	currentTS, err := store.CurrentVersion(kv.GlobalTxnScope)
 	require.NoError(t, err)
-	err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-batch-resolve-locks", 1)
+	_, err = gcworker.RunResolveLocks(context.Background(), store.(tikv.Storage), domain.GetPDClient(), currentTS.Ver, "gc-worker-test-batch-resolve-locks", 1, false)
 	require.NoError(t, err)
 
 	// Check row 6 unlocked
@@ -3751,142 +3600,4 @@ func TestEndTxnOnLockExpire(t *testing.T) {
 			tk.MustExec(tt.endTxnSQL)
 		})
 	}
-}
-
-func TestForShareWithPromotion(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int key, b int)")
-	tk.MustExec("insert into t values(1, 10)")
-	tk.MustExec("set innodb_lock_wait_timeout = 1")
-
-	for _, tt := range []struct {
-		ForShareNoopEnable     bool
-		ForShareUpgradeEnabled bool
-	}{
-		{false, false},
-		{false, true},
-		{true, false},
-		{true, true},
-	} {
-		tk.MustExec(fmt.Sprintf("set @@tidb_enable_noop_functions = %v", tt.ForShareNoopEnable))
-		tk.MustExec(fmt.Sprintf("set @@tidb_enable_shared_lock_promotion = %v", tt.ForShareUpgradeEnabled))
-
-		tk1.MustExec("begin")
-		tk1.MustQuery("select * from t for update").Check(testkit.Rows("1 10"))
-
-		tk.MustExec("begin")
-		if tt.ForShareUpgradeEnabled {
-			_, err := tk.Exec("select * from t where a = 1 for share nowait")
-			require.True(t, strings.Contains(err.Error(), "could not be acquired immediately and NOWAIT is set"))
-			_, err = tk.Exec("select * from t for share nowait")
-			require.True(t, strings.Contains(err.Error(), "could not be acquired immediately and NOWAIT is set"))
-			_, err = tk.Exec("select * from t where a = 1 for share")
-			require.True(t, strings.Contains(err.Error(), "Lock wait timeout exceeded; try restarting transaction"))
-			_, err = tk.Exec("select * from t for share")
-			require.True(t, strings.Contains(err.Error(), "Lock wait timeout exceeded; try restarting transaction"))
-		} else if tt.ForShareNoopEnable {
-			tk.MustQuery("select * from t where a = 1 for share nowait").Check(testkit.Rows("1 10"))
-			tk.MustQuery("select * from t where a = 1 for share").Check(testkit.Rows("1 10"))
-			tk.MustQuery("select * from t for share").Check(testkit.Rows("1 10"))
-			tk.MustQuery("select * from t").Check(testkit.Rows("1 10"))
-		} else {
-			_, err := tk.Exec("select * from t where a = 1 for share nowait")
-			require.True(t, strings.Contains(err.Error(), "use tidb_enable_noop_functions to enable"))
-			_, err = tk.Exec("select * from t for share")
-			require.True(t, strings.Contains(err.Error(), "use tidb_enable_noop_functions to enable"))
-			_, err = tk.Exec("select * from t for share nowait")
-			require.True(t, strings.Contains(err.Error(), "use tidb_enable_noop_functions to enable"))
-		}
-		tk.MustExec("rollback")
-		tk1.MustExec("rollback")
-	}
-}
-
-func TestForShareWithPromotionPlanCache(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk.MustExec("use test")
-	tk.MustExec("create table t(a int key, b int)")
-	tk.MustExec("insert into t values(1, 10)")
-	tk.MustExec("set innodb_lock_wait_timeout = 1")
-	tk.MustExec(`set @pk=1`)
-
-	tk.MustExec(fmt.Sprintf("set @@tidb_enable_noop_functions = %v", 1))
-	tk.MustExec(`prepare st from 'select * from t where a=? for share'`)
-
-	tk.MustExec(`execute st using @pk`)
-	tk.MustExec(`begin`)
-	tk.MustExec(`execute st using @pk`)
-	// can't reuse since it's in txn now.
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	tk.MustExec(`rollback`)
-
-	// can't reuse since the `tidb_enable_shared_lock_promotion` is changed.
-	tk.MustExec(`execute st using @pk`)
-	tk.MustExec(fmt.Sprintf("set @@tidb_enable_shared_lock_promotion = %v", 1))
-	tk.MustExec(`execute st using @pk`)
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	tk.MustExec(`execute st using @pk`)
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("1"))
-	tk.MustExec(`begin`)
-	tk.MustExec(`execute st using @pk`)
-	tk.MustQuery(`select @@last_plan_from_cache`).Check(testkit.Rows("0"))
-	tk.MustExec(`rollback`)
-}
-
-func TestMaxExecutionTimeWithSelectForUpdate(t *testing.T) {
-	// for issue https://github.com/pingcap/tidb/issues/62960
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists test_lock")
-	tk.MustExec("create table test_lock (id int primary key, value int)")
-	tk.MustExec("insert into test_lock values (1, 100)")
-
-	tk1 := testkit.NewTestKit(t, store)
-	tk1.MustExec("use test")
-	tk2 := testkit.NewTestKit(t, store)
-	tk2.MustExec("use test")
-	tk2.MustExec("set innodb_lock_wait_timeout = 30")
-
-	// Transaction 1: Hold the lock
-	tk1.MustExec("begin pessimistic")
-	tk1.MustQuery("select * from test_lock where id = 1 for update").Check(testkit.Rows("1 100"))
-
-	checkSelectForUpdate := func(sql string) {
-		tk2.MustExec("begin pessimistic")
-		tk2.MustExec("set max_execution_time = 1000")
-		err := tk2.ExecToErr(sql)
-
-		// The query should timeout due to max_execution_time (~1s), not lock_wait_timeout (30s)
-		require.Error(t, err)
-
-		// Error 3024 (HY000): Query execution was interrupted, maximum statement execution time exceeded
-		require.True(t, strings.Contains(err.Error(), "maximum statement execution time exceeded"),
-			"Expected max_execution_time error, but got: %v", err)
-
-		tk2.MustExec("rollback")
-	}
-
-	// Transaction 2: Try to acquire lock with max_execution_time in different SELECT forms
-	checkSelectForUpdate("select * from test_lock where id = 1 for update")
-	checkSelectForUpdate("(select * from test_lock where id = 1 for update)")
-
-	// DML should keep using the lock wait timeout instead of max_execution_time
-	tk2.MustExec("begin pessimistic")
-	tk2.MustExec("set innodb_lock_wait_timeout = 1")
-	tk2.MustExec("set max_execution_time = 300")
-	err := tk2.ExecToErr("update test_lock set value = value + 1 where id = 1")
-	require.Error(t, err)
-	require.True(t, storeerr.ErrLockWaitTimeout.Equal(err), "expected lock wait timeout, got: %v", err)
-	tk2.MustExec("rollback")
-
-	tk1.MustExec("rollback")
 }

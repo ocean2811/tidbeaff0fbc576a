@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
 	"github.com/stretchr/testify/require"
 )
 
@@ -79,19 +79,19 @@ func TestListAllTables(t *testing.T) {
 		AppendViews("db3", "t6", "t7", "t8")
 
 	dbNames := make([]databaseName, 0, len(data))
+	rows := sqlmock.NewRows([]string{"TABLE_SCHEMA", "TABLE_NAME", "TABLE_TYPE", "AVG_ROW_LENGTH"})
 	for dbName, tableInfos := range data {
 		dbNames = append(dbNames, dbName)
 
-		query := "SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=\\? AND \\(TABLE_TYPE='BASE TABLE'\\)"
-		rows := sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE", "AVG_ROW_LENGTH"})
 		for _, tbInfo := range tableInfos {
 			if tbInfo.Type == TableTypeView {
 				continue
 			}
-			rows.AddRow(tbInfo.Name, tbInfo.Type.String(), tbInfo.AvgRowLength)
+			rows.AddRow(dbName, tbInfo.Name, tbInfo.Type.String(), tbInfo.AvgRowLength)
 		}
-		mock.ExpectQuery(query).WithArgs(dbName).WillReturnRows(rows)
 	}
+	query := "SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE'"
+	mock.ExpectQuery(query).WillReturnRows(rows)
 
 	tables, err := ListAllDatabasesTables(tctx, conn, dbNames, listTableByInfoSchema, TableTypeBase)
 	require.NoError(t, err)
@@ -99,7 +99,7 @@ func TestListAllTables(t *testing.T) {
 	for d, table := range tables {
 		expectedTbs, ok := data[d]
 		require.True(t, ok)
-		for i := range table {
+		for i := 0; i < len(table); i++ {
 			require.Truef(t, table[i].Equals(expectedTbs[i]), "%v mismatches expected: %v", table[i], expectedTbs[i])
 		}
 	}
@@ -108,15 +108,15 @@ func TestListAllTables(t *testing.T) {
 	data = NewDatabaseTables().
 		AppendTables("db", []string{"t1"}, []uint64{1}).
 		AppendViews("db", "t2")
-	query := "SELECT TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_SCHEMA=\\? AND \\(TABLE_TYPE='BASE TABLE' OR TABLE_TYPE='VIEW'\\)"
-	mock.ExpectQuery(query).WithArgs("db").WillReturnRows(sqlmock.NewRows([]string{"TABLE_NAME", "TABLE_TYPE", "AVG_ROW_LENGTH"}).
-		AddRow("t1", TableTypeBaseStr, 1).AddRow("t2", TableTypeViewStr, nil))
+	query = "SELECT TABLE_SCHEMA,TABLE_NAME,TABLE_TYPE,AVG_ROW_LENGTH FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE='BASE TABLE' OR TABLE_TYPE='VIEW'"
+	mock.ExpectQuery(query).WillReturnRows(sqlmock.NewRows([]string{"TABLE_SCHEMA", "TABLE_NAME", "TABLE_TYPE", "AVG_ROW_LENGTH"}).
+		AddRow("db", "t1", TableTypeBaseStr, 1).AddRow("db", "t2", TableTypeViewStr, nil))
 	tables, err = ListAllDatabasesTables(tctx, conn, []string{"db"}, listTableByInfoSchema, TableTypeBase, TableTypeView)
 	require.NoError(t, err)
 	require.Len(t, tables, 1)
 	require.Len(t, tables["db"], 2)
 
-	for i := range tables["db"] {
+	for i := 0; i < len(tables["db"]); i++ {
 		require.Truef(t, tables["db"][i].Equals(data["db"][i]), "%v mismatches expected: %v", tables["db"][i], data["db"][i])
 	}
 
@@ -165,7 +165,7 @@ func TestListAllTablesByTableStatus(t *testing.T) {
 		expectedTbs, ok := data[d]
 		require.True(t, ok)
 
-		for i := range table {
+		for i := 0; i < len(table); i++ {
 			require.Truef(t, table[i].Equals(expectedTbs[i]), "%v mismatches expected: %v", table[i], expectedTbs[i])
 		}
 	}
@@ -182,7 +182,7 @@ func TestListAllTablesByTableStatus(t *testing.T) {
 	require.Len(t, tables, 1)
 	require.Len(t, tables["db"], 2)
 
-	for i := range tables["db"] {
+	for i := 0; i < len(tables["db"]); i++ {
 		require.Truef(t, tables["db"][i].Equals(data["db"][i]), "%v mismatches expected: %v", tables["db"][i], data["db"][i])
 	}
 
@@ -230,7 +230,7 @@ func TestListAllTablesByShowFullTables(t *testing.T) {
 		expectedTbs, ok := data[d]
 		require.True(t, ok)
 
-		for i := range table {
+		for i := 0; i < len(table); i++ {
 			require.Truef(t, table[i].Equals(expectedTbs[i]), "%v mismatches expected: %v", table[i], expectedTbs[i])
 		}
 	}
@@ -257,7 +257,7 @@ func TestListAllTablesByShowFullTables(t *testing.T) {
 	require.Len(t, tables, 1)
 	require.Len(t, tables["db"], 2)
 
-	for i := range tables["db"] {
+	for i := 0; i < len(tables["db"]); i++ {
 		require.Truef(t, tables["db"][i].Equals(data["db"][i]), "%v mismatches expected: %v", tables["db"][i], data["db"][i])
 	}
 
@@ -272,10 +272,6 @@ func TestConfigValidation(t *testing.T) {
 
 	conf.Where = ""
 	require.NoError(t, validateSpecifiedSQL(conf))
-
-	conf.Partitions = []string{"p1", "p2"}
-	require.EqualError(t, validateSpecifiedSQL(conf), "can't specify both --sql and --partitions at the same time")
-	conf.Partitions = nil
 
 	conf.FileType = FileFormatSQLTextString
 	err := adjustFileFormat(conf)
@@ -331,64 +327,4 @@ func TestValidateResolveAutoConsistency(t *testing.T) {
 			require.EqualError(t, validateResolveAutoConsistency(d), fmt.Sprintf("can't specify --snapshot when --consistency isn't snapshot, resolved consistency: %s", conf.Consistency))
 		}
 	}
-}
-
-func TestValidateIncludeGeneratedColumns(t *testing.T) {
-	newConf := func(mode GeneratedColumnsMode) *Config {
-		conf := defaultConfigForTest(t)
-		conf.IncludeGeneratedColumns = mode
-		conf.FileType = FileFormatCSVString
-		return conf
-	}
-
-	for _, mode := range []GeneratedColumnsMode{"", GeneratedColumnsNone} {
-		// The default mode keeps the existing behavior for every combination.
-		conf := newConf(mode)
-		conf.FileType = FileFormatSQLTextString
-		conf.NoData = true
-		conf.SQL = "select 1"
-		conf.Where = "a > 0"
-		conf.columnFilter = columnFilterConfig{Filters: []columnFilterRule{{}}}
-		require.NoError(t, validateIncludeGeneratedColumns(conf))
-		require.Equal(t, GeneratedColumnsNone, conf.IncludeGeneratedColumns)
-	}
-
-	for _, fileType := range []string{FileFormatCSVString, FileFormatParquetString} {
-		conf := newConf(GeneratedColumnsStored)
-		conf.FileType = fileType
-		require.NoError(t, validateIncludeGeneratedColumns(conf))
-	}
-
-	conf := newConf(GeneratedColumnsStored)
-	conf.FileType = FileFormatSQLTextString
-	require.EqualError(t, validateIncludeGeneratedColumns(conf),
-		"--include-generated-columns=stored is only supported with --filetype csv or parquet")
-
-	conf = newConf(GeneratedColumnsStored)
-	conf.SQL = "select * from t"
-	require.EqualError(t, validateIncludeGeneratedColumns(conf),
-		"can't specify both --include-generated-columns=stored and --sql at the same time")
-
-	conf = newConf(GeneratedColumnsStored)
-	conf.Where = "a >= 0"
-	require.EqualError(t, validateIncludeGeneratedColumns(conf),
-		"can't specify both --include-generated-columns=stored and --where at the same time")
-
-	conf = newConf(GeneratedColumnsStored)
-	conf.columnFilter = columnFilterConfig{Filters: []columnFilterRule{{Matcher: []string{"db.t"}, Columns: []string{"*"}}}}
-	require.EqualError(t, validateIncludeGeneratedColumns(conf),
-		"can't specify --include-generated-columns=stored with --column-filter or --column-filter-file")
-
-	conf = newConf(GeneratedColumnsStored)
-	conf.NoData = true
-	require.EqualError(t, validateIncludeGeneratedColumns(conf),
-		"can't specify both --include-generated-columns=stored and --no-data at the same time")
-
-	for _, mode := range []GeneratedColumnsMode{GeneratedColumnsVirtual, GeneratedColumnsAll} {
-		conf = newConf(mode)
-		require.ErrorContains(t, validateIncludeGeneratedColumns(conf), "is not supported yet")
-	}
-	conf = newConf("bad")
-	require.EqualError(t, validateIncludeGeneratedColumns(conf),
-		"invalid --include-generated-columns value 'bad', supported values: none, stored")
 }

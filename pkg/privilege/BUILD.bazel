@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "privilege",
     srcs = ["privilege.go"],
-    importpath = "github.com/pingcap/tidb/pkg/privilege",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/privilege",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/parser/auth",
@@ -12,6 +12,5 @@ go_library(
         "//pkg/sessionctx",
         "//pkg/sessionctx/variable",
         "//pkg/types",
-        "//pkg/util/sqlexec",
     ],
 )

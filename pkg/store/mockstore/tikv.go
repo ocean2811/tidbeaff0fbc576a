@@ -16,9 +16,9 @@ package mockstore
 
 import (
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/store/mockstore/mockcopr"
-	"github.com/pingcap/tidb/pkg/store/mockstore/mockstorage"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/mockcopr"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/mockstorage"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 )
@@ -32,12 +32,9 @@ func newMockTikvStore(opt *mockOptions) (kv.Storage, error) {
 	}
 	opt.clusterInspector(cluster)
 
-	kvstore, err := tikv.NewTestTiKVStore(
-		newClientRedirector(client), pdClient,
-		opt.clientHijacker, opt.pdClientHijacker,
-		opt.txnLocalLatches, opt.tikvOptions...)
+	kvstore, err := tikv.NewTestTiKVStore(newClientRedirector(client), pdClient, opt.clientHijacker, opt.pdClientHijacker, opt.txnLocalLatches)
 	if err != nil {
 		return nil, err
 	}
-	return mockstorage.NewMockStorage(kvstore, opt.currentKeyspaceMeta())
+	return mockstorage.NewMockStorage(kvstore)
 }

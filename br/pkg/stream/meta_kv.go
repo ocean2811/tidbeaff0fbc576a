@@ -16,11 +16,10 @@ package stream
 
 import (
 	"github.com/pingcap/errors"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 )
 
 // RawMetaKey specified a transaction meta key.
@@ -52,14 +51,6 @@ func ParseTxnMetaKeyFrom(txnKey kv.Key) (*RawMetaKey, error) {
 		Field: field,
 		Ts:    ts,
 	}, nil
-}
-
-func ParseDBIDFromTableKey(key []byte) (int64, error) {
-	rawMetaKey, err := ParseTxnMetaKeyFrom(key)
-	if err != nil {
-		return 0, errors.Trace(err)
-	}
-	return meta.ParseDBKey(rawMetaKey.Key)
 }
 
 // UpdateKey updates `key` field in `RawMetaKey` struct.
@@ -173,22 +164,13 @@ l_for:
 	for len(data) > 0 {
 		switch data[0] {
 		case flagShortValuePrefix:
-			// Need at least 2 bytes: flag + vlen
-			if len(data) < 2 {
-				return errors.Annotatef(berrors.ErrInvalidArgument,
-					"insufficient data for short value prefix, need at least 2 bytes but only have %d",
-					len(data))
-			}
 			vlen := data[1]
-			// Need: flag (1 byte) + vlen (1 byte) + value (vlen bytes)
-			requiredLen := int(vlen) + 2
-			if len(data) < requiredLen {
+			if len(data[2:]) < int(vlen) {
 				return errors.Annotatef(berrors.ErrInvalidArgument,
-					"insufficient data for short value, need %d bytes but only have %d",
-					requiredLen, len(data))
+					"the length of short value is invalid, vlen: %v", int(vlen))
 			}
-			v.shortValue = data[2:requiredLen]
-			data = data[requiredLen:]
+			v.shortValue = data[2 : vlen+2]
+			data = data[vlen+2:]
 		case flagOverlappedRollback:
 			v.hasOverlappedRollback = true
 			data = data[1:]
@@ -229,11 +211,6 @@ func (v *RawWriteCFValue) IsDelete() bool {
 	return v.GetWriteType() == WriteTypeDelete
 }
 
-// IsPut checks whether the value in cf is a `put` record.
-func (v *RawWriteCFValue) IsPut() bool {
-	return v.GetWriteType() == WriteTypePut
-}
-
 // HasShortValue checks whether short value is stored in write cf.
 func (v *RawWriteCFValue) HasShortValue() bool {
 	return len(v.shortValue) > 0
@@ -247,10 +224,6 @@ func (v *RawWriteCFValue) GetShortValue() []byte {
 // UpdateShortValue updates the shortValue field.
 func (v *RawWriteCFValue) UpdateShortValue(value []byte) {
 	v.shortValue = value
-}
-
-func (v *RawWriteCFValue) MarkPhysicalImportTxnSource() {
-	v.txnSource |= kv.LightningPhysicalImportTxnSource
 }
 
 func (v *RawWriteCFValue) GetStartTs() uint64 {

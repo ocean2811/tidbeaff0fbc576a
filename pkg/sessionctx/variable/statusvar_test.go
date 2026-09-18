@@ -17,7 +17,6 @@ package variable
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,11 +29,11 @@ const (
 	testStatusVal     = "test_status_val"
 )
 
-var specificStatusScopes = map[string]vardef.ScopeFlag{
-	testSessionStatus: vardef.ScopeSession,
+var specificStatusScopes = map[string]ScopeFlag{
+	testSessionStatus: ScopeSession,
 }
 
-func (ms *mockStatistics) GetScope(status string) vardef.ScopeFlag {
+func (ms *mockStatistics) GetScope(status string) ScopeFlag {
 	scope, ok := specificStatusScopes[status]
 	if !ok {
 		return DefaultStatusVarScopeFlag
@@ -43,8 +42,8 @@ func (ms *mockStatistics) GetScope(status string) vardef.ScopeFlag {
 	return scope
 }
 
-func (ms *mockStatistics) Stats(_ *SessionVars) (map[string]any, error) {
-	m := make(map[string]any, len(specificStatusScopes))
+func (ms *mockStatistics) Stats(_ *SessionVars) (map[string]interface{}, error) {
+	m := make(map[string]interface{}, len(specificStatusScopes))
 	m[testStatus] = testStatusVal
 
 	return m, nil
@@ -57,7 +56,7 @@ func TestStatusVar(t *testing.T) {
 	scope := ms.GetScope(testStatus)
 	require.Equal(t, DefaultStatusVarScopeFlag, scope)
 	scope = ms.GetScope(testSessionStatus)
-	require.Equal(t, vardef.ScopeSession, scope)
+	require.Equal(t, ScopeSession, scope)
 
 	vars, err := GetStatusVars(nil)
 	require.NoError(t, err)

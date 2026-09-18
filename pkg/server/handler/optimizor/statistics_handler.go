@@ -15,21 +15,21 @@
 package optimizor
 
 import (
-	"context"
 	"fmt"
 	"net/http"
 	"strconv"
 	"time"
 
 	"github.com/gorilla/mux"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/server/handler"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
 )
@@ -67,7 +67,7 @@ func (sh StatsHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			return
 		}
 	}
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr(params[handler.DBName]), ast.NewCIStr(params[handler.TableName]))
+	tbl, err := is.TableByName(model.NewCIStr(params[handler.DBName]), model.NewCIStr(params[handler.TableName]))
 	if err != nil {
 		handler.WriteError(w, err)
 	} else {
@@ -94,19 +94,24 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	w.Header().Set("Content-Type", "application/json")
 
 	params := mux.Vars(req)
+	se, err := session.CreateSession(sh.do.Store())
+	if err != nil {
+		handler.WriteError(w, err)
+		return
+	}
+	defer se.Close()
 	enabeld, err := sh.do.StatsHandle().CheckHistoricalStatsEnable()
 	if err != nil {
 		handler.WriteError(w, err)
 		return
 	}
 	if !enabeld {
-		handler.WriteError(w, fmt.Errorf("%v should be enabled", vardef.TiDBEnableHistoricalStats))
+		handler.WriteError(w, fmt.Errorf("%v should be enabled", variable.TiDBEnableHistoricalStats))
 		return
 	}
 
-	typeCtx := types.DefaultStmtNoWarningContext
-	typeCtx = typeCtx.WithLocation(time.Local)
-	t, err := types.ParseTime(typeCtx, params[handler.Snapshot], mysql.TypeTimestamp, 6)
+	se.GetSessionVars().StmtCtx.SetTimeZone(time.Local)
+	t, err := types.ParseTime(se.GetSessionVars().StmtCtx, params[handler.Snapshot], mysql.TypeTimestamp, 6, nil)
 	if err != nil {
 		handler.WriteError(w, err)
 		return
@@ -121,7 +126,7 @@ func (sh StatsHistoryHandler) ServeHTTP(w http.ResponseWriter, req *http.Request
 	if err != nil {
 		logutil.BgLogger().Info("fail to get snapshot TableInfo in historical stats API, switch to use latest infoschema", zap.Error(err))
 		is := sh.do.InfoSchema()
-		tbl, err = is.TableByName(context.Background(), ast.NewCIStr(params[handler.DBName]), ast.NewCIStr(params[handler.TableName]))
+		tbl, err = is.TableByName(model.NewCIStr(params[handler.DBName]), model.NewCIStr(params[handler.TableName]))
 		if err != nil {
 			handler.WriteError(w, err)
 			return
@@ -142,28 +147,5 @@ func getSnapshotTableInfo(dom *domain.Domain, snapshot uint64, dbName, tblName s
 	if err != nil {
 		return nil, err
 	}
-	return is.TableByName(context.Background(), ast.NewCIStr(dbName), ast.NewCIStr(tblName))
-}
-
-// StatsPriorityQueueHandler is the handler for dumping the stats priority queue snapshot.
-type StatsPriorityQueueHandler struct {
-	do *domain.Domain
-}
-
-// NewStatsPriorityQueueHandler creates a new StatsPriorityQueueHandler.
-func NewStatsPriorityQueueHandler(do *domain.Domain) *StatsPriorityQueueHandler {
-	return &StatsPriorityQueueHandler{do: do}
-}
-
-// ServeHTTP dumps the stats priority queue snapshot to json.
-func (sh StatsPriorityQueueHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-
-	h := sh.do.StatsHandle()
-	tables, err := h.GetPriorityQueueSnapshot()
-	if err != nil {
-		handler.WriteError(w, err)
-	} else {
-		handler.WriteData(w, tables)
-	}
+	return is.TableByName(model.NewCIStr(dbName), model.NewCIStr(tblName))
 }

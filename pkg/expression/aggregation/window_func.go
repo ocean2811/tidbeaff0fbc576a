@@ -17,10 +17,11 @@ package aggregation
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
 	"github.com/pingcap/tipb/go-tipb"
 )
 
@@ -30,18 +31,18 @@ type WindowFuncDesc struct {
 }
 
 // NewWindowFuncDesc creates a window function signature descriptor.
-func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expression.Expression, skipCheckArgs bool) (*WindowFuncDesc, error) {
+func NewWindowFuncDesc(ctx sessionctx.Context, name string, args []expression.Expression, skipCheckArgs bool) (*WindowFuncDesc, error) {
 	// if we are in the prepare statement, skip the params check since it's not been initialized.
 	if !skipCheckArgs {
 		switch strings.ToLower(name) {
 		case ast.WindowFuncNthValue:
-			val, isNull, ok := expression.GetUint64FromConstant(ctx.GetEvalCtx(), args[1])
+			val, isNull, ok := expression.GetUint64FromConstant(args[1])
 			// nth_value does not allow `0`, but allows `null`.
 			if !ok || (val == 0 && !isNull) {
 				return nil, nil
 			}
 		case ast.WindowFuncNtile:
-			val, isNull, ok := expression.GetUint64FromConstant(ctx.GetEvalCtx(), args[0])
+			val, isNull, ok := expression.GetUint64FromConstant(args[0])
 			// ntile does not allow `0`, but allows `null`.
 			if !ok || (val == 0 && !isNull) {
 				return nil, nil
@@ -50,7 +51,7 @@ func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expressi
 			if len(args) < 2 {
 				break
 			}
-			_, isNull, ok := expression.GetUint64FromConstant(ctx.GetEvalCtx(), args[1])
+			_, isNull, ok := expression.GetUint64FromConstant(args[1])
 			if !ok || isNull {
 				return nil, nil
 			}
@@ -62,12 +63,12 @@ func NewWindowFuncDesc(ctx expression.BuildContext, name string, args []expressi
 	// Some window functions' return column type must be nullable or not nullable
 	switch name {
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncCumeDist, ast.WindowFuncPercentRank,
-		ast.AggFuncCount, ast.AggFuncMaxCount, ast.AggFuncMinCount, ast.AggFuncApproxCountDistinct, ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
+		ast.AggFuncCount, ast.AggFuncApproxCountDistinct, ast.AggFuncBitAnd, ast.AggFuncBitOr, ast.AggFuncBitXor:
 		base.RetTp.SetFlag(mysql.NotNullFlag)
 	case ast.WindowFuncLead, ast.WindowFuncLag:
 		if len(args) == 3 &&
-			((args[0].GetType(ctx.GetEvalCtx()).GetFlag() & mysql.NotNullFlag) != 0) &&
-			((args[2].GetType(ctx.GetEvalCtx()).GetFlag() & mysql.NotNullFlag) != 0) {
+			((args[0].GetType().GetFlag() & mysql.NotNullFlag) != 0) &&
+			((args[2].GetType().GetFlag() & mysql.NotNullFlag) != 0) {
 			base.RetTp.SetFlag(mysql.NotNullFlag)
 			break
 		}
@@ -123,8 +124,8 @@ func (s *WindowFuncDesc) Clone() *WindowFuncDesc {
 }
 
 // WindowFuncToPBExpr converts aggregate function to pb.
-func WindowFuncToPBExpr(sctx expression.EvalContext, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
-	pc := expression.NewPBConverter(client, sctx)
+func WindowFuncToPBExpr(sctx sessionctx.Context, client kv.Client, desc *WindowFuncDesc) *tipb.Expr {
+	pc := expression.NewPBConverter(client, sctx.GetSessionVars().StmtCtx)
 	tp := desc.GetTiPBExpr(true)
 	if !client.IsRequestTypeSupported(kv.ReqTypeSelect, int64(tp)) {
 		return nil
@@ -142,9 +143,9 @@ func WindowFuncToPBExpr(sctx expression.EvalContext, client kv.Client, desc *Win
 }
 
 // CanPushDownToTiFlash control whether a window function desc can be push down to tiflash.
-func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx expression.PushDownContext) bool {
+func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx sessionctx.Context) bool {
 	// args
-	if !expression.CanExprsPushDown(ctx, s.Args, kv.TiFlash) {
+	if !expression.CanExprsPushDown(ctx.GetSessionVars().StmtCtx, s.Args, ctx.GetClient(), kv.TiFlash) {
 		return false
 	}
 	// window functions
@@ -152,8 +153,9 @@ func (s *WindowFuncDesc) CanPushDownToTiFlash(ctx expression.PushDownContext) bo
 	case ast.WindowFuncRowNumber, ast.WindowFuncRank, ast.WindowFuncDenseRank, ast.WindowFuncLead, ast.WindowFuncLag,
 		ast.WindowFuncFirstValue, ast.WindowFuncLastValue:
 		return true
-	case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:
-		return true
+		// TODO: support aggregate functions
+		//case ast.AggFuncSum, ast.AggFuncCount, ast.AggFuncAvg, ast.AggFuncMax, ast.AggFuncMin:
+		//	return true
 	}
 
 	return false

@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "dump",
     srcs = ["dump.go"],
-    importpath = "github.com/pingcap/tidb/pkg/server/internal/dump",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/dump",
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
         "//pkg/parser/mysql",
@@ -19,6 +19,7 @@ go_test(
     flaky = True,
     shard_count = 3,
     deps = [
+        "//pkg/sessionctx/stmtctx",
         "//pkg/types",
         "@com_github_stretchr_testify//require",
     ],

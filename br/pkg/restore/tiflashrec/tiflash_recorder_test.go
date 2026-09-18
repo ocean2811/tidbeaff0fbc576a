@@ -18,10 +18,9 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/pingcap/tidb/br/pkg/restore/tiflashrec"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/restore/tiflashrec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 )
 
@@ -137,7 +136,7 @@ func TestGenSql(t *testing.T) {
 	tInfo := func(id int, name string) *model.TableInfo {
 		return &model.TableInfo{
 			ID:   int64(id),
-			Name: ast.NewCIStr(name),
+			Name: model.NewCIStr(name),
 		}
 	}
 	fakeInfo := infoschema.MockInfoSchema([]*model.TableInfo{
@@ -176,7 +175,7 @@ func TestGenResetSql(t *testing.T) {
 	tInfo := func(id int, name string) *model.TableInfo {
 		return &model.TableInfo{
 			ID:   int64(id),
-			Name: ast.NewCIStr(name),
+			Name: model.NewCIStr(name),
 		}
 	}
 	fakeInfo := infoschema.MockInfoSchema([]*model.TableInfo{

@@ -15,36 +15,30 @@
 package executor_test
 
 import (
-	"compress/gzip"
 	"context"
 	"fmt"
 	"net"
 	"os"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/session/sessmgr"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
 
 func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
-	t.Cleanup(config.RestoreFunc())
-
 	sm := &testkit.MockSessionManager{}
-	sm.PS = append(sm.PS, &sessmgr.ProcessInfo{
+	sm.PS = append(sm.PS, &util.ProcessInfo{
 		ID:      1,
 		User:    "root",
 		Host:    "127.0.0.1",
@@ -53,32 +47,18 @@ func createRPCServer(t *testing.T, dom *domain.Domain) *grpc.Server {
 
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
-	host, port, err := net.SplitHostPort(lis.Addr().String())
-	require.NoError(t, err)
-	portNum, err := strconv.Atoi(port)
-	require.NoError(t, err)
 
 	srv := server.NewRPCServer(config.GetGlobalConfig(), dom, sm)
+	port := lis.Addr().(*net.TCPAddr).Port
 	go func() {
 		err = srv.Serve(lis)
 		require.NoError(t, err)
 	}()
 
 	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Status.StatusPort = uint(portNum)
-		conf.AdvertiseAddress = host
+		conf.Status.StatusPort = uint(port)
 	})
 
-	// Wait for server to be ready using require.Eventually
-	addr := lis.Addr().String()
-	require.Eventually(t, func() bool {
-		conn, err := net.DialTimeout("tcp", addr, 100*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return true
-		}
-		return false
-	}, 10*time.Second, 100*time.Millisecond, "RPC server failed to start")
 	return srv
 }
 
@@ -151,23 +131,15 @@ select 7;`
 		},
 		{
 			sql:    "select count(*),min(time),max(time) from %s",
-			result: []string{"7|2020-02-15 18:00:01.000000|2020-05-14 19:03:54.314615"},
+			result: []string{"1|2020-05-14 19:03:54.314615|2020-05-14 19:03:54.314615"},
 		},
 		{
-			sql:    "select count(*),min(time),max(time) from %s where time > '2020-02-16 20:00:00'",
-			result: []string{"2|2020-02-17 18:00:05.000000|2020-05-14 19:03:54.314615"},
+			sql:    "select count(*),min(time) from %s where time > '2020-02-16 20:00:00'",
+			result: []string{"1|2020-02-17 18:00:05.000000"},
 		},
 		{
 			sql:    "select count(*) from %s where time > '2020-02-17 20:00:00'",
-			result: []string{"1"},
-		},
-		{
-			sql:    "select count(*) from %s where time > '1980-01-11 00:00:00'",
-			result: []string{"7"},
-		},
-		{
-			sql:    "select count(*) from %s where time < '2024-01-01 00:00:00'",
-			result: []string{"7"},
+			result: []string{"0"},
 		},
 		{
 			sql:    "select query from %s where time > '2019-01-26 21:51:00' and time < now()",
@@ -200,23 +172,6 @@ select 7;`
 		sql = fmt.Sprintf(cas.sql, "cluster_slow_query")
 		tk.MustQuery(sql).Check(testkit.RowsWithSep("|", cas.result...))
 	}
-
-	executor.DashboardSlowLogReadBlockCnt4Test = 0
-	// 2020-02-16T00:00:00.000000+08:00
-	unixTimeStart := time.Date(2020, 2, 16, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
-	// 2020-02-17T00:00:00.000000+08:00
-	unixTimeEnd := time.Date(2020, 2, 17, 0, 0, 0, 0, time.FixedZone("CST", 8*3600))
-	// check dashboard query pattern. Only reduce limit to check if it works.
-	sql := fmt.Sprintf(`SELECT Digest, Query, Conn_ID, (UNIX_TIMESTAMP(Time) + 0E0) AS timestamp, Query_time, Mem_max
-				FROM INFORMATION_SCHEMA.CLUSTER_SLOW_QUERY
-                WHERE Time BETWEEN FROM_UNIXTIME(%d) AND FROM_UNIXTIME(%d)
-                ORDER BY Time DESC LIMIT 2`, unixTimeStart.Unix(), unixTimeEnd.Unix())
-	rows := tk.MustQuery(sql).Rows()
-	require.Equal(t, 2, len(rows))
-	require.Equal(t, "select 5;", rows[0][1])
-	require.Equal(t, "select 4;", rows[1][1])
-	// 3 means we read 2 blocks of logData3, and last block of logData2
-	require.EqualValues(t, 3, executor.DashboardSlowLogReadBlockCnt4Test)
 }
 
 func TestIssue20236(t *testing.T) {
@@ -254,80 +209,71 @@ select 10;`
 	fileName2 := "tidb-slow-20236-2020-02-16T19-04-05.01.log"
 	fileName3 := "tidb-slow-20236-2020-02-17T18-00-05.01.log"
 	fileName4 := "tidb-slow-20236.log"
+	fileNames := []string{fileName0, fileName1, fileName2, fileName3, fileName4}
 	defer config.RestoreFunc()()
 	config.UpdateGlobal(func(conf *config.Config) {
 		conf.Log.SlowQueryFile = fileName4
 	})
-	for k := range 2 {
-		func() {
-			// k = 0 for normal files
-			// k = 1 for compressed files
-			var fileNames []string
-			if k == 0 {
-				fileNames = []string{fileName0, fileName1, fileName2, fileName3, fileName4}
-			} else {
-				fileNames = []string{fileName0 + ".gz", fileName1 + ".gz", fileName2 + ".gz", fileName3 + ".gz", fileName4}
-			}
-			prepareLogs(t, logData, fileNames)
-			defer removeFiles(t, fileNames)
-			tk := testkit.NewTestKit(t, store)
-			loc, err := time.LoadLocation("Asia/Shanghai")
-			require.NoError(t, err)
-			tk.Session().GetSessionVars().TimeZone = loc
-			tk.MustExec("use information_schema")
-			cases := []struct {
-				prepareSQL string
-				sql        string
-				result     []string
-			}{
-				{
-					prepareSQL: "set @@time_zone = '+08:00'",
-					sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000'",
-					result:     []string{"2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
-				},
-				{
-					prepareSQL: "set @@time_zone = '+08:00'",
-					sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
-					result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
-				},
-				{
-					prepareSQL: "set @@time_zone = '+08:00'",
-					sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time",
-					result:     []string{"2020-02-15 18:00:01.000000", "2020-02-15 19:00:05.000000", "2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
-				},
-				{
-					prepareSQL: "set @@time_zone = '+08:00'",
-					sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time desc",
-					result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000", "2020-02-15 19:00:05.000000", "2020-02-15 18:00:01.000000"},
-				},
-				{
-					prepareSQL: "set @@time_zone = '+08:00'",
-					sql:        "select count(*) from cluster_slow_query where time > '2020-02-15 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
-					result:     []string{"9"},
-				},
-				{
-					prepareSQL: "set @@time_zone = '+08:00'",
-					sql:        "select count(*) from cluster_slow_query where (time > '2020-02-16 18:00:00' and time < '2020-05-14 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-17 20:00:00')",
-					result:     []string{"6"},
-				},
-				{
-					prepareSQL: "set @@time_zone = '+08:00'",
-					sql:        "select count(*) from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-02-17 20:00:00.000000' order by time desc",
-					result:     []string{"5"},
-				},
-				{
-					prepareSQL: "set @@time_zone = '+08:00'",
-					sql:        "select time from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc limit 3",
-					result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
-				},
-			}
-			for _, cas := range cases {
-				if len(cas.prepareSQL) > 0 {
-					tk.MustExec(cas.prepareSQL)
-				}
-				tk.MustQuery(cas.sql).Check(testkit.RowsWithSep("|", cas.result...))
-			}
-		}()
+	prepareLogs(t, logData, fileNames)
+	defer func() {
+		removeFiles(t, fileNames)
+	}()
+	tk := testkit.NewTestKit(t, store)
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	require.NoError(t, err)
+	tk.Session().GetSessionVars().TimeZone = loc
+	tk.MustExec("use information_schema")
+	cases := []struct {
+		prepareSQL string
+		sql        string
+		result     []string
+	}{
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000'",
+			result:     []string{"2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select time from cluster_slow_query where time > '2020-02-17 12:00:05.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
+			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:01:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time",
+			result:     []string{"2020-02-15 18:00:01.000000", "2020-02-15 19:00:05.000000", "2020-02-17 18:00:05.000000", "2020-02-17 19:00:00.000000", "2020-05-14 19:03:54.314615"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select time from cluster_slow_query where (time > '2020-02-15 18:00:00' and time < '2020-02-15 20:01:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-14 20:00:00') order by time desc",
+			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000", "2020-02-15 19:00:05.000000", "2020-02-15 18:00:01.000000"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select count(*) from cluster_slow_query where time > '2020-02-15 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc",
+			result:     []string{"9"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select count(*) from cluster_slow_query where (time > '2020-02-16 18:00:00' and time < '2020-05-14 20:00:00') or (time > '2020-02-17 18:00:00' and time < '2020-05-17 20:00:00')",
+			result:     []string{"6"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select count(*) from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-02-17 20:00:00.000000' order by time desc",
+			result:     []string{"5"},
+		},
+		{
+			prepareSQL: "set @@time_zone = '+08:00'",
+			sql:        "select time from cluster_slow_query where time > '2020-02-16 18:00:00.000000' and time < '2020-05-14 20:00:00.000000' order by time desc limit 3",
+			result:     []string{"2020-05-14 19:03:54.314615", "2020-02-17 19:00:00.000000", "2020-02-17 18:00:05.000000"},
+		},
+	}
+	for _, cas := range cases {
+		if len(cas.prepareSQL) > 0 {
+			tk.MustExec(cas.prepareSQL)
+		}
+		tk.MustQuery(cas.sql).Check(testkit.RowsWithSep("|", cas.result...))
 	}
 }
 
@@ -356,34 +302,133 @@ func TestSQLDigestTextRetriever(t *testing.T) {
 			updateDigest.String(): "",
 		},
 	}
-
-	err := r.RetrieveLocal(context.Background(), tk.Session().GetRestrictedSQLExecutor())
+	err := r.RetrieveLocal(context.Background(), tk.Session())
 	require.NoError(t, err)
 	require.Equal(t, insertNormalized, r.SQLDigestsMap[insertDigest.String()])
 	require.Equal(t, "", r.SQLDigestsMap[updateDigest.String()])
 }
 
-func prepareLogs(t *testing.T, logData []string, fileNames []string) {
-	writeFile := func(file string, data string) {
-		if strings.HasSuffix(file, ".gz") {
-			f, err := os.Create(file)
-			require.NoError(t, err)
-			gz := gzip.NewWriter(f)
-			_, err = gz.Write([]byte(data))
-			require.NoError(t, err)
-			require.NoError(t, gz.Close())
-			require.NoError(t, f.Close())
-		} else {
-			f, err := os.OpenFile(file, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
-			require.NoError(t, err)
-			_, err = f.Write([]byte(data))
-			require.NoError(t, err)
-			require.NoError(t, f.Close())
-		}
-	}
+func TestFunctionDecodeSQLDigests(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := createRPCServer(t, dom)
+	defer srv.Stop()
 
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("set global tidb_enable_stmt_summary = 1")
+	tk.MustQuery("select @@global.tidb_enable_stmt_summary").Check(testkit.Rows("1"))
+	tk.MustExec("drop table if exists test_func_decode_sql_digests")
+	tk.MustExec("create table test_func_decode_sql_digests(id int primary key, v int)")
+
+	q1 := "begin"
+	norm1, digest1 := parser.NormalizeDigest(q1)
+	q2 := "select @@tidb_current_ts"
+	norm2, digest2 := parser.NormalizeDigest(q2)
+	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
+	norm3, digest3 := parser.NormalizeDigest(q3)
+
+	// TIDB_DECODE_SQL_DIGESTS function doesn't actually do "decoding", instead it queries `statements_summary` and it's
+	// variations for the corresponding statements.
+	// Execute the statements so that the queries will be saved into statements_summary table.
+	tk.MustExec(q1)
+	// Save the ts to query the transaction from tidb_trx.
+	ts, err := strconv.ParseUint(tk.MustQuery(q2).Rows()[0][0].(string), 10, 64)
+	require.NoError(t, err)
+	require.Greater(t, ts, uint64(0))
+	tk.MustExec(q3)
+	tk.MustExec("rollback")
+
+	// Test statements truncating.
+	decoded := fmt.Sprintf(`["%s","%s","%s"]`, norm1, norm2, norm3)
+	digests := fmt.Sprintf(`["%s","%s","%s"]`, digest1, digest2, digest3)
+	tk.MustQuery("select tidb_decode_sql_digests(?, 0)", digests).Check(testkit.Rows(decoded))
+	// The three queries are shorter than truncate length, equal to truncate length and longer than truncate length respectively.
+	tk.MustQuery("select tidb_decode_sql_digests(?, ?)", digests, len(norm2)).Check(testkit.Rows(
+		"[\"begin\",\"select @@tidb_current_ts\",\"select `id` , `v` from `...\"]"))
+
+	// Empty array.
+	tk.MustQuery("select tidb_decode_sql_digests('[]')").Check(testkit.Rows("[]"))
+
+	// NULL
+	tk.MustQuery("select tidb_decode_sql_digests(null)").Check(testkit.Rows("<nil>"))
+
+	// Array containing wrong types and not-existing digests (maps to null).
+	tk.MustQuery("select tidb_decode_sql_digests(?)", fmt.Sprintf(`["%s",1,null,"%s",{"a":1},[2],"%s","","abcde"]`, digest1, digest2, digest3)).
+		Check(testkit.Rows(fmt.Sprintf(`["%s",null,null,"%s",null,null,"%s",null,null]`, norm1, norm2, norm3)))
+
+	// Not JSON array (throws warnings)
+	tk.MustQuery(`select tidb_decode_sql_digests('{"a":1}')`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1210 The argument can't be unmarshalled as JSON array: '{"a":1}'`))
+	tk.MustQuery(`select tidb_decode_sql_digests('aabbccdd')`).Check(testkit.Rows("<nil>"))
+	tk.MustQuery(`show warnings`).Check(testkit.Rows(`Warning 1210 The argument can't be unmarshalled as JSON array: 'aabbccdd'`))
+
+	// Invalid argument count.
+	tk.MustGetErrCode("select tidb_decode_sql_digests('a', 1, 2)", 1582)
+	tk.MustGetErrCode("select tidb_decode_sql_digests()", 1582)
+}
+
+func TestFunctionDecodeSQLDigestsPrivilege(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := createRPCServer(t, dom)
+	defer srv.Stop()
+
+	dropUserTk := testkit.NewTestKit(t, store)
+	require.NoError(t, dropUserTk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+
+	tk := testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("create user 'testuser'@'localhost'")
+	defer dropUserTk.MustExec("drop user 'testuser'@'localhost'")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustGetErrMsg("select tidb_decode_sql_digests('[\"aa\"]')", "[expression:1227]Access denied; you need (at least one of) the PROCESS privilege(s) for this operation")
+
+	tk = testkit.NewTestKit(t, store)
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("create user 'testuser2'@'localhost'")
+	defer dropUserTk.MustExec("drop user 'testuser2'@'localhost'")
+	tk.MustExec("grant process on *.* to 'testuser2'@'localhost'")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser2", Hostname: "localhost"}, nil, nil, nil))
+	tk.MustExec("select tidb_decode_sql_digests('[\"aa\"]')")
+}
+
+func TestFunctionEncodeSQLDigest(t *testing.T) {
+	store, dom := testkit.CreateMockStoreAndDomain(t)
+	srv := createRPCServer(t, dom)
+	defer srv.Stop()
+
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("use test")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustExec("drop table if exists test_func_encode_sql_digest")
+	tk.MustExec("create table test_func_encode_sql_digest(id int primary key, v int)")
+
+	q1 := "begin"
+	digest1 := parser.DigestHash(q1)
+	q2 := "select @@tidb_current_ts"
+	digest2 := parser.DigestHash(q2)
+	q3 := "select id, v from test_func_decode_sql_digests where id = 1 for update"
+	digest3 := parser.DigestHash(q3)
+
+	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q1)).Check(testkit.Rows(digest1.String()))
+	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q2)).Check(testkit.Rows(digest2.String()))
+	tk.MustQuery(fmt.Sprintf("select tidb_encode_sql_digest(\"%s\")", q3)).Check(testkit.Rows(digest3.String()))
+
+	tk.MustQuery("select tidb_encode_sql_digest(null)").Check(testkit.Rows("<nil>"))
+	tk.MustGetErrCode("select tidb_encode_sql_digest()", 1582)
+
+	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1;')").Check(testkit.Rows("1"))
+	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 1 ;')").Check(testkit.Rows("1"))
+	tk.MustQuery("select (select tidb_encode_sql_digest('select 1')) = tidb_encode_sql_digest('select 2 ;')").Check(testkit.Rows("1"))
+}
+
+func prepareLogs(t *testing.T, logData []string, fileNames []string) {
 	for i, log := range logData {
-		writeFile(fileNames[i], log)
+		f, err := os.OpenFile(fileNames[i], os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0644)
+		require.NoError(t, err)
+		_, err = f.Write([]byte(log))
+		require.NoError(t, err)
+		require.NoError(t, f.Close())
 	}
 }
 
@@ -391,39 +436,4 @@ func removeFiles(t *testing.T, fileNames []string) {
 	for _, fileName := range fileNames {
 		require.NoError(t, os.Remove(fileName))
 	}
-}
-
-func TestClusterTableSlowQuerySessionConnectAttrs(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-	srv := createRPCServer(t, dom)
-	defer srv.Stop()
-
-	logData := `
-# Time: 2024-01-15T10:00:00.000000+08:00
-# Txn_start_ts: 123456789
-# User@Host: root[root] @ localhost [127.0.0.1]
-# Query_time: 0.5
-# Digest: 42a1c8aae6f133e934d4bf0147491709a8812ea05ff8819ec522780fe657b772
-# Is_internal: false
-# Succ: true
-` + testutil.DefaultSessionConnectAttrsSlowLogLine() + `
-select * from t;`
-	fileName := "tidb-slow-query-attrs.log"
-	prepareLogs(t, []string{logData}, []string{fileName})
-	defer removeFiles(t, []string{fileName})
-
-	defer config.RestoreFunc()()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Log.SlowQueryFile = fileName
-	})
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use information_schema")
-
-	// Verify Session_connect_attrs column is present in cluster_slow_query as well.
-	clusterRows := tk.MustQuery("select Session_connect_attrs from information_schema.cluster_slow_query " +
-		"where time > '2024-01-01 00:00:00' and query = 'select * from t;'").Rows()
-	require.Len(t, clusterRows, 1)
-	clusterAttrsStr := clusterRows[0][0].(string)
-	testutil.RequireContainsDefaultSessionConnectAttrs(t, clusterAttrsStr)
 }

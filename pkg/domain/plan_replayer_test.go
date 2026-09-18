@@ -15,87 +15,63 @@
 package domain
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/planner/extstore"
-	"github.com/pingcap/tidb/pkg/util/replayer"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
 )
 
 func TestPlanReplayerDifferentGC(t *testing.T) {
-	ctx := context.Background()
-	tempDir := t.TempDir()
-	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
-	require.NoError(t, err)
-	extstore.SetGlobalExtStorageForTest(storage)
-	defer func() {
-		extstore.SetGlobalExtStorageForTest(nil)
-		storage.Close()
-	}()
-
 	dirName := replayer.GetPlanReplayerDirName()
 
 	time1 := time.Now().Add(-7 * 25 * time.Hour).UnixNano()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time1)))
-	file1, fileName1, err := replayer.GeneratePlanReplayerFile(ctx, storage, true, false, false)
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time1)))
+	file1, fileName1, err := replayer.GeneratePlanReplayerFile(true, false, false)
 	require.NoError(t, err)
 	require.NoError(t, file1.Close())
 	filePath1 := filepath.Join(dirName, fileName1)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/replayer/InjectPlanReplayerFileNameTimeField"))
 
 	time2 := time.Now().Add(-7 * 23 * time.Hour).UnixNano()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time2)))
-	file2, fileName2, err := replayer.GeneratePlanReplayerFile(ctx, storage, true, false, false)
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time2)))
+	file2, fileName2, err := replayer.GeneratePlanReplayerFile(true, false, false)
 	require.NoError(t, err)
 	require.NoError(t, file2.Close())
 	filePath2 := filepath.Join(dirName, fileName2)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/replayer/InjectPlanReplayerFileNameTimeField"))
 
 	time3 := time.Now().Add(-2 * time.Hour).UnixNano()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time3)))
-	file3, fileName3, err := replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time3)))
+	file3, fileName3, err := replayer.GeneratePlanReplayerFile(false, false, false)
 	require.NoError(t, err)
 	require.NoError(t, file3.Close())
 	filePath3 := filepath.Join(dirName, fileName3)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/replayer/InjectPlanReplayerFileNameTimeField"))
 
 	time4 := time.Now().UnixNano()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time4)))
-	file4, fileName4, err := replayer.GeneratePlanReplayerFile(ctx, storage, false, false, false)
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/replayer/InjectPlanReplayerFileNameTimeField", fmt.Sprintf("return(%d)", time4)))
+	file4, fileName4, err := replayer.GeneratePlanReplayerFile(false, false, false)
 	require.NoError(t, err)
 	require.NoError(t, file4.Close())
 	filePath4 := filepath.Join(dirName, fileName4)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/util/replayer/InjectPlanReplayerFileNameTimeField"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/replayer/InjectPlanReplayerFileNameTimeField"))
 
 	handler := &dumpFileGcChecker{
 		paths: []string{dirName},
 	}
-	handler.GCDumpFiles(ctx, time.Hour, time.Hour*24*7)
-	exists, err := storage.FileExists(ctx, filePath1)
-	require.NoError(t, err)
-	require.False(t, exists)
-	exists, err = storage.FileExists(ctx, filePath2)
-	require.NoError(t, err)
-	require.True(t, exists)
-	exists, err = storage.FileExists(ctx, filePath3)
-	require.NoError(t, err)
-	require.False(t, exists)
-	exists, err = storage.FileExists(ctx, filePath4)
-	require.NoError(t, err)
-	require.True(t, exists)
+	handler.GCDumpFiles(time.Hour, time.Hour*24*7)
+	require.NoFileExists(t, filePath1)
+	require.FileExists(t, filePath2)
+	require.NoFileExists(t, filePath3)
+	require.FileExists(t, filePath4)
 
-	handler.GCDumpFiles(ctx, 0, 0)
-	exists, err = storage.FileExists(ctx, filePath2)
-	require.NoError(t, err)
-	require.False(t, exists)
-	exists, err = storage.FileExists(ctx, filePath4)
-	require.NoError(t, err)
-	require.False(t, exists)
+	handler.GCDumpFiles(0, 0)
+	require.NoFileExists(t, filePath2)
+	require.NoFileExists(t, filePath4)
 }
 
 func TestDumpGCFileParseTime(t *testing.T) {
@@ -157,18 +133,4 @@ func TestDumpGCFileParseTime(t *testing.T) {
 	require.NoError(t, err)
 	_, err = parseTime(pName)
 	require.NoError(t, err)
-}
-
-func TestSendTask(t *testing.T) {
-	h := &planReplayerHandle{
-		planReplayerTaskDumpHandle: &planReplayerTaskDumpHandle{
-			taskCH: make(chan *PlanReplayerDumpTask, 1),
-		},
-		planReplayerTaskCollectorHandle: &planReplayerTaskCollectorHandle{},
-	}
-	task1 := &PlanReplayerDumpTask{}
-	task2 := &PlanReplayerDumpTask{}
-	h.SendTask(task1)
-	success := h.SendTask(task2)
-	require.False(t, success)
 }

@@ -15,23 +15,16 @@
 package replayer
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/base64"
 	"fmt"
-	"io"
+	"os"
 	"path/filepath"
-	"sync"
 	"time"
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/objstore/objectio"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-)
-
-const (
-	planReplayerDirName = "replayer"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
 )
 
 // PlanReplayerTaskKey indicates key of a plan replayer task
@@ -41,36 +34,21 @@ type PlanReplayerTaskKey struct {
 }
 
 // GeneratePlanReplayerFile generates plan replayer file
-func GeneratePlanReplayerFile(ctx context.Context, storage storeapi.Storage, isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (io.WriteCloser, string, error) {
+func GeneratePlanReplayerFile(isCapture, isContinuesCapture, enableHistoricalStatsForCapture bool) (*os.File, string, error) {
 	path := GetPlanReplayerDirName()
+	err := os.MkdirAll(path, os.ModePerm)
+	if err != nil {
+		return nil, "", errors.AddStack(err)
+	}
 	fileName, err := generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistoricalStatsForCapture)
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	writer, err := storage.Create(ctx, filepath.Join(path, fileName), nil)
+	zf, err := os.Create(filepath.Join(path, fileName))
 	if err != nil {
 		return nil, "", errors.AddStack(err)
 	}
-	zf := NewFileWriter(ctx, writer)
-	return zf, fileName, nil
-}
-
-// NewFileWriter creates a new io.WriteCloser from objectio.Writer.
-func NewFileWriter(ctx context.Context, writer objectio.Writer) io.WriteCloser {
-	return &fileWriter{ctx: ctx, writer: writer}
-}
-
-type fileWriter struct {
-	ctx    context.Context
-	writer objectio.Writer
-}
-
-func (w *fileWriter) Write(p []byte) (int, error) {
-	return w.writer.Write(w.ctx, p)
-}
-
-func (w *fileWriter) Close() error {
-	return w.writer.Close(w.ctx)
+	return zf, fileName, err
 }
 
 // GeneratePlanReplayerFileName generates plan replayer capture task name
@@ -101,15 +79,9 @@ func generatePlanReplayerFileName(isCapture, isContinuesCapture, enableHistorica
 	return fmt.Sprintf("replayer_%v_%v.zip", key, time), nil
 }
 
-var (
-	// PlanReplayerPath is plan replayer directory path
-	PlanReplayerPath string
-	// PlanReplayerPathOnce ensures PlanReplayerPath is initialized only once
-	PlanReplayerPathOnce sync.Once
-)
-
 // GetPlanReplayerDirName returns plan replayer directory path.
-// The path is a relative path for external storage.
+// The path is related to the process id.
 func GetPlanReplayerDirName() string {
-	return planReplayerDirName
+	tidbLogDir := filepath.Dir(config.GetGlobalConfig().Log.File.Filename)
+	return filepath.Join(tidbLogDir, "replayer")
 }

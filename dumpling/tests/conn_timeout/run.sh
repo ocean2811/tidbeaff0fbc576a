@@ -31,7 +31,7 @@ for i in {1..3}; do
 done
 
 # run dumpling, should not meet connection error
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/SetWaitTimeout=return(2);github.com/pingcap/tidb/dumpling/export/SmallDumpChanSize=return();github.com/pingcap/tidb/dumpling/export/AtEveryRow=sleep(100)"
+export GO_FAILPOINTS="github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/SetWaitTimeout=return(2);github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/SmallDumpChanSize=return();github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/AtEveryRow=sleep(100)"
 export DUMPLING_TEST_DATABASE=$DB_NAME
 run_dumpling --loglevel debug --threads 1 --rows 1
 export GO_FAILPOINTS=""

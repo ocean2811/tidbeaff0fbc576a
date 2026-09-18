@@ -6,10 +6,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/br/pkg/conn/util"
-	"github.com/pingcap/tidb/br/pkg/utils/storewatch"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/conn/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils/storewatch"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/pd/client/opt"
+	pd "github.com/tikv/pd/client"
 )
 
 type SequentialReturningStoreMeta struct {
@@ -20,7 +20,7 @@ func NewSequentialReturningStoreMeta(sequence [][]*metapb.Store) util.StoreMeta 
 	return &SequentialReturningStoreMeta{sequence: sequence}
 }
 
-func (s *SequentialReturningStoreMeta) GetAllStores(ctx context.Context, opts ...opt.GetStoreOption) ([]*metapb.Store, error) {
+func (s *SequentialReturningStoreMeta) GetAllStores(ctx context.Context, opts ...pd.GetStoreOption) ([]*metapb.Store, error) {
 	if len(s.sequence) == 0 {
 		return nil, fmt.Errorf("too many call to `GetAllStores` in test")
 	}

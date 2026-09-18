@@ -16,7 +16,7 @@ package opcode
 import (
 	"io"
 
-	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
 )
 
 // Op is opcode type.

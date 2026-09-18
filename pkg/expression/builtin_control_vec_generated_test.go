@@ -20,8 +20,8 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 )
 
 var defaultControlIntGener = &controlIntGener{zeroRation: 0.3, defaultGener: *newDefaultGener(0.3, types.ETInt)}
@@ -31,7 +31,7 @@ type controlIntGener struct {
 	defaultGener
 }
 
-func (g *controlIntGener) gen() any {
+func (g *controlIntGener) gen() interface{} {
 	if rand.Float64() < g.zeroRation {
 		return int64(0)
 	}

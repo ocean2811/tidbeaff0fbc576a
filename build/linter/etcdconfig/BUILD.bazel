@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "etcdconfig",
     srcs = ["analyzer.go"],
-    importpath = "github.com/pingcap/tidb/build/linter/etcdconfig",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/build/linter/etcdconfig",
     visibility = ["//visibility:public"],
     deps = [
         "//build/linter/util",

@@ -24,9 +24,9 @@ import (
 
 	"github.com/google/pprof/profile"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/cpuprofile"
-	"github.com/pingcap/tidb/pkg/util/texttree"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/cpuprofile"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/texttree"
 )
 
 // CPUProfileInterval represents the duration of sampling CPU
@@ -131,7 +131,7 @@ func (*Collector) ParseGoroutines(reader io.Reader) ([][]types.Datum, error) {
 		}
 		state := strings.Trim(headers[1], "[]")
 		stack := strings.Split(strings.TrimSpace(goroutine[colIndex+1:]), "\n")
-		for i := range len(stack) / 2 {
+		for i := 0; i < len(stack)/2; i++ {
 			fn := stack[i*2]
 			loc := stack[i*2+1]
 			var identifier string

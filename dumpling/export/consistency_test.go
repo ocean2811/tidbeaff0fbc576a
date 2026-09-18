@@ -10,10 +10,10 @@ import (
 
 	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/go-sql-driver/mysql"
-	"github.com/pingcap/tidb/br/pkg/version"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
-	dbconfig "github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/errno"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
+	dbconfig "github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
 	"github.com/stretchr/testify/require"
 )
 

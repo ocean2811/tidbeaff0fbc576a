@@ -15,6 +15,7 @@
 package stmtsummary
 
 import (
+	"bytes"
 	"fmt"
 	"math"
 	"strings"
@@ -22,11 +23,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
-	"github.com/pingcap/tidb/pkg/util/ppcpuusage"
-	"github.com/pingcap/tidb/pkg/util/stmtsummary"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/execdetails"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/plancodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/stmtsummary"
 	"github.com/tikv/client-go/v2/util"
 )
 
@@ -47,8 +47,6 @@ type StmtRecord struct {
 	NormalizedSQL string `json:"normalized_sql"`
 	TableNames    string `json:"table_names"`
 	IsInternal    bool   `json:"is_internal"`
-	BindingSQL    string `json:"binding_sql"`
-	BindingDigest string `json:"binding_digest"`
 	// Basic
 	SampleSQL        string   `json:"sample_sql"`
 	Charset          string   `json:"charset"`
@@ -76,33 +74,26 @@ type StmtRecord struct {
 	MaxCopWaitTime       time.Duration `json:"max_cop_wait_time"`
 	MaxCopWaitAddress    string        `json:"max_cop_wait_address"`
 	// TiKV
-	SumProcessTime                 time.Duration `json:"sum_process_time"`
-	MaxProcessTime                 time.Duration `json:"max_process_time"`
-	SumWaitTime                    time.Duration `json:"sum_wait_time"`
-	MaxWaitTime                    time.Duration `json:"max_wait_time"`
-	SumBackoffTime                 time.Duration `json:"sum_backoff_time"`
-	MaxBackoffTime                 time.Duration `json:"max_backoff_time"`
-	SumTotalKeys                   int64         `json:"sum_total_keys"`
-	MaxTotalKeys                   int64         `json:"max_total_keys"`
-	SumProcessedKeys               int64         `json:"sum_processed_keys"`
-	MaxProcessedKeys               int64         `json:"max_processed_keys"`
-	SumRocksdbDeleteSkippedCount   uint64        `json:"sum_rocksdb_delete_skipped_count"`
-	MaxRocksdbDeleteSkippedCount   uint64        `json:"max_rocksdb_delete_skipped_count"`
-	SumRocksdbKeySkippedCount      uint64        `json:"sum_rocksdb_key_skipped_count"`
-	MaxRocksdbKeySkippedCount      uint64        `json:"max_rocksdb_key_skipped_count"`
-	SumRocksdbBlockCacheHitCount   uint64        `json:"sum_rocksdb_block_cache_hit_count"`
-	MaxRocksdbBlockCacheHitCount   uint64        `json:"max_rocksdb_block_cache_hit_count"`
-	SumRocksdbBlockReadCount       uint64        `json:"sum_rocksdb_block_read_count"`
-	MaxRocksdbBlockReadCount       uint64        `json:"max_rocksdb_block_read_count"`
-	SumRocksdbBlockReadByte        uint64        `json:"sum_rocksdb_block_read_byte"`
-	MaxRocksdbBlockReadByte        uint64        `json:"max_rocksdb_block_read_byte"`
-	IAExecCount                    int64         `json:"ia_remote_exec_count"`
-	SumIARemoteReadSegmentCount    uint64        `json:"sum_ia_remote_read_segment_count"`
-	MaxIARemoteReadSegmentCount    uint64        `json:"max_ia_remote_read_segment_count"`
-	SumIARemoteReadSegmentSize     uint64        `json:"sum_ia_remote_read_segment_size"`
-	MaxIARemoteReadSegmentSize     uint64        `json:"max_ia_remote_read_segment_size"`
-	SumIARemoteReadSegmentWaitTime time.Duration `json:"sum_ia_remote_read_segment_wait_time"`
-	MaxIARemoteReadSegmentWaitTime time.Duration `json:"max_ia_remote_read_segment_wait_time"`
+	SumProcessTime               time.Duration `json:"sum_process_time"`
+	MaxProcessTime               time.Duration `json:"max_process_time"`
+	SumWaitTime                  time.Duration `json:"sum_wait_time"`
+	MaxWaitTime                  time.Duration `json:"max_wait_time"`
+	SumBackoffTime               time.Duration `json:"sum_backoff_time"`
+	MaxBackoffTime               time.Duration `json:"max_backoff_time"`
+	SumTotalKeys                 int64         `json:"sum_total_keys"`
+	MaxTotalKeys                 int64         `json:"max_total_keys"`
+	SumProcessedKeys             int64         `json:"sum_processed_keys"`
+	MaxProcessedKeys             int64         `json:"max_processed_keys"`
+	SumRocksdbDeleteSkippedCount uint64        `json:"sum_rocksdb_delete_skipped_count"`
+	MaxRocksdbDeleteSkippedCount uint64        `json:"max_rocksdb_delete_skipped_count"`
+	SumRocksdbKeySkippedCount    uint64        `json:"sum_rocksdb_key_skipped_count"`
+	MaxRocksdbKeySkippedCount    uint64        `json:"max_rocksdb_key_skipped_count"`
+	SumRocksdbBlockCacheHitCount uint64        `json:"sum_rocksdb_block_cache_hit_count"`
+	MaxRocksdbBlockCacheHitCount uint64        `json:"max_rocksdb_block_cache_hit_count"`
+	SumRocksdbBlockReadCount     uint64        `json:"sum_rocksdb_block_read_count"`
+	MaxRocksdbBlockReadCount     uint64        `json:"max_rocksdb_block_read_count"`
+	SumRocksdbBlockReadByte      uint64        `json:"sum_rocksdb_block_read_byte"`
+	MaxRocksdbBlockReadByte      uint64        `json:"max_rocksdb_block_read_byte"`
 	// Txn
 	CommitCount          int64               `json:"commit_count"`
 	SumGetCommitTsTime   time.Duration       `json:"sum_get_commit_ts_time"`
@@ -138,8 +129,6 @@ type StmtRecord struct {
 	SumPDTotal           time.Duration `json:"sum_pd_total"`
 	SumBackoffTotal      time.Duration `json:"sum_backoff_total"`
 	SumWriteSQLRespTotal time.Duration `json:"sum_write_sql_resp_total"`
-	SumTidbCPU           time.Duration `json:"sum_tidb_cpu"`
-	SumTikvCPU           time.Duration `json:"sum_tikv_cpu"`
 	SumResultRows        int64         `json:"sum_result_rows"`
 	MaxResultRows        int64         `json:"max_result_rows"`
 	MinResultRows        int64         `json:"min_result_rows"`
@@ -161,17 +150,6 @@ type StmtRecord struct {
 	// request units(RU)
 	ResourceGroupName string `json:"resource_group_name"`
 	stmtsummary.StmtRUSummary
-
-	PlanCacheUnqualifiedCount      int64  `json:"plan_cache_unqualified_count"`
-	PlanCacheUnqualifiedLastReason string `json:"plan_cache_unqualified_last_reason"` // the reason why this query is unqualified for the plan cache
-
-	SumMemArbitration float64 `json:"sum_mem_arbitration"`
-	MaxMemArbitration float64 `json:"max_mem_arbitration"`
-
-	stmtsummary.StmtNetworkTrafficSummary
-
-	StorageKV  bool `json:"storage_kv"`  // query read from TiKV
-	StorageMPP bool `json:"storage_mpp"` // query read from TiFlash
 }
 
 // NewStmtRecord creates a new StmtRecord from StmtExecInfo.
@@ -180,46 +158,47 @@ type StmtRecord struct {
 // statistics of the StmtExecInfo into the StmtRecord.
 func NewStmtRecord(info *stmtsummary.StmtExecInfo) *StmtRecord {
 	// Use "," to separate table names to support FIND_IN_SET.
-	var tableNames strings.Builder
-	for _, value := range info.StmtCtx.Tables {
+	var buffer bytes.Buffer
+	for i, value := range info.StmtCtx.Tables {
 		// In `create database` statement, DB name is not empty but table name is empty.
 		if len(value.Table) == 0 {
 			continue
 		}
-		if tableNames.Len() > 0 {
-			tableNames.WriteByte(',')
+		buffer.WriteString(strings.ToLower(value.DB))
+		buffer.WriteString(".")
+		buffer.WriteString(strings.ToLower(value.Table))
+		if i < len(info.StmtCtx.Tables)-1 {
+			buffer.WriteString(",")
 		}
-		tableNames.WriteString(strings.ToLower(value.DB))
-		tableNames.WriteByte('.')
-		tableNames.WriteString(strings.ToLower(value.Table))
 	}
+	tableNames := buffer.String()
 	planDigest := info.PlanDigest
-	if len(planDigest) == 0 {
+	if info.PlanDigestGen != nil && len(planDigest) == 0 {
 		// It comes here only when the plan is 'Point_Get'.
-		planDigest = info.LazyInfo.GetPlanDigest()
+		planDigest = info.PlanDigestGen()
 	}
 	// sampleSQL / authUsers(sampleUser) / samplePlan / prevSQL / indexNames store the values shown at the first time,
 	// because it compacts performance to update every time.
-	samplePlan, planHint, _ := info.LazyInfo.GetEncodedPlan()
+	samplePlan, planHint := info.PlanGenerator()
 	if len(samplePlan) > MaxEncodedPlanSizeInBytes {
 		samplePlan = plancodec.PlanDiscardedEncoded
 	}
-	binPlan := info.LazyInfo.GetBinaryPlan()
-	if len(binPlan) > MaxEncodedPlanSizeInBytes {
-		binPlan = plancodec.BinaryPlanDiscardedEncoded
+	binPlan := ""
+	if info.BinaryPlanGenerator != nil {
+		binPlan = info.BinaryPlanGenerator()
+		if len(binPlan) > MaxEncodedPlanSizeInBytes {
+			binPlan = plancodec.BinaryPlanDiscardedEncoded
+		}
 	}
-	bindingSQL, bindingDigest := info.LazyInfo.GetBindingSQLAndDigest()
 	return &StmtRecord{
 		SchemaName:    info.SchemaName,
 		Digest:        info.Digest,
 		PlanDigest:    planDigest,
 		StmtType:      info.StmtCtx.StmtType,
-		NormalizedSQL: formatSQL(info.NormalizedSQL),
-		TableNames:    tableNames.String(),
+		NormalizedSQL: info.NormalizedSQL,
+		TableNames:    tableNames,
 		IsInternal:    info.IsInternal,
-		BindingSQL:    bindingSQL,
-		BindingDigest: bindingDigest,
-		SampleSQL:     formatSQL(info.LazyInfo.GetOriginalSQL()),
+		SampleSQL:     formatSQL(info.OriginalSQL),
 		Charset:       info.Charset,
 		Collation:     info.Collation,
 		// PrevSQL is already truncated to cfg.Log.QueryLogMaxLen.
@@ -271,17 +250,15 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 		r.MaxCompileLatency = info.CompileLatency
 	}
 	// Coprocessor
-	if info.CopTasks != nil {
-		numCopTasks := int64(info.CopTasks.NumCopTasks)
-		r.SumNumCopTasks += numCopTasks
-		if info.CopTasks.MaxProcessTime > r.MaxCopProcessTime {
-			r.MaxCopProcessTime = info.CopTasks.MaxProcessTime
-			r.MaxCopProcessAddress = info.CopTasks.MaxProcessAddress
-		}
-		if info.CopTasks.MaxWaitTime > r.MaxCopWaitTime {
-			r.MaxCopWaitTime = info.CopTasks.MaxWaitTime
-			r.MaxCopWaitAddress = info.CopTasks.MaxWaitAddress
-		}
+	numCopTasks := int64(info.CopTasks.NumCopTasks)
+	r.SumNumCopTasks += numCopTasks
+	if info.CopTasks.MaxProcessTime > r.MaxCopProcessTime {
+		r.MaxCopProcessTime = info.CopTasks.MaxProcessTime
+		r.MaxCopProcessAddress = info.CopTasks.MaxProcessAddress
+	}
+	if info.CopTasks.MaxWaitTime > r.MaxCopWaitTime {
+		r.MaxCopWaitTime = info.CopTasks.MaxWaitTime
+		r.MaxCopWaitAddress = info.CopTasks.MaxWaitAddress
 	}
 	// TiKV
 	r.SumProcessTime += info.ExecDetail.TimeDetail.ProcessTime
@@ -324,22 +301,6 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 		r.SumRocksdbBlockReadByte += info.ExecDetail.ScanDetail.RocksdbBlockReadByte
 		if info.ExecDetail.ScanDetail.RocksdbBlockReadByte > r.MaxRocksdbBlockReadByte {
 			r.MaxRocksdbBlockReadByte = info.ExecDetail.ScanDetail.RocksdbBlockReadByte
-		}
-		iaStats := execdetails.GetIARemoteReadSegmentStats(info.ExecDetail.ScanDetail)
-		if iaStats.Count > 0 {
-			r.IAExecCount++
-		}
-		r.SumIARemoteReadSegmentCount += iaStats.Count
-		if iaStats.Count > r.MaxIARemoteReadSegmentCount {
-			r.MaxIARemoteReadSegmentCount = iaStats.Count
-		}
-		r.SumIARemoteReadSegmentSize += iaStats.Bytes
-		if iaStats.Bytes > r.MaxIARemoteReadSegmentSize {
-			r.MaxIARemoteReadSegmentSize = iaStats.Bytes
-		}
-		r.SumIARemoteReadSegmentWaitTime += iaStats.WaitTime
-		if iaStats.WaitTime > r.MaxIARemoteReadSegmentWaitTime {
-			r.MaxIARemoteReadSegmentWaitTime = iaStats.WaitTime
 		}
 	}
 	// Txn
@@ -407,10 +368,6 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	} else {
 		r.PlanInCache = false
 	}
-	if info.PlanCacheUnqualified != "" {
-		r.PlanCacheUnqualifiedCount++
-		r.PlanCacheUnqualifiedLastReason = info.PlanCacheUnqualified
-	}
 	// SPM
 	if info.PlanInBinding {
 		r.PlanInBinding = true
@@ -422,11 +379,6 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	r.SumMem += info.MemMax
 	if info.MemMax > r.MaxMem {
 		r.MaxMem = info.MemMax
-	}
-
-	r.SumMemArbitration += info.MemArbitration
-	if info.MemArbitration > r.MaxMemArbitration {
-		r.MaxMemArbitration = info.MemArbitration
 	}
 	r.SumDisk += info.DiskMax
 	if info.DiskMax > r.MaxDisk {
@@ -453,21 +405,12 @@ func (r *StmtRecord) Add(info *stmtsummary.StmtExecInfo) {
 	} else {
 		r.MinResultRows = 0
 	}
-	tikvExecDetails := execdetails.LoadTiKVExecDetails(info.TiKVExecDetails)
-	r.SumKVTotal += time.Duration(tikvExecDetails.WaitKVRespDuration)
-	r.SumPDTotal += time.Duration(tikvExecDetails.WaitPDRespDuration)
-	r.SumBackoffTotal += time.Duration(tikvExecDetails.BackoffDuration)
-	r.SumWriteSQLRespTotal += info.WriteSQLRespDuration
-	r.SumTidbCPU += info.CPUUsages.TidbCPUTime
-	r.SumTikvCPU += info.CPUUsages.TikvCPUTime
-
-	// Networks
-	r.StmtNetworkTrafficSummary.Add(&tikvExecDetails)
+	r.SumKVTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitKVRespDuration))
+	r.SumPDTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.WaitPDRespDuration))
+	r.SumBackoffTotal += time.Duration(atomic.LoadInt64(&info.TiKVExecDetails.BackoffDuration))
+	r.SumWriteSQLRespTotal += info.StmtExecDetails.WriteSQLRespDuration
 	// RU
-	r.StmtRUSummary.Add(info.RUDetail, info.TotalRUV2)
-
-	r.StorageKV = info.StmtCtx.IsTiKV.Load()
-	r.StorageMPP = info.StmtCtx.IsTiFlash.Load()
+	r.StmtRUSummary.Add(info.RUDetail)
 }
 
 // Merge merges the statistics of another StmtRecord to this StmtRecord.
@@ -546,19 +489,6 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	if r.MaxRocksdbBlockReadByte < other.MaxRocksdbBlockReadByte {
 		r.MaxRocksdbBlockReadByte = other.MaxRocksdbBlockReadByte
 	}
-	r.IAExecCount += other.IAExecCount
-	r.SumIARemoteReadSegmentCount += other.SumIARemoteReadSegmentCount
-	if r.MaxIARemoteReadSegmentCount < other.MaxIARemoteReadSegmentCount {
-		r.MaxIARemoteReadSegmentCount = other.MaxIARemoteReadSegmentCount
-	}
-	r.SumIARemoteReadSegmentSize += other.SumIARemoteReadSegmentSize
-	if r.MaxIARemoteReadSegmentSize < other.MaxIARemoteReadSegmentSize {
-		r.MaxIARemoteReadSegmentSize = other.MaxIARemoteReadSegmentSize
-	}
-	r.SumIARemoteReadSegmentWaitTime += other.SumIARemoteReadSegmentWaitTime
-	if r.MaxIARemoteReadSegmentWaitTime < other.MaxIARemoteReadSegmentWaitTime {
-		r.MaxIARemoteReadSegmentWaitTime = other.MaxIARemoteReadSegmentWaitTime
-	}
 	// Txn
 	r.CommitCount += other.CommitCount
 	r.SumPrewriteTime += other.SumPrewriteTime
@@ -612,10 +542,6 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	}
 	// Plan cache
 	r.PlanCacheHits += other.PlanCacheHits
-	r.PlanCacheUnqualifiedCount += other.PlanCacheUnqualifiedCount
-	if other.PlanCacheUnqualifiedLastReason != "" {
-		r.PlanCacheUnqualifiedLastReason = other.PlanCacheUnqualifiedLastReason
-	}
 	// Other
 	r.SumAffectedRows += other.SumAffectedRows
 	r.SumMem += other.SumMem
@@ -638,8 +564,6 @@ func (r *StmtRecord) Merge(other *StmtRecord) {
 	r.SumPDTotal += other.SumPDTotal
 	r.SumBackoffTotal += other.SumBackoffTotal
 	r.SumWriteSQLRespTotal += other.SumWriteSQLRespTotal
-	r.SumTidbCPU += other.SumTidbCPU
-	r.SumTikvCPU += other.SumTikvCPU
 	r.SumErrors += other.SumErrors
 	r.StmtRUSummary.Merge(&other.StmtRUSummary)
 }
@@ -654,14 +578,14 @@ func formatSQL(sql string) string {
 		fmt.Fprintf(&result, "(len:%d)", length)
 		return result.String()
 	}
-	return strings.Clone(sql)
+	return sql
 }
 
 func maxSQLLength() uint32 {
 	if GlobalStmtSummary != nil {
 		return GlobalStmtSummary.MaxSQLLength()
 	}
-	return 32768
+	return 4096
 }
 
 // GenerateStmtExecInfo4Test generates a new StmtExecInfo for testing purposes.
@@ -675,21 +599,28 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 
 	stmtExecInfo := &stmtsummary.StmtExecInfo{
 		SchemaName:     "schema_name",
+		OriginalSQL:    "original_sql1",
 		NormalizedSQL:  "normalized_sql",
 		Digest:         digest,
 		PlanDigest:     "plan_digest",
+		PlanGenerator:  func() (string, string) { return "", "" },
 		User:           "user",
 		TotalLatency:   10000,
 		ParseLatency:   100,
 		CompileLatency: 1000,
-		CopTasks: &execdetails.CopTasksSummary{
+		CopTasks: &stmtctx.CopTasksDetails{
 			NumCopTasks:       10,
+			AvgProcessTime:    1000,
+			P90ProcessTime:    10000,
 			MaxProcessAddress: "127",
 			MaxProcessTime:    15000,
+			AvgWaitTime:       100,
+			P90WaitTime:       1000,
 			MaxWaitAddress:    "128",
 			MaxWaitTime:       1500,
 		},
-		ExecDetail: execdetails.ExecDetails{
+		ExecDetail: &execdetails.ExecDetails{
+			BackoffTime:  80,
 			RequestCount: 10,
 			CommitDetail: &util.CommitDetails{
 				GetCommitTsTime: 100,
@@ -718,17 +649,16 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 					ResolveLockTime: 2000,
 				},
 			},
-			CopExecDetails: execdetails.CopExecDetails{
-				BackoffTime: 80,
-				ScanDetail: &util.ScanDetail{
-					TotalKeys:                 1000,
-					ProcessedKeys:             500,
-					RocksdbDeleteSkippedCount: 100,
-					RocksdbKeySkippedCount:    10,
-					RocksdbBlockCacheHitCount: 10,
-					RocksdbBlockReadCount:     10,
-					RocksdbBlockReadByte:      1000,
-				},
+			ScanDetail: &util.ScanDetail{
+				TotalKeys:                 1000,
+				ProcessedKeys:             500,
+				RocksdbDeleteSkippedCount: 100,
+				RocksdbKeySkippedCount:    10,
+				RocksdbBlockCacheHitCount: 10,
+				RocksdbBlockReadCount:     10,
+				RocksdbBlockReadByte:      1000,
+			},
+			DetailsNeedP90: execdetails.DetailsNeedP90{
 				TimeDetail: util.TimeDetail{
 					ProcessTime: 500,
 					WaitTime:    50,
@@ -745,34 +675,7 @@ func GenerateStmtExecInfo4Test(digest string) *stmtsummary.StmtExecInfo {
 		KeyspaceID:        1,
 		ResourceGroupName: "rg1",
 		RUDetail:          util.NewRUDetailsWith(1.2, 3.4, 2*time.Millisecond),
-		TotalRUV2:         12345,
-		TiKVExecDetails:   &util.ExecDetails{},
-		CPUUsages:         ppcpuusage.CPUUsages{TidbCPUTime: time.Duration(20), TikvCPUTime: time.Duration(10000)},
-		LazyInfo:          &mockLazyInfo{},
-		MemArbitration:    22222,
 	}
 	stmtExecInfo.StmtCtx.AddAffectedRows(10000)
 	return stmtExecInfo
-}
-
-type mockLazyInfo struct{}
-
-func (*mockLazyInfo) GetOriginalSQL() string {
-	return ""
-}
-
-func (*mockLazyInfo) GetEncodedPlan() (p string, h string, e any) {
-	return "", "", nil
-}
-
-func (*mockLazyInfo) GetBinaryPlan() string {
-	return ""
-}
-
-func (*mockLazyInfo) GetPlanDigest() string {
-	return ""
-}
-
-func (*mockLazyInfo) GetBindingSQLAndDigest() (sql string, digest string) {
-	return "", ""
 }

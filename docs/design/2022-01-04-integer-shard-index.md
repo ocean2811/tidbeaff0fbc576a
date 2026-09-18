@@ -1,6 +1,6 @@
 # Integer shard index
 
-- Tracking Issue: https://github.com/pingcap/tidb/issues/31040
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/31040
 
 Here is a table definition as bellow. The service writes data monotonically on the field `id2`, so the index `hotIndex` becomes a hot index which hinders the scalability of a TiDB cluster. The service executes point SELECT and point UPDATE by the `hotIndex`.
 
@@ -115,7 +115,7 @@ The entry point to add the `tidb_shard` expression is the function as bellow. We
 
 func (ds *DataSource) PredicatePushDown(predicates []expression.Expression, opt *logicalOptimizeOp) ([]expression.Expression, LogicalPlan) {
 	predicates = expression.PropagateConstant(ds.ctx, predicates)
-	predicates = constraint.DeleteTrueExprs(ds, predicates)
+	predicates = DeleteTrueExprs(ds, predicates)
 	// Add tidb_shard() prefix to the condtion for shard index in some scenarios
 	// TODO: remove it to the place building logical plan
 	predicates = ds.AddPrefix4ShardIndexes(ds.ctx, predicates)

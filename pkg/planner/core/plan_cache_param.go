@@ -19,32 +19,32 @@ import (
 	"errors"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
-	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	parserutil "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	driver "github.com/ocean2811/tidbeaff0fbc576a/pkg/types/parser_driver"
 )
 
 var (
-	paramReplacerPool = sync.Pool{New: func() any {
+	paramReplacerPool = sync.Pool{New: func() interface{} {
 		pr := new(paramReplacer)
 		pr.Reset()
 		return pr
 	}}
-	paramRestorerPool = sync.Pool{New: func() any {
+	paramRestorerPool = sync.Pool{New: func() interface{} {
 		pr := new(paramRestorer)
 		pr.Reset()
 		return pr
 	}}
-	paramCtxPool = sync.Pool{New: func() any {
+	paramCtxPool = sync.Pool{New: func() interface{} {
 		buf := new(bytes.Buffer)
 		restoreCtx := format.NewRestoreCtx(format.RestoreForNonPrepPlanCache|format.RestoreStringWithoutCharset|format.RestoreStringSingleQuotes|format.RestoreNameBackQuotes, buf)
 		return restoreCtx
 	}}
-	paramMakerPool = sync.Pool{New: func() any {
+	paramMakerPool = sync.Pool{New: func() interface{} {
 		return ast.NewParamMarkerExpr(0)
 	}}
 )
@@ -66,11 +66,6 @@ func (pr *paramReplacer) Enter(in ast.Node) (out ast.Node, skipChildren bool) {
 		switch n.FnName.L {
 		case ast.DateFormat, ast.StrToDate, ast.TimeFormat, ast.FromUnixTime:
 			// skip the second format argument: date_format('2020', '%Y') --> date_format(?, '%Y')
-			if len(n.Args) == 0 {
-				// A malformed zero-arg call (wrong arity, rejected later during
-				// type checking); don't index Args here.
-				return in, true
-			}
 			ret, _ := n.Args[0].Accept(pr)
 			n.Args[0] = ret.(ast.ExprNode)
 			return in, true
@@ -191,12 +186,12 @@ func Params2Expressions(params []types.Datum) []expression.Expression {
 	return exprs
 }
 
+var parserPool = &sync.Pool{New: func() interface{} { return parser.New() }}
+
 // ParseParameterizedSQL parse this parameterized SQL with the specified sctx.
 func ParseParameterizedSQL(sctx sessionctx.Context, paramSQL string) (ast.StmtNode, error) {
-	p := parserutil.GetParser()
-	defer func() {
-		parserutil.DestroyParser(p)
-	}()
+	p := parserPool.Get().(*parser.Parser)
+	defer parserPool.Put(p)
 	p.SetSQLMode(sctx.GetSessionVars().SQLMode)
 	p.SetParserConfig(sctx.GetSessionVars().BuildParserConfig())
 	tmp, _, err := p.ParseSQL(paramSQL, sctx.GetSessionVars().GetParseParams()...)

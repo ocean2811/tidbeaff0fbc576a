@@ -18,10 +18,10 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 )
 
 type randSpaceStrGener struct {
@@ -29,7 +29,7 @@ type randSpaceStrGener struct {
 	lenEnd   int
 }
 
-func (g *randSpaceStrGener) gen() any {
+func (g *randSpaceStrGener) gen() interface{} {
 	n := rand.Intn(g.lenEnd-g.lenBegin) + g.lenBegin
 	buf := make([]byte, n)
 	for i := range buf {

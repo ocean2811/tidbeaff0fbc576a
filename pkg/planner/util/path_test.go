@@ -17,13 +17,13 @@ package util_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -49,13 +49,13 @@ func TestCompareCol2Len(t *testing.T) {
 		{
 			c1:         util.Col2Len{1: -1, 2: -1},
 			c2:         util.Col2Len{1: -1, 2: 5, 3: -1},
-			res:        -1,
+			res:        0,
 			comparable: false,
 		},
 		{
 			c1:         util.Col2Len{1: -1, 2: 10},
 			c2:         util.Col2Len{1: -1, 2: 5, 3: -1},
-			res:        -1,
+			res:        0,
 			comparable: false,
 		},
 		{
@@ -67,7 +67,7 @@ func TestCompareCol2Len(t *testing.T) {
 		{
 			c1:         util.Col2Len{1: -1, 2: -1},
 			c2:         util.Col2Len{1: -1, 2: 10},
-			res:        -1,
+			res:        0,
 			comparable: false,
 		},
 	}
@@ -79,7 +79,7 @@ func TestCompareCol2Len(t *testing.T) {
 }
 
 func TestOnlyPointRange(t *testing.T) {
-	sctx := coretestsdk.MockContext()
+	sctx := core.MockContext()
 	defer func() {
 		do := domain.GetDomain(sctx)
 		do.StatsHandle().Close()
@@ -102,22 +102,21 @@ func TestOnlyPointRange(t *testing.T) {
 		Collators: collate.GetBinaryCollatorSlice(1),
 	}
 
-	tc := sctx.GetSessionVars().StmtCtx.TypeCtx()
 	intHandlePath := &util.AccessPath{IsIntHandlePath: true}
 	intHandlePath.Ranges = []*ranger.Range{&nullPointRange, &onePointRange}
-	require.True(t, intHandlePath.OnlyPointRange(tc))
+	require.True(t, intHandlePath.OnlyPointRange(sctx))
 	intHandlePath.Ranges = []*ranger.Range{&onePointRange, &one2TwoRange}
-	require.False(t, intHandlePath.OnlyPointRange(tc))
+	require.False(t, intHandlePath.OnlyPointRange(sctx))
 
 	indexPath := &util.AccessPath{Index: &model.IndexInfo{Columns: make([]*model.IndexColumn, 1)}}
 	indexPath.Ranges = []*ranger.Range{&onePointRange}
-	require.True(t, indexPath.OnlyPointRange(tc))
+	require.True(t, indexPath.OnlyPointRange(sctx))
 	indexPath.Ranges = []*ranger.Range{&nullPointRange, &onePointRange}
-	require.False(t, indexPath.OnlyPointRange(tc))
+	require.False(t, indexPath.OnlyPointRange(sctx))
 	indexPath.Ranges = []*ranger.Range{&onePointRange, &one2TwoRange}
-	require.False(t, indexPath.OnlyPointRange(tc))
+	require.False(t, indexPath.OnlyPointRange(sctx))
 
 	indexPath.Index.Columns = make([]*model.IndexColumn, 2)
 	indexPath.Ranges = []*ranger.Range{&onePointRange}
-	require.False(t, indexPath.OnlyPointRange(tc))
+	require.False(t, indexPath.OnlyPointRange(sctx))
 }

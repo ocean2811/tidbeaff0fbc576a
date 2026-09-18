@@ -21,16 +21,16 @@ import (
 	"math/rand"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/extension"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	tmysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/server/internal"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/util/arena"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/intest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/extension"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	tmysql "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/arena"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/intest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -139,14 +139,4 @@ func CreateMockConn(t *testing.T, server *Server) MockConn {
 		clientConn: cc,
 		t:          t,
 	}
-}
-
-// MockOSUserForAuthSocket mocks the OS user for AUTH_SOCKET plugin
-func MockOSUserForAuthSocket(uname string) {
-	mockOSUserForAuthSocketTest.Store(&uname)
-}
-
-// ClearOSUserForAuthSocket clears the mocked OS user for AUTH_SOCKET plugin
-func ClearOSUserForAuthSocket() {
-	mockOSUserForAuthSocketTest.Store(nil)
 }

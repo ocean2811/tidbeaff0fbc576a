@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 go_library(
     name = "benchkv_lib",
     srcs = ["main.go"],
-    importpath = "github.com/pingcap/tidb/cmd/benchkv",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/cmd/benchkv",
     visibility = ["//visibility:private"],
     deps = [
         "//pkg/kv",

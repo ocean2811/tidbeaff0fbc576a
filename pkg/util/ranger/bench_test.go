@@ -16,22 +16,14 @@ package ranger_test
 
 import (
 	"context"
-	"strconv"
-	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/logicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	plannerutil "github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/benchdaily"
-	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/ranger"
 	"github.com/stretchr/testify/require"
 )
 
@@ -117,152 +109,25 @@ WHERE
 	require.NoError(b, err)
 	require.Len(b, stmts, 1)
 	ret := &plannercore.PreprocessorReturn{}
-	nodeW := resolve.NewNodeW(stmts[0])
-	err = plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
+	err = plannercore.Preprocess(context.Background(), sctx, stmts[0], plannercore.WithPreprocessorReturn(ret))
 	require.NoError(b, err)
 	ctx := context.Background()
-	p, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, nodeW, ret.InfoSchema)
+	p, _, err := plannercore.BuildLogicalPlanForTest(ctx, sctx, stmts[0], ret.InfoSchema)
 	require.NoError(b, err)
-	selection := p.(base.LogicalPlan).Children()[0].(*logicalop.LogicalSelection)
-	tbl := selection.Children()[0].(*logicalop.DataSource).TableInfo
+	selection := p.(plannercore.LogicalPlan).Children()[0].(*plannercore.LogicalSelection)
+	tbl := selection.Children()[0].(*plannercore.DataSource).TableInfo()
 	require.NotNil(b, selection)
 	conds := make([]expression.Expression, len(selection.Conditions))
 	for i, cond := range selection.Conditions {
-		conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
+		conds[i] = expression.PushDownNot(sctx, cond)
 	}
-	cols, lengths := plannerutil.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[0])
+	cols, lengths := expression.IndexInfo2PrefixCols(tbl.Columns, selection.Schema().Columns, tbl.Indices[0])
 	require.NotNil(b, cols)
 
 	b.ResetTimer()
-	pctx := sctx.GetPlanCtx()
-	for range b.N {
-		_, err = ranger.DetachCondAndBuildRangeForIndex(pctx.GetRangerCtx(), conds, cols, lengths, 0)
+	for i := 0; i < b.N; i++ {
+		_, err = ranger.DetachCondAndBuildRangeForIndex(sctx, conds, cols, lengths, 0)
 		require.NoError(b, err)
 	}
 	b.StopTimer()
-}
-
-func BenchmarkDetachCondAndBuildRangeForIndexLeadingLongIN(b *testing.B) {
-	sctx, selection, dataSource := buildBenchmarkSelection(b, `
-CREATE TABLE t (
-    org_id bigint(20) NOT NULL,
-    flag tinyint(1) NOT NULL,
-    end_time bigint(20) NOT NULL,
-    KEY idx (org_id, flag, end_time)
-)`, "SELECT * FROM test.t WHERE org_id IN ("+makeBenchmarkIntList(512)+") AND flag = 0 AND end_time < 1437233819011")
-	conds := benchmarkConditions(sctx, selection)
-	cols, lengths := plannerutil.IndexInfo2PrefixCols(dataSource.TableInfo.Columns, selection.Schema().Columns, dataSource.TableInfo.Indices[0])
-	require.NotNil(b, cols)
-
-	b.ResetTimer()
-	pctx := sctx.GetPlanCtx()
-	var rangeCount int
-	var rangeBytes int64
-	for range b.N {
-		res, err := ranger.DetachCondAndBuildRangeForIndex(pctx.GetRangerCtx(), conds, cols, lengths, 0)
-		require.NoError(b, err)
-		rangeCount = len(res.Ranges)
-		rangeBytes = res.Ranges.MemUsage()
-	}
-	b.StopTimer()
-	b.ReportMetric(float64(rangeCount), "ranges/op")
-	b.ReportMetric(float64(rangeBytes), "range-bytes/op")
-}
-
-func BenchmarkBuildColumnRangeLongIN(b *testing.B) {
-	sctx, selection, dataSource := buildBenchmarkSelection(b, `
-CREATE TABLE t (
-    org_id bigint(20) NOT NULL,
-    payload bigint(20) NOT NULL,
-    KEY idx (payload)
-)`, "SELECT * FROM test.t WHERE org_id IN ("+makeBenchmarkIntList(512)+")")
-	conds := benchmarkConditions(sctx, selection)
-	tp := &dataSource.TableInfo.Columns[0].FieldType
-
-	b.ResetTimer()
-	rctx := sctx.GetPlanCtx().GetRangerCtx()
-	var rangeCount int
-	var rangeBytes int64
-	for range b.N {
-		ranges, _, _, err := ranger.BuildColumnRange(conds, rctx, tp, types.UnspecifiedLength, 0)
-		require.NoError(b, err)
-		rangeCount = len(ranges)
-		rangeBytes = ranges.MemUsage()
-	}
-	b.StopTimer()
-	b.ReportMetric(float64(rangeCount), "ranges/op")
-	b.ReportMetric(float64(rangeBytes), "range-bytes/op")
-}
-
-func buildBenchmarkSelection(b *testing.B, createTable, query string) (sessionctx.Context, *logicalop.LogicalSelection, *logicalop.DataSource) {
-	store := testkit.CreateMockStore(b)
-	testKit := testkit.NewTestKit(b, store)
-	testKit.MustExec("USE test")
-	testKit.MustExec("DROP TABLE IF EXISTS t")
-	testKit.MustExec(createTable)
-	sctx := testKit.Session().(sessionctx.Context)
-	stmts, err := session.Parse(sctx, query)
-	require.NoError(b, err)
-	require.Len(b, stmts, 1)
-	ret := &plannercore.PreprocessorReturn{}
-	nodeW := resolve.NewNodeW(stmts[0])
-	err = plannercore.Preprocess(context.Background(), sctx, nodeW, plannercore.WithPreprocessorReturn(ret))
-	require.NoError(b, err)
-	p, err := plannercore.BuildLogicalPlanForTest(context.Background(), sctx, nodeW, ret.InfoSchema)
-	require.NoError(b, err)
-	plan := p.(base.LogicalPlan)
-	selection := findBenchmarkSelection(plan)
-	require.NotNil(b, selection)
-	dataSource := findBenchmarkDataSource(selection)
-	require.NotNil(b, dataSource)
-	return sctx, selection, dataSource
-}
-
-func benchmarkConditions(sctx sessionctx.Context, selection *logicalop.LogicalSelection) []expression.Expression {
-	conds := make([]expression.Expression, len(selection.Conditions))
-	for i, cond := range selection.Conditions {
-		conds[i] = expression.PushDownNot(sctx.GetExprCtx(), cond)
-	}
-	return conds
-}
-
-func findBenchmarkSelection(plan base.LogicalPlan) *logicalop.LogicalSelection {
-	if selection, ok := plan.(*logicalop.LogicalSelection); ok {
-		return selection
-	}
-	for _, child := range plan.Children() {
-		if selection := findBenchmarkSelection(child); selection != nil {
-			return selection
-		}
-	}
-	return nil
-}
-
-func findBenchmarkDataSource(plan base.LogicalPlan) *logicalop.DataSource {
-	if dataSource, ok := plan.(*logicalop.DataSource); ok {
-		return dataSource
-	}
-	for _, child := range plan.Children() {
-		if dataSource := findBenchmarkDataSource(child); dataSource != nil {
-			return dataSource
-		}
-	}
-	return nil
-}
-
-func makeBenchmarkIntList(n int) string {
-	var buf strings.Builder
-	for i := range n {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		buf.WriteString(strconv.Itoa(i + 1))
-	}
-	return buf.String()
-}
-
-func TestBenchDaily(t *testing.T) {
-	benchdaily.Run(
-		BenchmarkDetachCondAndBuildRangeForIndex,
-	)
 }

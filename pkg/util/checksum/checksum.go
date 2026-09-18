@@ -20,7 +20,7 @@ import (
 	"hash/crc32"
 	"io"
 
-	"github.com/pingcap/tidb/pkg/util/zeropool"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/zeropool"
 )
 
 const (

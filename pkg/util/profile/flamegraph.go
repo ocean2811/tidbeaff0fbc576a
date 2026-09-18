@@ -21,8 +21,8 @@ import (
 	"slices"
 
 	"github.com/google/pprof/profile"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/texttree"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/texttree"
 )
 
 type flamegraphNode struct {

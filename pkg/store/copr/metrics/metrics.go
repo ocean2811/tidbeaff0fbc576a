@@ -15,7 +15,7 @@
 package copr
 
 import (
-	"github.com/pingcap/tidb/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
 	"github.com/prometheus/client_golang/prometheus"
 )
 

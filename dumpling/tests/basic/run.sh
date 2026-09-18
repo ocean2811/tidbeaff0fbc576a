@@ -40,21 +40,6 @@ expected=$(seq 3 9)
 echo "expected ${expected}, actual ${actual}"
 [ "$actual" = "$expected" ]
 
-echo "Test for --partitions option."
-export DUMPLING_TEST_PORT=4000
-PARTITION_TABLE_NAME="tp"
-run_sql "drop database if exists \`$DB_NAME\`;"
-run_sql "create database \`$DB_NAME\` DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin;"
-run_sql "create table \`$DB_NAME\`.\`$PARTITION_TABLE_NAME\` (a int primary key) partition by range (a) (partition p0 values less than (10), partition p1 values less than (20), partition p2 values less than (30), partition p3 values less than MAXVALUE);"
-run_sql "insert into \`$DB_NAME\`.\`$PARTITION_TABLE_NAME\` values (1), (2), (11), (21), (22), (31);"
-
-run_dumpling --partitions "p0,p2" -f "$DB_NAME.$PARTITION_TABLE_NAME"
-
-actual=$(grep -hoE "\([0-9]+\)" ${DUMPLING_OUTPUT_DIR}/${DB_NAME}.${PARTITION_TABLE_NAME}.*.sql | tr -d "()" | sort -n)
-expected=$(printf "1\n2\n21\n22")
-echo "expected ${expected}, actual ${actual}"
-[ "$actual" = "$expected" ]
-
 echo "Test for OR WHERE case." # Better dump MySQL here because Dumpling has some special handle for concurrently dump TiDB tables.
 export DUMPLING_TEST_PORT=3306
 run_sql "drop database if exists \`$DB_NAME\`;"
@@ -100,24 +85,6 @@ cnt=$(cat ${DUMPLING_OUTPUT_DIR}/${TABLE_NAME}.${DB_NAME}.000000000.csv|wc -l)
 echo "records count is ${cnt}"
 [ "$cnt" = 101 ]
 
-echo "Test for --rows with --output-filename-template without {{.Index}} should report an error."
-set +e
-run_dumpling --rows 10 --output-filename-template "${TABLE_NAME}.${DB_NAME}" > ${DUMPLING_OUTPUT_DIR}/dumpling.log
-set -e
-
-actual=$(grep -F -- "--output-filename-template must include a standalone {{.Index}} outside conditional blocks" ${DUMPLING_OUTPUT_DIR}/dumpling.log | wc -l)
-echo "expected 1 return error when specifying --rows with --output-filename-template without {{.Index}}, actual ${actual}"
-[ "$actual" = 1 ]
-
-echo "Test for --filesize with --output-filename-template without {{.Index}} should report an error."
-set +e
-run_dumpling --filesize 1MiB --output-filename-template "${TABLE_NAME}.${DB_NAME}" > ${DUMPLING_OUTPUT_DIR}/dumpling.log
-set -e
-
-actual=$(grep -F -- "--output-filename-template must include a standalone {{.Index}} outside conditional blocks" ${DUMPLING_OUTPUT_DIR}/dumpling.log | wc -l)
-echo "expected 1 return error when specifying --filesize with --output-filename-template without {{.Index}}, actual ${actual}"
-[ "$actual" = 1 ]
-
 export DUMPLING_TEST_PORT=4000
 echo "Test for --sql option."
 run_sql "drop database if exists \`$DB_NAME\`;"
@@ -143,7 +110,7 @@ echo "expected 0, actual ${actual}"
 [ "$actual" = 0 ]
 
 echo "Test for tidb_mem_quota_query configuration."
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/PrintTiDBMemQuotaQuery=1*return"
+export GO_FAILPOINTS="github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/PrintTiDBMemQuotaQuery=1*return"
 run_dumpling | tee ${DUMPLING_OUTPUT_DIR}/dumpling.log
 actual=$(grep -w "tidb_mem_quota_query == 1073741824" ${DUMPLING_OUTPUT_DIR}/dumpling.log|wc -l)
 echo "expected 1, actual ${actual}"
@@ -183,13 +150,13 @@ run_sql "create database test_db;"
 run_sql "create table test_db.test_table (a int primary key);"
 run_sql "insert into test_db.test_table values (1),(2),(3),(4),(5),(6),(7),(8);"
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/SetIOTotalBytes=return(1)"
+export GO_FAILPOINTS="github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/SetIOTotalBytes=return(1)"
 run_dumpling -B "test_db" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
 cnt=$(grep "IOTotalBytes=" ${DUMPLING_OUTPUT_DIR}/dumpling.log | grep -v "IOTotalBytes=0" | wc -l)
 [ "$cnt" -ge 1 ]
 
 echo "Test for failing to close meta/data file"
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/FailToCloseMetaFile=1*return"
+export GO_FAILPOINTS="github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/FailToCloseMetaFile=1*return"
 rm ${DUMPLING_OUTPUT_DIR}/dumpling.log
 set +e
 run_dumpling -B "test_db" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log
@@ -198,7 +165,7 @@ cnt=$(grep -w "dump failed error stack info" ${DUMPLING_OUTPUT_DIR}/dumpling.log
 [ "$cnt" -ge 1 ]
 
 # dumpling retry will make it succeed
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile=1*return"
+export GO_FAILPOINTS="github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/FailToCloseDataFile=1*return"
 export DUMPLING_TEST_PORT=4000
 run_sql "drop database if exists test_db;"
 run_sql "create database test_db;"
@@ -214,7 +181,7 @@ cnt=$(grep -w "(.*)" ${DUMPLING_OUTPUT_DIR}/test_db.test_table.000000000.sql|wc 
 echo "records count is ${cnt}"
 [ "$cnt" -eq 8 ]
 
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/FailToCloseDataFile=5*return"
+export GO_FAILPOINTS="github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/FailToCloseDataFile=5*return"
 rm ${DUMPLING_OUTPUT_DIR}/dumpling.log
 set +e
 run_dumpling -B "test_db" -L ${DUMPLING_OUTPUT_DIR}/dumpling.log

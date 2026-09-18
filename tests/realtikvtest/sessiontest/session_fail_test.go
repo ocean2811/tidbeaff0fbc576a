@@ -19,16 +19,13 @@ import (
 	"fmt"
 	"strconv"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
-	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -37,7 +34,7 @@ func TestFailStatementCommitInRetry(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (id int)")
 
 	tk.MustExec("begin")
@@ -45,10 +42,10 @@ func TestFailStatementCommitInRetry(t *testing.T) {
 	tk.MustExec("insert into t values (2),(3),(4),(5)")
 	tk.MustExec("insert into t values (6)")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError8942", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockCommitError8942", `return(true)`))
 	_, err := tk.Exec("commit")
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError8942"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockCommitError8942"))
 
 	tk.MustExec("insert into t values (6)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("6"))
@@ -59,20 +56,17 @@ func TestGetTSFailDirtyState(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (id int)")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockGetTSFail", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockGetTSFail", "return"))
 	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
-		return fpname == "github.com/pingcap/tidb/pkg/session/mockGetTSFail"
+		return fpname == "github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockGetTSFail"
 	})
-	rss, err := tk.Session().Execute(ctx, "select * from t")
-	if config.GetGlobalConfig().Store == config.StoreTypeUniStore {
+	_, err := tk.Session().Execute(ctx, "select * from t")
+	if config.GetGlobalConfig().Store == "unistore" {
 		require.Error(t, err)
 	} else {
-		for _, rs := range rss {
-			rs.Close()
-		}
 		require.NoError(t, err)
 	}
 
@@ -80,12 +74,12 @@ func TestGetTSFailDirtyState(t *testing.T) {
 	// affected by this fail flag.
 	tk.MustExec("insert into t values (1)")
 	tk.MustQuery(`select * from t`).Check(testkit.Rows("1"))
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockGetTSFail"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockGetTSFail"))
 }
 
 func TestGetTSFailDirtyStateInretry(t *testing.T) {
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockCommitError"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockCommitError"))
 		require.NoError(t, failpoint.Disable("tikvclient/mockGetTSErrorInRetry"))
 	}()
 
@@ -93,10 +87,10 @@ func TestGetTSFailDirtyStateInretry(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table t (id int)")
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockCommitError", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockCommitError", `return(true)`))
 	// This test will mock a PD timeout error, and recover then.
 	// Just make mockGetTSErrorInRetry return true once, and then return false.
 	require.NoError(t, failpoint.Enable("tikvclient/mockGetTSErrorInRetry",
@@ -112,16 +106,13 @@ func TestKillFlagInBackoff(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("create table kill_backoff (id int)")
 	// Inject 1 time timeout. If `Killed` is not successfully passed, it will retry and complete query.
-	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `sleep(1000)->return("timeout")->return("")`))
+	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("timeout")->return("")`))
 	defer failpoint.Disable("tikvclient/tikvStoreSendReqResult")
 	// Set kill flag and check its passed to backoffer.
-	go func() {
-		time.Sleep(300 * time.Millisecond)
-		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	}()
+	tk.Session().GetSessionVars().Killed = 1
 	rs, err := tk.Exec("select * from kill_backoff")
 	require.NoError(t, err)
 	_, err = session.ResultSetToStringSlice(context.TODO(), tk.Session(), rs)
@@ -135,7 +126,7 @@ func TestClusterTableSendError(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	require.NoError(t, failpoint.Enable("tikvclient/tikvStoreSendReqResult", `return("requestTiDBStoreError")`))
 	defer func() { require.NoError(t, failpoint.Disable("tikvclient/tikvStoreSendReqResult")) }()
 	tk.MustQuery("select * from information_schema.cluster_slow_query")
@@ -148,7 +139,7 @@ func TestAutoCommitNeedNotLinearizability(t *testing.T) {
 
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists t1;")
 	defer tk.MustExec("drop table if exists t1")
 	tk.MustExec(`create table t1 (c int)`)
@@ -236,7 +227,7 @@ func TestIssue42426(t *testing.T) {
 	tk.MustExec(`COMMIT;`)
 }
 
-// for https://github.com/pingcap/tidb/issues/44123
+// for https://github.com/ocean2811/tidbeaff0fbc576a/issues/44123
 func TestIndexLookUpWithStaticPrune(t *testing.T) {
 	store := realtikvtest.CreateMockStoreAndSetup(t)
 	tk := testkit.NewTestKit(t, store)
@@ -288,17 +279,15 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:4.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 4.*", explain)
 
 	// Test for stale read.
-	if !kerneltype.IsNextGen() {
-		tk.MustExec("insert into t values (1,1), (2,2);")
-		tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-		rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@stale_read_ts_var) where b > 1").Rows()
-		require.Len(t, rows, 3)
-		explain = fmt.Sprintf("%v", rows[0])
-		require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:(3|4|5).*", explain)
-	}
+	tk.MustExec("insert into t values (1,1), (2,2);")
+	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
+	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@stale_read_ts_var) where b > 1").Rows()
+	require.Len(t, rows, 3)
+	explain = fmt.Sprintf("%v", rows[0])
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: (3|4|5).*", explain)
 
 	// Test for tikv_client_read_timeout session variable.
 	tk.MustExec("set @@tikv_client_read_timeout=1;")
@@ -319,21 +308,12 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:4.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 4.*", explain)
 
 	// Test for stale read.
-	if !kerneltype.IsNextGen() {
-		tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-		rows = tk.MustQuery("explain analyze select * from t as of timestamp(@stale_read_ts_var) where b > 1").Rows()
-		require.Len(t, rows, 3)
-		explain = fmt.Sprintf("%v", rows[0])
-		require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:(3|4|5).*", explain)
-	}
-}
-
-func TestIssue57530(t *testing.T) {
-	store := realtikvtest.CreateMockStoreAndSetup(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use information_schema")
-	tk.MustQuery("select * from  TIKV_REGION_STATUS where table_id = 81920").Check(testkit.Rows())
+	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
+	rows = tk.MustQuery("explain analyze select * from t as of timestamp(@stale_read_ts_var) where b > 1").Rows()
+	require.Len(t, rows, 3)
+	explain = fmt.Sprintf("%v", rows[0])
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: (3|4|5).*", explain)
 }

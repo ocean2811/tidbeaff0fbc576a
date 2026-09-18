@@ -12,6 +12,7 @@
 // limitations under the License.
 
 //go:build !codes
+// +build !codes
 
 package test_driver
 
@@ -24,9 +25,9 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/types"
 )
 
 // Kind constants.
@@ -55,10 +56,10 @@ const (
 // Datum is a data box holds different kind of data.
 // It has better performance and is easier to use than `interface{}`.
 type Datum struct {
-	k byte   // datum kind.
-	i int64  // i can hold int64 uint64 float64 values.
-	b []byte // b can hold string or []byte values.
-	x any    // x hold all other types.
+	k byte        // datum kind.
+	i int64       // i can hold int64 uint64 float64 values.
+	b []byte      // b can hold string or []byte values.
+	x interface{} // x hold all other types.
 }
 
 // Kind gets the kind of the datum.
@@ -139,12 +140,12 @@ func (d *Datum) SetBytesAsString(b []byte) {
 }
 
 // GetInterface gets interface value.
-func (d *Datum) GetInterface() any {
+func (d *Datum) GetInterface() interface{} {
 	return d.x
 }
 
 // SetInterface sets interface to datum.
-func (d *Datum) SetInterface(x any) {
+func (d *Datum) SetInterface(x interface{}) {
 	d.k = KindInterface
 	d.x = x
 }
@@ -178,7 +179,7 @@ func (d *Datum) SetMysqlDecimal(b *MyDecimal) {
 }
 
 // GetValue gets the value of the datum of any kind.
-func (d *Datum) GetValue() any {
+func (d *Datum) GetValue() interface{} {
 	switch d.k {
 	case KindInt64:
 		return d.GetInt64()
@@ -202,7 +203,7 @@ func (d *Datum) GetValue() any {
 }
 
 // SetValue sets any kind of value.
-func (d *Datum) SetValue(val any) {
+func (d *Datum) SetValue(val interface{}) {
 	switch x := val.(type) {
 	case nil:
 		d.SetNull()
@@ -240,9 +241,9 @@ func (d *Datum) SetValue(val any) {
 }
 
 // NewDatum creates a new Datum from an interface{}.
-func NewDatum(in any) (d Datum) {
+func NewDatum(in interface{}) (d Datum) {
 	switch x := in.(type) {
-	case []any:
+	case []interface{}:
 		d.SetValue(MakeDatums(x...))
 	default:
 		d.SetValue(in)
@@ -263,7 +264,7 @@ func NewStringDatum(s string) (d Datum) {
 }
 
 // MakeDatums creates datum slice from interfaces.
-func MakeDatums(args ...any) []Datum {
+func MakeDatums(args ...interface{}) []Datum {
 	datums := make([]Datum, len(args))
 	for i, v := range args {
 		datums[i] = NewDatum(v)
@@ -342,7 +343,7 @@ func ParseBitStr(s string) (BinaryLiteral, error) {
 	byteLength := len(s) >> 3
 	buf := make([]byte, byteLength)
 
-	for i := range byteLength {
+	for i := 0; i < byteLength; i++ {
 		strPosition := i << 3
 		val, err := strconv.ParseUint(s[strPosition:strPosition+8], 2, 8)
 		if err != nil {
@@ -428,7 +429,7 @@ func SetBinChsClnFlag(ft *types.FieldType) {
 const DefaultFsp = int8(0)
 
 // DefaultTypeForValue returns the default FieldType for the value.
-func DefaultTypeForValue(value any, tp *types.FieldType, charset string, collate string) {
+func DefaultTypeForValue(value interface{}, tp *types.FieldType, charset string, collate string) {
 	switch x := value.(type) {
 	case nil:
 		tp.SetType(mysql.TypeNull)

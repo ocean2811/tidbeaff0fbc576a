@@ -18,7 +18,7 @@ import (
 	"testing"
 	"unicode"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
 	requires "github.com/stretchr/testify/require"
 )
 

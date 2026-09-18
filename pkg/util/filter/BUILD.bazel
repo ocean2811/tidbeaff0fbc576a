@@ -6,11 +6,9 @@ go_library(
         "filter.go",
         "schema.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/filter",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/filter",
     visibility = ["//visibility:public"],
     deps = [
-        "//pkg/meta/metadef",
-        "//pkg/util/intest",
         "//pkg/util/table-filter",
         "//pkg/util/table-rule-selector",
         "@com_github_pingcap_errors//:errors",
@@ -26,8 +24,5 @@ go_test(
     ],
     embed = [":filter"],
     flaky = True,
-    deps = [
-        "//pkg/parser/ast",
-        "@com_github_stretchr_testify//require",
-    ],
+    deps = ["@com_github_stretchr_testify//require"],
 )

@@ -6,16 +6,13 @@ go_library(
         "cursor.go",
         "resultset.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/server/internal/resultset",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/resultset",
     visibility = ["//pkg/server:__subpackages__"],
     deps = [
-        "//pkg/parser/terror",
         "//pkg/planner/core",
         "//pkg/server/internal/column",
         "//pkg/types",
         "//pkg/util/chunk",
-        "//pkg/util/execdetails",
         "//pkg/util/sqlexec",
-        "@com_github_tikv_client_go_v2//util",
     ],
 )

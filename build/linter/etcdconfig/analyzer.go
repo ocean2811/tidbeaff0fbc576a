@@ -17,7 +17,7 @@ package etcdconfig
 import (
 	"go/ast"
 
-	"github.com/pingcap/tidb/build/linter/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/analysis/passes/inspect"
 )
@@ -36,7 +36,7 @@ const (
 	configStructName  = "Config"
 )
 
-func run(pass *analysis.Pass) (any, error) {
+func run(pass *analysis.Pass) (interface{}, error) {
 	for _, file := range pass.Files {
 		packageName := util.GetPackageName(file.Imports, configPackagePath, configPackageName)
 		if packageName == "" {
@@ -87,8 +87,4 @@ func run(pass *analysis.Pass) (any, error) {
 		}
 	}
 	return nil, nil
-}
-
-func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
 }

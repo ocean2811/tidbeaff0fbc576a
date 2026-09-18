@@ -207,7 +207,7 @@ DROP TABLE if exists t1;
 CREATE TABLE t1(cnotnull tinyint not null, cnull tinyint null);
 INSERT INTO t1 VALUES(1, 1);
 select CAST(IFNULL(cnull, '1') AS DATE), CAST(IFNULL(cnotnull, '1') AS DATE) from t1;
-explain format="plan_tree" select IFNULL(cnotnull, '1') from t1;
+explain format="brief" select IFNULL(cnotnull, '1') from t1;
 
 # TestColResolutionPriBetweenOuterAndNatureJoin
 DROP TABLE if exists t0;
@@ -227,90 +227,3 @@ create table t2(a int);
 create table t(a int);
 select * from t where  exists ( select a from ( select a from t1 union all select a from t2) u where t.a=u.a);
 
-# TestIfNullEliminateColName
-drop table if exists t, t1;
-create table t(a int not null, b int not null);
-select ifnull(a,b) from t;
-drop table if exists t;
-create table t(e int not null, b int);
-insert into t values(1, 1);
-create table t1(e int not null, b int);
-insert into t1 values(1, 1);
-select b from t where ifnull(e, b);
-select b from t1 where ifnull(e, b);
-
-# TestIssue20007
-drop table if exists t1, t2;
-create table t1 (c_int int, c_str varchar(40), c_datetime datetime, primary key(c_int));
-create table t2 (c_int int, c_str varchar(40), c_datetime datetime, primary key (c_datetime)) partition by range (to_days(c_datetime)) ( partition p0 values less than (to_days('2020-02-01')), partition p1 values less than (to_days('2020-04-01')), partition p2 values less than (to_days('2020-06-01')), partition p3 values less than maxvalue);
-insert into t1 (c_int, c_str, c_datetime) values (1, 'xenodochial bassi', '2020-04-29 03:22:51'), (2, 'epic wiles', '2020-01-02 23:29:51'), (3, 'silly burnell', '2020-02-25 07:43:07');
-insert into t2 (c_int, c_str, c_datetime) values (1, 'trusting matsumoto', '2020-01-07 00:57:18'), (2, 'pedantic boyd', '2020-06-08 23:12:16'), (null, 'strange hypatia', '2020-05-23 17:45:27');
-select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
-select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
-select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
-select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
-select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
-select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
-select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
-select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
-select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
-select * from t1 where c_int != any (select c_int from t2 where t1.c_str <= t2.c_str);
-
-# TestDefaultCollationForUTF8MB4
-set @a = 'xx';
-select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
-select collation(_utf8mb4'12345');
-select collation(_utf8mb4'xxx' collate utf8mb4_general_ci);
-select collation(_utf8mb4'@a');
-select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
-set @@session.default_collation_for_utf8mb4='utf8mb4_0900_ai_ci';
-select * from information_schema.COLLATIONS where IS_DEFAULT='Yes' and CHARACTER_SET_NAME='utf8mb4';
-select collation(_utf8mb4'12345');
-select collation(_utf8mb4'12345' collate utf8mb4_general_ci);
-select collation(_utf8mb4'@a');
-select collation(_utf8mb4'@a' collate utf8mb4_general_ci);
-
-set @@session.default_collation_for_utf8mb4=default;
-
-# TestInExprRewriteBug: https://github.com/pingcap/tidb/issues/63565
-drop table if exists tb0;
-create table tb0 (c0 bigint unsigned not null);
-select 1 as col from tb0 where ((true not in (select 1)) not in (tb0.c0));
-explain format='plan_tree' select 1 from tb0 where ((true not in (select 1)) not in (tb0.c0));
-
-# TestIssue64333: ensure scalar IN in filter boolean chain can use join keys
-drop table if exists t1, t;
-create table t1(a int default null);
-create table t(a int not null);
-explain format='plan_tree' select * from t1 where t1.a > 1 or t1.a in (select a from t);
-explain format='plan_tree' select * from t1 where t1.a > 1 and t1.a in (select a from t);
-explain format='plan_tree' select t1.a in (select a from t) from t1;
-explain format='plan_tree' select * from t1 where (t1.a in (select a from t)) = 1;
-explain format='plan_tree' select t1.a from t1 group by t1.a having t1.a > 1 or t1.a in (select a from t);
-
-# TestColumnSubstituteFallbackForUnionViewWithCollation
-drop view if exists v_or_case_collation_ppd;
-drop table if exists t_or_case_collation_a;
-drop table if exists t_or_case_collation_b;
-set names utf8mb4 collate utf8mb4_general_ci;
-create table t_or_case_collation_a (
-  is_reimburse varchar(10) character set utf8mb4 collate utf8mb4_general_ci
-);
-create table t_or_case_collation_b (
-  travel_type varchar(10) character set utf8mb4 collate utf8mb4_general_ci
-);
-insert into t_or_case_collation_a values ('Y'), ('N'), (null);
-insert into t_or_case_collation_b values ('P'), ('B');
-create view v_or_case_collation_ppd as
-  select is_reimburse from t_or_case_collation_a
-  union all
-  select case when travel_type = _utf8mb4'P' then _utf8mb4'N' else _utf8mb4'Y' end as is_reimburse
-  from t_or_case_collation_b;
-set names utf8mb4 collate utf8mb4_0900_ai_ci;
-select count(*), sum(is_reimburse is null), sum(is_reimburse = 'Y')
-from v_or_case_collation_ppd
-where is_reimburse = 'Y' or is_reimburse is null;
-select count(*)
-from v_or_case_collation_ppd
-where is_reimburse is not null or is_reimburse = 'Y';
-set names default;

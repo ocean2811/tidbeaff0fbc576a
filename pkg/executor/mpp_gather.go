@@ -19,32 +19,32 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/distsql"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/executor/internal/mpp"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/distsql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/mpp"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/mppcoordmanager"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
 )
 
-func useMPPExecution(ctx sessionctx.Context, tr *physicalop.PhysicalTableReader) bool {
+func useMPPExecution(ctx sessionctx.Context, tr *plannercore.PhysicalTableReader) bool {
 	if !ctx.GetSessionVars().IsMPPAllowed() {
 		return false
 	}
-	_, ok := tr.GetTablePlan().(*physicalop.PhysicalExchangeSender)
+	_, ok := tr.GetTablePlan().(*plannercore.PhysicalExchangeSender)
 	return ok
 }
 
 func getMPPQueryID(ctx sessionctx.Context) uint64 {
 	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
-	mppQueryInfo.QueryID.CompareAndSwap(0, physicalop.AllocMPPQueryID())
+	mppQueryInfo.QueryID.CompareAndSwap(0, plannercore.AllocMPPQueryID())
 	return mppQueryInfo.QueryID.Load()
 }
 
@@ -54,21 +54,15 @@ func getMPPQueryTS(ctx sessionctx.Context) uint64 {
 	return mppQueryInfo.QueryTS.Load()
 }
 
-func collectPlanIDs(plan base.PhysicalPlan, ids []int) []int {
-	ids = append(ids, plan.ID())
-	for _, child := range plan.Children() {
-		ids = collectPlanIDs(child, ids)
-	}
-	return ids
-}
-
 // MPPGather dispatch MPP tasks and read data from root tasks.
 type MPPGather struct {
+	// following fields are construct needed
 	exec.BaseExecutor
 	is           infoschema.InfoSchema
-	originalPlan base.PhysicalPlan
+	originalPlan plannercore.PhysicalPlan
 	startTS      uint64
 	mppQueryID   kv.MPPQueryID
+	gatherID     uint64 // used for mpp_gather level retry, since each time should use different gatherIDs
 	respIter     distsql.SelectResult
 
 	memTracker *memory.Tracker
@@ -82,31 +76,54 @@ type MPPGather struct {
 	table    table.Table
 	kvRanges []kv.KeyRange
 	dummy    bool
-
-	mppExec *mpp.ExecutorWithRetry
 }
 
-// Open implements the Executor Open interface.
+func collectPlanIDS(plan plannercore.PhysicalPlan, ids []int) []int {
+	ids = append(ids, plan.ID())
+	for _, child := range plan.Children() {
+		ids = collectPlanIDS(child, ids)
+	}
+	return ids
+}
+
+// allocMPPGatherID allocates mpp gather id for mpp gathers. It will reset the gather id when the query finished.
+// To support mpp_gather level cancel/retry and mpp_gather under apply executors, need to generate incremental ids when Open function is invoked
+func allocMPPGatherID(ctx sessionctx.Context) uint64 {
+	mppQueryInfo := &ctx.GetSessionVars().StmtCtx.MPPQueryInfo
+	return mppQueryInfo.AllocatedMPPGatherID.Add(1)
+}
+
+// Open builds coordinator and invoke coordinator's Execute function to execute physical plan
+// If any task fails, it would cancel the rest tasks.
 func (e *MPPGather) Open(ctx context.Context) (err error) {
 	if e.dummy {
-		sender, ok := e.originalPlan.(*physicalop.PhysicalExchangeSender)
+		sender, ok := e.originalPlan.(*plannercore.PhysicalExchangeSender)
 		if !ok {
 			return errors.Errorf("unexpected plan type, expect: PhysicalExchangeSender, got: %s", e.originalPlan.TP())
 		}
-		_, e.kvRanges, _, err = physicalop.GenerateRootMPPTasks(e.Ctx(), e.startTS, 0, e.mppQueryID, sender, e.is)
+		_, e.kvRanges, err = plannercore.GenerateRootMPPTasks(e.Ctx(), e.startTS, e.gatherID, e.mppQueryID, sender, e.is)
 		return err
 	}
-	planIDs := collectPlanIDs(e.originalPlan, nil)
-	if e.mppExec, err = mpp.NewExecutorWithRetry(ctx, e.Ctx(), e.memTracker, planIDs, e.originalPlan, e.startTS, e.mppQueryID, e.is); err != nil {
-		if e.mppExec != nil {
-			// Ignore any errors during close process
-			_ = e.mppExec.Close()
-		}
+	planIDs := collectPlanIDS(e.originalPlan, nil)
+	e.gatherID = allocMPPGatherID(e.Ctx())
+	coord := e.buildCoordinator(planIDs)
+	err = mppcoordmanager.InstanceMPPCoordinatorManager.Register(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID}, coord)
+	if err != nil {
 		return err
 	}
-	e.kvRanges = e.mppExec.KVRanges
-	e.respIter = distsql.GenSelectResultFromMPPResponse(e.Ctx().GetDistSQLCtx(), e.RetFieldTypes(), planIDs, e.ID(), e.mppExec, e.mppExec.ReportsExecutionSummariesDirectly)
+	var resp kv.Response
+	resp, e.kvRanges, err = coord.Execute(ctx)
+	if err != nil {
+		return errors.Trace(err)
+	}
+	e.respIter = distsql.GenSelectResultFromResponse(e.Ctx(), e.RetFieldTypes(), planIDs, e.ID(), resp)
 	return nil
+}
+
+func (e *MPPGather) buildCoordinator(planIDs []int) kv.MppCoordinator {
+	_, serverAddr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
+	coord := mpp.NewLocalMPPCoordinator(e.Ctx(), e.is, e.originalPlan, planIDs, e.startTS, e.mppQueryID, e.gatherID, serverAddr, e.memTracker)
+	return coord
 }
 
 // Next fills data into the chunk passed by its caller.
@@ -115,27 +132,29 @@ func (e *MPPGather) Next(ctx context.Context, chk *chunk.Chunk) error {
 	if e.dummy {
 		return nil
 	}
-	if err := e.respIter.Next(ctx, chk); err != nil {
+	err := e.respIter.Next(ctx, chk)
+	if err != nil {
 		return err
 	}
-	if chk.NumRows() == 0 {
-		return nil
+	err = table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx(), chk)
+	if err != nil {
+		return err
 	}
-
-	return table.FillVirtualColumnValue(e.virtualColumnRetFieldTypes, e.virtualColumnIndex, e.Schema().Columns, e.columns, e.Ctx().GetExprCtx(), chk)
+	return nil
 }
 
 // Close and release the used resources.
 func (e *MPPGather) Close() error {
+	var err error
 	if e.dummy {
-		if e.respIter != nil {
-			_ = e.respIter.Close()
-			return errors.Trace(errors.New("e.respIter != nil when e.dummy is set"))
-		}
 		return nil
 	}
 	if e.respIter != nil {
-		return e.respIter.Close()
+		err = e.respIter.Close()
+	}
+	mppcoordmanager.InstanceMPPCoordinatorManager.Unregister(mppcoordmanager.CoordinatorUniqueID{MPPQueryID: e.mppQueryID, GatherID: e.gatherID})
+	if err != nil {
+		return err
 	}
 	return nil
 }

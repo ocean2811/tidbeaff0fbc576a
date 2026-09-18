@@ -10,6 +10,6 @@ You are expected to see 2 tests passed.
 $ go test
 OK: 2 passed
 PASS
-ok      github.com/pingcap/tidb/tests/readonlytest      2.150s
+ok      github.com/ocean2811/tidbeaff0fbc576a/tests/readonlytest      2.150s
 ```
 

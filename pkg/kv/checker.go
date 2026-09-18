@@ -47,13 +47,11 @@ func (RequestTypeSupportedChecker) supportExpr(exprType tipb.ExprType) bool {
 	switch exprType {
 	case tipb.ExprType_Null, tipb.ExprType_Int64, tipb.ExprType_Uint64, tipb.ExprType_String, tipb.ExprType_Bytes,
 		tipb.ExprType_MysqlDuration, tipb.ExprType_MysqlTime, tipb.ExprType_MysqlDecimal,
-		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_ColumnRef, tipb.ExprType_MysqlEnum, tipb.ExprType_MysqlBit,
-		tipb.ExprType_TiDBVectorFloat32:
+		tipb.ExprType_Float32, tipb.ExprType_Float64, tipb.ExprType_ColumnRef, tipb.ExprType_MysqlEnum, tipb.ExprType_MysqlBit:
 		return true
 	// aggregate functions.
 	// NOTE: tipb.ExprType_GroupConcat is only supported by TiFlash, So checking it for TiKV case outside.
 	case tipb.ExprType_Count, tipb.ExprType_First, tipb.ExprType_Max, tipb.ExprType_Min, tipb.ExprType_Sum, tipb.ExprType_Avg,
-		tipb.ExprType_SumInt, tipb.ExprType_MaxCount, tipb.ExprType_MinCount,
 		tipb.ExprType_Agg_BitXor, tipb.ExprType_Agg_BitAnd, tipb.ExprType_Agg_BitOr, tipb.ExprType_ApproxCountDistinct, tipb.ExprType_GroupConcat:
 		return true
 	// window functions.

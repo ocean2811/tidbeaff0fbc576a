@@ -19,19 +19,17 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -74,16 +72,16 @@ func TestCompareIndexData(t *testing.T) {
 	}
 
 	for caseID, data := range testData {
-		tc := types.DefaultStmtNoWarningContext
+		sc := stmtctx.NewStmtCtx()
 		cols := make([]*table.Column, 0)
 		indexCols := make([]*model.IndexColumn, 0)
 		for i, ft := range data.fts {
-			cols = append(cols, &table.Column{ColumnInfo: &model.ColumnInfo{Name: ast.NewCIStr(fmt.Sprintf("c%d", i)), FieldType: *ft}})
+			cols = append(cols, &table.Column{ColumnInfo: &model.ColumnInfo{Name: model.NewCIStr(fmt.Sprintf("c%d", i)), FieldType: *ft}})
 			indexCols = append(indexCols, &model.IndexColumn{Offset: i, Length: data.indexLength[i]})
 		}
-		indexInfo := &model.IndexInfo{Name: ast.NewCIStr("i0"), Columns: indexCols}
+		indexInfo := &model.IndexInfo{Name: model.NewCIStr("i0"), Columns: indexCols}
 
-		err := compareIndexData(collate.NewCollationEnabled(), tc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: ast.NewCIStr("t")}, nil)
+		err := compareIndexData(sc, cols, data.indexData, data.inputData, indexInfo, &model.TableInfo{Name: model.NewCIStr("t")})
 		require.Equal(t, data.correct, err == nil, "case id = %v", caseID)
 	}
 }
@@ -94,7 +92,9 @@ func TestCheckRowInsertionConsistency(t *testing.T) {
 
 	// mocked data
 	mockRowKey233 := tablecodec.EncodeRowKeyWithHandle(1, kv.IntHandle(233))
-	mockValue233, err := tablecodec.EncodeRow(sessVars.StmtCtx.TimeZone(), []types.Datum{types.NewIntDatum(233)}, []int64{101}, nil, nil, nil, &rd)
+	mockValue233, err := tablecodec.EncodeRow(
+		sessVars.StmtCtx, []types.Datum{types.NewIntDatum(233)}, []int64{101}, nil, nil, &rd,
+	)
 	require.Nil(t, err)
 	fakeRowInsertion := mutation{key: []byte{1, 1}, value: []byte{1, 1, 1}}
 
@@ -188,18 +188,15 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 	indexInfos := []*model.IndexInfo{
 		{
 			ID:      1,
-			Name:    ast.NewCIStr("idx_unique"),
 			State:   model.StatePublic,
 			Primary: false,
 			Unique:  true,
 			Columns: []*model.IndexColumn{
 				{
-					Name:   ast.NewCIStr("c2"),
 					Offset: 1,
 					Length: types.UnspecifiedLength,
 				},
 				{
-					Name:   ast.NewCIStr("c1"),
 					Offset: 0,
 					Length: types.UnspecifiedLength,
 				},
@@ -207,18 +204,15 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 		},
 		{
 			ID:      2,
-			Name:    ast.NewCIStr("idx_non_unique"),
 			State:   model.StatePublic,
 			Primary: false,
 			Unique:  false,
 			Columns: []*model.IndexColumn{
 				{
-					Name:   ast.NewCIStr("c2"),
 					Offset: 1,
 					Length: types.UnspecifiedLength,
 				},
 				{
-					Name:   ast.NewCIStr("c1"),
 					Offset: 0,
 					Length: types.UnspecifiedLength,
 				},
@@ -227,16 +221,16 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 	}
 	columnInfoSets := [][]*model.ColumnInfo{
 		{
-			{ID: 1, Name: ast.NewCIStr("c1"), Offset: 0, State: model.StatePublic, FieldType: *types.NewFieldType(mysql.TypeString)},
-			{ID: 2, Name: ast.NewCIStr("c2"), Offset: 1, State: model.StatePublic, FieldType: *types.NewFieldType(mysql.TypeDatetime)},
+			{ID: 1, Offset: 0, FieldType: *types.NewFieldType(mysql.TypeString)},
+			{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeDatetime)},
 		},
 		{
-			{ID: 1, Name: ast.NewCIStr("c1"), Offset: 0, State: model.StatePublic, FieldType: *types.NewFieldTypeWithCollation(mysql.TypeString, "utf8_unicode_ci",
+			{ID: 1, Offset: 0, FieldType: *types.NewFieldTypeWithCollation(mysql.TypeString, "utf8_unicode_ci",
 				types.UnspecifiedLength)},
-			{ID: 2, Name: ast.NewCIStr("c2"), Offset: 1, State: model.StatePublic, FieldType: *types.NewFieldType(mysql.TypeDatetime)},
+			{ID: 2, Offset: 1, FieldType: *types.NewFieldType(mysql.TypeDatetime)},
 		},
 	}
-	tc := types.DefaultStmtNoWarningContext
+	sessVars := variable.NewSessionVars(nil)
 	rd := rowcodec.Encoder{Enable: true}
 
 	now := types.CurrentTime(mysql.TypeDatetime)
@@ -244,7 +238,7 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 		types.NewStringDatum("some string"),
 		types.NewTimeDatum(now),
 	}
-	anotherTime, err := now.Add(tc, types.NewDuration(24, 0, 0, 0, 0))
+	anotherTime, err := now.Add(sessVars.StmtCtx, types.NewDuration(24, 0, 0, 0, 0))
 	require.Nil(t, err)
 	rowToRemove := []types.Datum{
 		types.NewStringDatum("old string"),
@@ -257,142 +251,92 @@ func TestCheckIndexKeysAndCheckHandleConsistency(t *testing.T) {
 	setter := func(maps map[int64]columnMaps) {}
 
 	// test
-	originNewCollation := collate.NewCollationEnabled()
-	defer collate.SetNewCollationEnabledForTest(originNewCollation)
-	for _, useNewCollate := range []bool{true, false} {
-		collate.SetNewCollationEnabledForTest(useNewCollate)
-		for _, isCommonHandle := range []bool{true, false} {
-			for _, lc := range locations {
-				for _, columnInfos := range columnInfoSets {
-					tc = tc.WithLocation(lc)
-					tableInfo := model.TableInfo{
-						ID:             1,
-						Name:           ast.NewCIStr("t"),
-						State:          model.StatePublic,
-						Columns:        columnInfos,
-						Indices:        indexInfos,
-						PKIsHandle:     false,
-						IsCommonHandle: isCommonHandle,
-					}
-					tableFromMeta, err := TableFromMeta(autoid.NewAllocators(false), &tableInfo)
-					require.NoError(t, err)
-					table := tableFromMeta.(*TableCommon)
-					require.Equal(t, useNewCollate, table.encoder.UseNewCollate())
-					var handle, corruptedHandle kv.Handle
-					if isCommonHandle {
-						encoded, err := codec.EncodeKey(tc.Location(), nil, rowToInsert[0])
-						require.Nil(t, err)
-						corrupted := make([]byte, len(encoded))
-						copy(corrupted, encoded)
-						corrupted[len(corrupted)-1] ^= 1
-						handle, err = kv.NewCommonHandle(encoded)
-						require.Nil(t, err)
-						corruptedHandle, err = kv.NewCommonHandle(corrupted)
-						require.Nil(t, err)
-					} else {
-						handle = kv.IntHandle(1)
-						corruptedHandle = kv.IntHandle(2)
-					}
+	collate.SetNewCollationEnabledForTest(true)
+	defer collate.SetNewCollationEnabledForTest(false)
+	for _, isCommonHandle := range []bool{true, false} {
+		for _, lc := range locations {
+			for _, columnInfos := range columnInfoSets {
+				sessVars.StmtCtx.SetTimeZone(lc)
+				tableInfo := model.TableInfo{
+					ID:             1,
+					Name:           model.NewCIStr("t"),
+					Columns:        columnInfos,
+					Indices:        indexInfos,
+					PKIsHandle:     false,
+					IsCommonHandle: isCommonHandle,
+				}
+				table := MockTableFromMeta(&tableInfo).(*TableCommon)
+				var handle, corruptedHandle kv.Handle
+				if isCommonHandle {
+					encoded, err := codec.EncodeKey(sessVars.StmtCtx, nil, rowToInsert[0])
+					require.Nil(t, err)
+					corrupted := make([]byte, len(encoded))
+					copy(corrupted, encoded)
+					corrupted[len(corrupted)-1] ^= 1
+					handle, err = kv.NewCommonHandle(encoded)
+					require.Nil(t, err)
+					corruptedHandle, err = kv.NewCommonHandle(corrupted)
+					require.Nil(t, err)
+				} else {
+					handle = kv.IntHandle(1)
+					corruptedHandle = kv.IntHandle(2)
+				}
 
-					for i, indexInfo := range indexInfos {
-						index := table.indices[i]
-						maps := getOrBuildColumnMaps(getter, setter, table)
+				for i, indexInfo := range indexInfos {
+					index := table.indices[i]
+					maps := getOrBuildColumnMaps(getter, setter, table)
 
-						// test checkIndexKeys
-						insertionKey, insertionValue, err := buildIndexKeyValue(index, rowToInsert, tc, indexInfo, table, handle)
-						require.Nil(t, err)
-						requireIndexKVDecodeMatchesRow(t, tc, table, indexInfo, rowToInsert, insertionKey, insertionValue,
-							maps.IndexIDToRowColInfos[indexInfo.ID])
-						deletionKey, _, err := buildIndexKeyValue(index, rowToRemove, tc, indexInfo, table, handle)
-						require.Nil(t, err)
-						indexMutations := []mutation{
-							{key: insertionKey, value: insertionValue, indexID: indexInfo.ID},
-							{key: deletionKey, indexID: indexInfo.ID},
-						}
-						err = checkIndexKeys(
-							tc, table, rowToInsert, rowToRemove, indexMutations, maps.IndexIDToInfo,
-							maps.IndexIDToRowColInfos, nil,
-						)
-						require.Nil(t, err)
-
-						// test checkHandleConsistency
-						rowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, handle)
-						corruptedRowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, corruptedHandle)
-						rowValue, err := tablecodec.EncodeRow(tc.Location(), rowToInsert, []int64{1, 2}, nil, nil, nil, &rd)
-						require.Nil(t, err)
-						rowMutation := mutation{key: rowKey, value: rowValue}
-						corruptedRowMutation := mutation{key: corruptedRowKey, value: rowValue}
-						err = checkHandleConsistency(rowMutation, indexMutations, maps.IndexIDToInfo, &tableInfo)
-						require.Nil(t, err)
-						err = checkHandleConsistency(corruptedRowMutation, indexMutations, maps.IndexIDToInfo, &tableInfo)
-						require.NotNil(t, err)
+					// test checkIndexKeys
+					insertionKey, insertionValue, err := buildIndexKeyValue(index, rowToInsert, sessVars, tableInfo,
+						indexInfo, table, handle)
+					require.Nil(t, err)
+					deletionKey, _, err := buildIndexKeyValue(index, rowToRemove, sessVars, tableInfo, indexInfo, table,
+						handle)
+					require.Nil(t, err)
+					indexMutations := []mutation{
+						{key: insertionKey, value: insertionValue, indexID: indexInfo.ID},
+						{key: deletionKey, indexID: indexInfo.ID},
 					}
+					err = checkIndexKeys(
+						sessVars, table, rowToInsert, rowToRemove, indexMutations, maps.IndexIDToInfo,
+						maps.IndexIDToRowColInfos,
+					)
+					require.Nil(t, err)
+
+					// test checkHandleConsistency
+					rowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, handle)
+					corruptedRowKey := tablecodec.EncodeRowKeyWithHandle(table.tableID, corruptedHandle)
+					rowValue, err := tablecodec.EncodeRow(sessVars.StmtCtx, rowToInsert, []int64{1, 2}, nil, nil, &rd)
+					require.Nil(t, err)
+					rowMutation := mutation{key: rowKey, value: rowValue}
+					corruptedRowMutation := mutation{key: corruptedRowKey, value: rowValue}
+					err = checkHandleConsistency(rowMutation, indexMutations, maps.IndexIDToInfo, &tableInfo)
+					require.Nil(t, err)
+					err = checkHandleConsistency(corruptedRowMutation, indexMutations, maps.IndexIDToInfo, &tableInfo)
+					require.NotNil(t, err)
 				}
 			}
 		}
 	}
 }
 
-func requireIndexKVDecodeMatchesRow(
-	t *testing.T,
-	tc types.Context,
-	table *TableCommon,
-	indexInfo *model.IndexInfo,
-	row []types.Datum,
-	key []byte,
-	value []byte,
-	rowColInfos []rowcodec.ColInfo,
-) {
-	t.Helper()
-
-	decodedIndexValues, err := tablecodec.DecodeIndexKV(
-		key, value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos,
-	)
-	require.NoError(t, err)
-	requireDecodedIndexValuesMatchRow(t, tc, table, indexInfo, row, decodedIndexValues)
-
-	preAlloc := make([][]byte, len(indexInfo.Columns), len(indexInfo.Columns)+len(rowColInfos))
-	decodedIndexValuesEx, err := tablecodec.DecodeIndexKVEx(
-		key, value, len(indexInfo.Columns), tablecodec.HandleNotNeeded, rowColInfos, nil, preAlloc,
-	)
-	require.NoError(t, err)
-	require.Equal(t, decodedIndexValues, decodedIndexValuesEx)
-	requireDecodedIndexValuesMatchRow(t, tc, table, indexInfo, row, decodedIndexValuesEx)
-}
-
-func requireDecodedIndexValuesMatchRow(
-	t *testing.T,
-	tc types.Context,
-	table *TableCommon,
-	indexInfo *model.IndexInfo,
-	row []types.Datum,
-	decodedIndexValues [][]byte,
-) {
-	t.Helper()
-
-	require.Len(t, decodedIndexValues, len(indexInfo.Columns))
-	indexData := make([]types.Datum, 0, len(decodedIndexValues))
-	for i, value := range decodedIndexValues {
-		fieldType := table.Columns[indexInfo.Columns[i].Offset].FieldType.ArrayType()
-		datum, err := tablecodec.DecodeColumnValue(value, fieldType, tc.Location())
-		require.NoError(t, err)
-		indexData = append(indexData, datum)
-	}
-	require.NoError(t, compareIndexData(table.encoder.UseNewCollate(), tc, table.Columns, indexData, row, indexInfo, table.Meta(), nil))
-}
-
-func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, tc types.Context,
-	indexInfo *model.IndexInfo, table *TableCommon, handle kv.Handle) ([]byte, []byte, error) {
+func buildIndexKeyValue(index table.Index, rowToInsert []types.Datum, sessVars *variable.SessionVars,
+	tableInfo model.TableInfo, indexInfo *model.IndexInfo, table *TableCommon, handle kv.Handle) ([]byte, []byte, error) {
 	indexedValues, err := index.FetchValues(rowToInsert, nil)
 	if err != nil {
 		return nil, nil, err
 	}
-	key, distinct, err := index.GenIndexKey(errctx.StrictNoWarningContext, tc.Location(), indexedValues, handle, nil)
+	key, distinct, err := tablecodec.GenIndexKey(
+		sessVars.StmtCtx, &tableInfo, indexInfo, 1, indexedValues, handle, nil,
+	)
 	if err != nil {
 		return nil, nil, err
 	}
-	rsData := TryGetHandleRestoredDataWrapper(table, rowToInsert, nil, indexInfo)
-	value, err := index.GenIndexValue(errctx.StrictNoWarningContext, tc.Location(), distinct, false, indexedValues, handle, rsData, nil)
+	rsData := TryGetHandleRestoredDataWrapper(table.meta, rowToInsert, nil, indexInfo)
+	value, err := tablecodec.GenIndexValuePortal(
+		sessVars.StmtCtx, &tableInfo, indexInfo, NeedRestoredData(indexInfo.Columns, tableInfo.Columns),
+		distinct, false, indexedValues, handle, 0, rsData, nil,
+	)
 	if err != nil {
 		return nil, nil, err
 	}

@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "intset",
     srcs = ["fast_int_set.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/intset",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/intset",
     visibility = ["//visibility:public"],
     deps = ["@org_golang_x_tools//container/intsets"],
 )
@@ -20,6 +20,7 @@ go_test(
     shard_count = 5,
     deps = [
         "@com_github_stretchr_testify//require",
+        "@org_golang_x_exp//maps",
         "@org_golang_x_tools//container/intsets",
     ],
 )

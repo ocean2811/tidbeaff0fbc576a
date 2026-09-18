@@ -15,63 +15,40 @@
 package tables
 
 import (
+	"bytes"
 	"context"
 	"sync"
-	"time"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/errctx"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/exprstatic"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	contextutil "github.com/pingcap/tidb/pkg/util/context"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
-	"github.com/pingcap/tidb/pkg/util/tracing"
-	"go.uber.org/zap"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/tracing"
 )
-
-var indexConditionECtx *exprstatic.ExprContext
-
-// indexPartialCondition is a data structure to help implement the partial index.
-type indexPartialCondition struct {
-	conditionExpr expression.Expression
-	// conditionEvalBufferPool stores many eval buffer to avoid allocating chunk
-	// for evaluating partial index condition for each time.
-	// It's only initialized if the `partialConditionExpr` is not nil.
-	conditionEvalBufferPool sync.Pool
-}
 
 // index is the data structure for index data in the KV store.
 type index struct {
 	idxInfo  *model.IndexInfo
 	tblInfo  *model.TableInfo
 	phyTblID int64
-	// needRestoredData is initialized on first use. sync.Once makes the cached value
-	// safe for index instances shared by concurrent writers.
+	// initNeedRestoreData is used to initialize `needRestoredData` in `index.Create()`.
+	// This routine cannot be done in `NewIndex()` because `needRestoreData` relies on `NewCollationEnabled()` and
+	// the collation global variable is initialized *after* `NewIndex()`.
 	initNeedRestoreData sync.Once
 	needRestoredData    bool
-	encoder             codec.Encoder
-	indexPartialCondition
 }
 
 // NeedRestoredData checks whether the index columns needs restored data.
-func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
+func NeedRestoredData(idxCols []*model.IndexColumn, colInfos []*model.ColumnInfo) bool {
 	for _, idxCol := range idxCols {
 		col := colInfos[idxCol.Offset]
-		if types.NeedRestoredDataWithCollate(model.GetIdxChangingFieldType(idxCol, col), useNewCollate) {
+		if types.NeedRestoredData(&col.FieldType) {
 			return true
 		}
 	}
@@ -79,56 +56,13 @@ func NeedRestoredData(useNewCollate bool, idxCols []*model.IndexColumn, colInfos
 }
 
 // NewIndex builds a new Index object.
-func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) (table.Index, error) {
-	return newIndex(physicalID, tblInfo, indexInfo, collate.NewCollationEnabled())
-}
-
-func newIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo, useNewCollate bool) (*index, error) {
-	idx := &index{
+func NewIndex(physicalID int64, tblInfo *model.TableInfo, indexInfo *model.IndexInfo) table.Index {
+	index := &index{
 		idxInfo:  indexInfo,
 		tblInfo:  tblInfo,
 		phyTblID: physicalID,
-		encoder:  codec.NewEncoder(useNewCollate),
 	}
-	if err := idx.initPartialCondition(); err != nil {
-		return nil, err
-	}
-	return idx, nil
-}
-
-func (c *index) initPartialCondition() error {
-	conditionString := c.idxInfo.ConditionExprString
-	if len(conditionString) == 0 {
-		return nil
-	}
-	ctx := indexConditionECtx.Apply(exprstatic.WithNewCollationEnabled(c.encoder.UseNewCollate()))
-	conditionExpr, err := expression.ParseSimpleExpr(ctx, conditionString, expression.WithTableInfo("", c.tblInfo))
-	if err != nil {
-		return errors.Trace(err)
-	}
-	c.conditionExpr = conditionExpr
-	c.conditionEvalBufferPool = sync.Pool{
-		New: func() any {
-			// For INSERT path, it'll only pass all writable columns.
-			// For UPDATE/DELETE path, it'll contain all columns.
-			// As the writable columns are always at the beginning of the `tblInfo.Columns`, it'll not affect
-			// the offsets of related columns in the expression. Therefore, it's fine to always record all
-			// columns here.
-			evalBufferTypes := make([]*types.FieldType, 0, len(c.tblInfo.Columns)+1)
-			for _, col := range c.tblInfo.Columns {
-				evalBufferTypes = append(evalBufferTypes, &col.FieldType)
-			}
-
-			if !c.tblInfo.HasClusteredIndex() {
-				// If the table doesn't have clustered index, we need to append an extra handle column.
-				evalBufferTypes = append(evalBufferTypes, types.NewFieldType(mysql.TypeLonglong))
-			}
-
-			evalBuffer := chunk.MutRowFromTypes(evalBufferTypes)
-			return &evalBuffer
-		},
-	}
-	return nil
+	return index
 }
 
 // Meta returns index info.
@@ -141,67 +75,23 @@ func (c *index) TableMeta() *model.TableInfo {
 	return c.tblInfo
 }
 
-func (c *index) castIndexValuesToChangingTypes(indexedValues []types.Datum) error {
-	var err error
-	for i, idxCol := range c.idxInfo.Columns {
-		tblCol := c.tblInfo.Columns[idxCol.Offset]
-		if !idxCol.UseChangingType || tblCol.ChangingFieldType == nil {
-			continue
-		}
-		indexedValues[i], err = table.CastColumnValueWithStrictMode(indexedValues[i], tblCol.ChangingFieldType)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 // GenIndexKey generates storage key for index values. Returned distinct indicates whether the
 // indexed values should be distinct in storage (i.e. whether handle is encoded in the key).
-func (c *index) GenIndexKey(ec errctx.Context, loc *time.Location, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
+func (c *index) GenIndexKey(sc *stmtctx.StatementContext, indexedValues []types.Datum, h kv.Handle, buf []byte) (key []byte, distinct bool, err error) {
 	idxTblID := c.phyTblID
-	fullHandle := h
 	if c.idxInfo.Global {
 		idxTblID = c.tblInfo.ID
-		pi := c.tblInfo.GetPartitionInfo()
-		if pi != nil && pi.NewTableID != 0 {
-			isNew, ok := pi.DDLChangedIndex[c.idxInfo.ID]
-			if ok && isNew {
-				idxTblID = pi.NewTableID
-			}
-		}
-
-		if _, ok := fullHandle.(kv.PartitionHandle); !ok &&
-			c.idxInfo.GlobalIndexVersion >= model.GlobalIndexVersionV1 {
-			fullHandle = kv.NewPartitionHandle(c.phyTblID, h)
-		}
 	}
-
-	if err = c.castIndexValuesToChangingTypes(indexedValues); err != nil {
-		return
-	}
-
-	key, distinct, err = tablecodec.GenIndexKey(c.encoder, loc, c.tblInfo, c.idxInfo,
-		idxTblID, indexedValues, fullHandle, buf)
-	err = ec.HandleError(err)
-	return
+	return tablecodec.GenIndexKey(sc, c.tblInfo, c.idxInfo, idxTblID, indexedValues, h, buf)
 }
 
 // GenIndexValue generates the index value.
-func (c *index) GenIndexValue(ec errctx.Context, loc *time.Location, distinct, untouched bool, indexedValues []types.Datum,
+func (c *index) GenIndexValue(sc *stmtctx.StatementContext, distinct bool, indexedValues []types.Datum,
 	h kv.Handle, restoredData []types.Datum, buf []byte) ([]byte, error) {
 	c.initNeedRestoreData.Do(func() {
-		c.needRestoredData = NeedRestoredData(c.encoder.UseNewCollate(), c.idxInfo.Columns, c.tblInfo.Columns)
+		c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
 	})
-
-	if err := c.castIndexValuesToChangingTypes(indexedValues); err != nil {
-		return nil, errors.Trace(err)
-	}
-
-	idx, err := tablecodec.GenIndexValuePortal(c.encoder.UseNewCollate(), loc, c.tblInfo,
-		c.idxInfo, c.needRestoredData, distinct, untouched, indexedValues, h, c.phyTblID, restoredData, buf)
-	err = ec.HandleError(err)
-	return idx, err
+	return tablecodec.GenIndexValuePortal(sc, c.tblInfo, c.idxInfo, c.needRestoredData, distinct, false, indexedValues, h, c.phyTblID, restoredData, buf)
 }
 
 // getIndexedValue will produce the result like:
@@ -256,52 +146,20 @@ out:
 	return vals
 }
 
-// MeetPartialCondition checks whether the row meets the partial index condition of the index.
-func (c *index) MeetPartialCondition(row []types.Datum) (meet bool, err error) {
-	if c.conditionExpr == nil {
-		return true, nil
-	}
-
-	evalBuffer := c.conditionEvalBufferPool.Get().(*chunk.MutRow)
-	defer c.conditionEvalBufferPool.Put(evalBuffer)
-	evalBuffer.SetDatums(row...)
-
-	return c.MeetPartialConditionWithChunk(evalBuffer.ToRow())
-}
-
-func (c *index) MeetPartialConditionWithChunk(row chunk.Row) (meet bool, err error) {
-	defer func() {
-		r := recover()
-		if r != nil {
-			err = errors.Errorf("panic in MeetPartialConditionWithChunk: %v", r)
-			intest.Assert(false, "should never panic in MeetPartialConditionWithChunk")
-			logutil.BgLogger().Warn("panic in MeetPartialConditionWithChunk", zap.Error(err), zap.Any("recover message", r))
-		}
-	}()
-
-	datum, isNull, err := c.conditionExpr.EvalInt(indexConditionECtx.GetEvalCtx(), row)
-	if err != nil {
-		return false, err
-	}
-	// If the result is NULL, it usually means the original column itself is NULL.
-	// In this case, we should refuse to consider the index for partial index condition.
-	return datum > 0 && !isNull, nil
-}
-
 // Create creates a new entry in the kvIndex data.
 // If the index is unique and there is an existing entry with the same key,
 // Create will return the existing entry's handle as the first return value, ErrKeyExists as the second return value.
-func (c *index) Create(sctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOption) (kv.Handle, error) {
-	opt := table.NewCreateIdxOpt(opts...)
-	return c.create(sctx, txn, indexedValue, h, handleRestoreData, false, opt)
-}
-
-func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, untouched bool, opt *table.CreateIdxOpt) (kv.Handle, error) {
+func (c *index) Create(sctx sessionctx.Context, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle, handleRestoreData []types.Datum, opts ...table.CreateIdxOptFunc) (kv.Handle, error) {
 	if c.Meta().Unique {
 		txn.CacheTableInfo(c.phyTblID, c.tblInfo)
 	}
+	var opt table.CreateIdxOpt
+	for _, fn := range opts {
+		fn(&opt)
+	}
+
 	indexedValues := c.getIndexedValue(indexedValue)
-	ctx := opt.Ctx()
+	ctx := opt.Ctx
 	if ctx != nil {
 		var r tracing.Region
 		r, ctx = tracing.StartRegionEx(ctx, "index.Create")
@@ -309,21 +167,11 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	} else {
 		ctx = context.TODO()
 	}
-	writeBufs := sctx.GetMutateBuffers().GetWriteStmtBufs()
-	skipCheck := opt.DupKeyCheck() == table.DupKeyCheckSkip
-	allowOverwriteOfOldGlobalIndex := false
-	if c.idxInfo.Global && c.tblInfo.Partition.DDLState == model.StateDeleteReorganization &&
-		// TODO: Also do the same for DROP PARTITION
-		c.tblInfo.Partition.DDLAction == model.ActionTruncateTablePartition {
-		allowOverwriteOfOldGlobalIndex = true
-		if len(c.tblInfo.Partition.DroppingDefinitions) > 0 {
-			skipCheck = false
-		}
-	}
-	evalCtx := sctx.GetExprCtx().GetEvalCtx()
-	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
+	vars := sctx.GetSessionVars()
+	writeBufs := vars.GetWriteStmtBufs()
+	skipCheck := vars.StmtCtx.BatchCheck
 	for _, value := range indexedValues {
-		key, distinct, err := c.GenIndexKey(ec, loc, value, h, writeBufs.IndexKeyBuf)
+		key, distinct, err := c.GenIndexKey(vars.StmtCtx, value, h, writeBufs.IndexKeyBuf)
 		if err != nil {
 			return nil, err
 		}
@@ -332,28 +180,24 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			tempKey         []byte
 			keyVer          byte
 			keyIsTempIdxKey bool
-			hasTempKey      bool
 		)
-		if !opt.FromBackFill() {
+		if !opt.FromBackFill {
 			key, tempKey, keyVer = GenTempIdxKeyByState(c.idxInfo, key)
-			if keyVer == tablecodec.TempIndexKeyTypeBackfill || keyVer == tablecodec.TempIndexKeyTypeDelete {
+			if keyVer == TempIndexKeyTypeBackfill || keyVer == TempIndexKeyTypeDelete {
 				key, tempKey = tempKey, nil
 				keyIsTempIdxKey = true
 			}
-			hasTempKey = keyIsTempIdxKey || len(tempKey) > 0
 		}
 
-		if txn.IsPipelined() {
-			// For pipelined DML, disable the untouched optimization to avoid extra RPCs for MemBuffer.Get().
-			// TODO: optimize this.
-			untouched = false
-		}
-
-		if untouched {
+		if opt.Untouched {
+			txn, err1 := sctx.Txn(true)
+			if err1 != nil {
+				return nil, err1
+			}
 			// If the index kv was untouched(unchanged), and the key/value already exists in mem-buffer,
 			// should not overwrite the key with un-commit flag.
 			// So if the key exists, just do nothing and return.
-			v, err := kv.GetValue(ctx, txn.GetMemBuffer(), key)
+			v, err := txn.GetMemBuffer().Get(ctx, key)
 			if err == nil {
 				if len(v) != 0 {
 					continue
@@ -367,7 +211,7 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 						return nil, err
 					}
 					if keyFlags.HasPresumeKeyNotExists() {
-						untouched = false
+						opt.Untouched = false
 					}
 				}
 			}
@@ -375,16 +219,20 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 
 		// save the key buffer to reuse.
 		writeBufs.IndexKeyBuf = key
-		idxVal, err := c.GenIndexValue(ec, loc, distinct, untouched, value, h, handleRestoreData, nil)
+		c.initNeedRestoreData.Do(func() {
+			c.needRestoredData = NeedRestoredData(c.idxInfo.Columns, c.tblInfo.Columns)
+		})
+		idxVal, err := tablecodec.GenIndexValuePortal(sctx.GetSessionVars().StmtCtx, c.tblInfo, c.idxInfo,
+			c.needRestoredData, distinct, opt.Untouched, value, h, c.phyTblID, handleRestoreData, nil)
 		if err != nil {
 			return nil, err
 		}
 
-		ignoreAssertion := opt.IgnoreAssertion() || c.idxInfo.State != model.StatePublic
+		opt.IgnoreAssertion = opt.IgnoreAssertion || c.idxInfo.State != model.StatePublic
 
-		if !distinct || skipCheck || untouched {
+		if !distinct || skipCheck || opt.Untouched {
 			val := idxVal
-			if untouched && hasTempKey {
+			if opt.Untouched && (keyIsTempIdxKey || len(tempKey) > 0) {
 				// Untouched key-values never occur in the storage and the temp index is not public.
 				// It is unnecessary to write the untouched temp index key-values.
 				continue
@@ -392,22 +240,10 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			if keyIsTempIdxKey {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
 				val = tempVal.Encode(nil)
-				// during some step of add-index, such as in write-reorg state, this
-				// key is THE temp index key.
-				err = txn.GetMemBuffer().Set(key, val)
-			} else if c.mayDDLMergingTempIndex() {
-				// Here may have the situation:
-				// DML: Writing the normal index key.
-				// DDL: Writing the same normal index key, but it does not lock primary record.
-				err = txn.GetMemBuffer().SetWithFlags(key, val, kv.SetNeedLocked)
-			} else {
-				err = txn.GetMemBuffer().Set(key, val)
 			}
+			err = txn.GetMemBuffer().Set(key, val)
 			if err != nil {
 				return nil, err
-			}
-			if keyIsTempIdxKey {
-				metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, false)
 			}
 			if len(tempKey) > 0 {
 				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: distinct}
@@ -416,13 +252,12 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 				if err != nil {
 					return nil, err
 				}
-				metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, true)
 			}
-			if !ignoreAssertion && !untouched {
-				if opt.DupKeyCheck() == table.DupKeyCheckLazy && !txn.IsPessimistic() {
-					err = setAssertion(txn, key, kv.AssertUnknown)
+			if !opt.IgnoreAssertion && (!opt.Untouched) {
+				if sctx.GetSessionVars().LazyCheckKeyNotExists() && !txn.IsPessimistic() {
+					err = txn.SetAssertion(key, kv.SetAssertUnknown)
 				} else {
-					err = setAssertion(txn, key, kv.AssertNotExist)
+					err = txn.SetAssertion(key, kv.SetAssertNotExist)
 				}
 			}
 			if err != nil {
@@ -432,106 +267,46 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 		}
 
 		var value []byte
-		var tempIdxVal tablecodec.TempIndexValue
-		if allowOverwriteOfOldGlobalIndex {
-			// In DeleteReorganization, overwrite Global Index keys pointing to
-			// old dropped/truncated partitions.
-			// Note that a partitioned table cannot be temporary table
-
-			// Check mem buffer first. Note that it may be a tombstone
-			// resulting in err == nil and len(value) == 0.
-			// err == nil will also turn off lazyCheck later,
-			// and skip kv.SetPresumeKeyNotExists flag, to allow
-			// taking locks on already existing row.
-			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
-			if kv.IsErrNotFound(err) {
-				// Not in mem buffer, must do non-lazy read, since we must check
-				// if exists now, to be able to overwrite.
-				value, err = kv.GetValue(ctx, txn.GetSnapshot(), key)
-				if err == nil && len(value) == 0 {
-					err = kv.ErrNotExist
-				}
-			}
-			if err == nil && len(value) != 0 {
-				handle, errPart := tablecodec.DecodeHandleInIndexValue(value)
-				if errPart != nil {
-					return nil, errPart
-				}
-				if partHandle, ok := handle.(kv.PartitionHandle); ok {
-					for _, id := range c.tblInfo.Partition.IDsInDDLToIgnore() {
-						if id == partHandle.PartitionID {
-							// Simply overwrite it
-							err = setAssertion(txn, key, kv.AssertUnknown)
-							if err != nil {
-								return nil, err
-							}
-							value = nil
-							break
-						}
-					}
-				}
-			}
-		} else if c.tblInfo.TempTableType != model.TempTableNone {
+		if c.tblInfo.TempTableType != model.TempTableNone {
 			// Always check key for temporary table because it does not write to TiKV
-			value, err = kv.GetValue(ctx, txn, key)
-		} else if hasTempKey {
+			value, err = txn.Get(ctx, key)
+		} else if sctx.GetSessionVars().LazyCheckKeyNotExists() && !keyIsTempIdxKey {
 			// For temp index keys, we can't get the temp value from memory buffer, even if the lazy check is enabled.
 			// Otherwise, it may cause the temp index value to be overwritten, leading to data inconsistency.
-			var dupHandle kv.Handle
-			if keyIsTempIdxKey {
-				dupHandle, value, err = FetchDuplicatedHandleForTempIndexKey(ctx, key, txn)
-			} else if len(tempKey) > 0 {
-				dupHandle, value, err = FetchDuplicatedHandleForTempIndexKey(ctx, tempKey, txn)
-			}
-			if err != nil {
-				return nil, err
-			}
-			if dupHandle != nil {
-				return dupHandle, kv.ErrKeyExists
-			}
-			if len(value) > 0 {
-				tempIdxVal, err = tablecodec.DecodeTempIndexValue(value)
-				if err != nil {
-					return nil, err
-				}
-			}
-		} else if opt.DupKeyCheck() == table.DupKeyCheckLazy {
-			value, err = txn.GetMemBuffer().GetLocal(ctx, key)
+			value, err = txn.GetMemBuffer().Get(ctx, key)
 		} else {
-			value, err = kv.GetValue(ctx, txn, key)
+			value, err = txn.Get(ctx, key)
 		}
 		if err != nil && !kv.IsErrNotFound(err) {
 			return nil, err
 		}
-
+		var tempIdxVal tablecodec.TempIndexValue
+		if len(value) > 0 && keyIsTempIdxKey {
+			tempIdxVal, err = tablecodec.DecodeTempIndexValue(value)
+			if err != nil {
+				return nil, err
+			}
+		}
 		// The index key value is not found or deleted.
 		if err != nil || len(value) == 0 || (!tempIdxVal.IsEmpty() && tempIdxVal.Current().Delete) {
 			val := idxVal
-			lazyCheck := opt.DupKeyCheck() == table.DupKeyCheckLazy && err != nil
-			if hasTempKey {
-				if keyIsTempIdxKey {
-					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
-					val = tempVal.Encode(value)
+			lazyCheck := sctx.GetSessionVars().LazyCheckKeyNotExists() && err != nil
+			if keyIsTempIdxKey {
+				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
+				val = tempVal.Encode(value)
+			}
+			needPresumeNotExists, err := needPresumeKeyNotExistsFlag(ctx, txn, key, tempKey, h,
+				keyIsTempIdxKey, c.tblInfo.IsCommonHandle, c.tblInfo.ID)
+			if err != nil {
+				return nil, err
+			}
+			if lazyCheck {
+				var flags []kv.FlagsOp
+				if needPresumeNotExists {
+					flags = []kv.FlagsOp{kv.SetPresumeKeyNotExists}
 				}
-				err = txn.GetMemBuffer().Set(key, val)
-				if err != nil {
-					return nil, err
-				}
-				if keyIsTempIdxKey {
-					metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, false)
-				}
-				if len(tempKey) > 0 {
-					tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
-					val = tempVal.Encode(value)
-					err = txn.GetMemBuffer().Set(tempKey, val)
-					if err != nil {
-						return nil, err
-					}
-					metrics.DDLAddOneTempIndexWrite(sctx.ConnectionID(), c.tblInfo.ID, true)
-				}
-			} else if lazyCheck {
-				flags := []kv.FlagsOp{kv.SetPresumeKeyNotExists}
-				if opt.PessimisticLazyDupKeyCheck() == table.DupKeyCheckInPrewrite && txn.IsPessimistic() {
+				if !vars.ConstraintCheckInPlacePessimistic && vars.TxnCtx.IsPessimistic && vars.InTxn() &&
+					!vars.InRestrictedSQL && vars.ConnectionID > 0 {
 					flags = append(flags, kv.SetNeedConstraintCheckInPrewrite)
 				}
 				err = txn.GetMemBuffer().SetWithFlags(key, val, flags...)
@@ -541,23 +316,44 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 			if err != nil {
 				return nil, err
 			}
-
-			if ignoreAssertion {
+			if len(tempKey) > 0 {
+				tempVal := tablecodec.TempIndexValueElem{Value: idxVal, KeyVer: keyVer, Distinct: true}
+				val = tempVal.Encode(value)
+				if lazyCheck && needPresumeNotExists {
+					err = txn.GetMemBuffer().SetWithFlags(tempKey, val, kv.SetPresumeKeyNotExists)
+				} else {
+					err = txn.GetMemBuffer().Set(tempKey, val)
+				}
+				if err != nil {
+					return nil, err
+				}
+			}
+			if opt.IgnoreAssertion {
 				continue
 			}
 			if lazyCheck && !txn.IsPessimistic() {
-				err = setAssertion(txn, key, kv.AssertUnknown)
+				err = txn.SetAssertion(key, kv.SetAssertUnknown)
 			} else {
-				err = setAssertion(txn, key, kv.AssertNotExist)
+				err = txn.SetAssertion(key, kv.SetAssertNotExist)
 			}
 			if err != nil {
 				return nil, err
 			}
 			continue
 		}
-		// temp index key should have been handled by FetchDuplicatedHandleForTempIndexKey.
-		intest.Assert(!hasTempKey)
-		handle, err := tablecodec.DecodeHandleInIndexValue(value)
+		if c.idxInfo.Global && len(value) != 0 && !bytes.Equal(value, idxVal) {
+			val := idxVal
+			err = txn.GetMemBuffer().Set(key, val)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+
+		if keyIsTempIdxKey && !tempIdxVal.IsEmpty() {
+			value = tempIdxVal.Current().Value
+		}
+		handle, err := tablecodec.DecodeHandleInUniqueIndexValue(value, c.tblInfo.IsCommonHandle)
 		if err != nil {
 			return nil, err
 		}
@@ -566,19 +362,36 @@ func (c *index) create(sctx table.MutateContext, txn kv.Transaction, indexedValu
 	return nil, nil
 }
 
+func needPresumeKeyNotExistsFlag(ctx context.Context, txn kv.Transaction, key, tempKey kv.Key,
+	h kv.Handle, keyIsTempIdxKey bool, isCommon bool, tblID int64) (needFlag bool, err error) {
+	var uniqueTempKey kv.Key
+	if keyIsTempIdxKey {
+		uniqueTempKey = key
+	} else if len(tempKey) > 0 {
+		uniqueTempKey = tempKey
+	} else {
+		return true, nil
+	}
+	foundKey, dupHandle, err := FetchDuplicatedHandle(ctx, uniqueTempKey, true, txn, tblID, isCommon)
+	if err != nil {
+		return false, err
+	}
+	if foundKey && dupHandle != nil && !dupHandle.Equal(h) {
+		return false, kv.ErrKeyExists
+	}
+	return false, nil
+}
+
 // Delete removes the entry for handle h and indexedValues from KV index.
-func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
+func (c *index) Delete(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) error {
 	indexedValues := c.getIndexedValue(indexedValue)
-	evalCtx := ctx.GetExprCtx().GetEvalCtx()
-	loc, ec := evalCtx.Location(), evalCtx.ErrCtx()
 	for _, value := range indexedValues {
-		key, distinct, err := c.GenIndexKey(ec, loc, value, h, nil)
+		key, distinct, err := c.GenIndexKey(sc, value, h, nil)
 		if err != nil {
 			return err
 		}
 
 		key, tempKey, tempKeyVer := GenTempIdxKeyByState(c.idxInfo, key)
-		doubleWrite := tempKeyVer == tablecodec.TempIndexKeyTypeMerge
 		var originTempVal []byte
 		if len(tempKey) > 0 && c.idxInfo.Unique {
 			// Get the origin value of the unique temporary index key.
@@ -588,12 +401,25 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				return err
 			}
 		}
-
 		tempValElem := tablecodec.TempIndexValueElem{Handle: h, KeyVer: tempKeyVer, Delete: true, Distinct: distinct}
+
+		// If index is global, decode the pid from value (if exists) and compare with c.physicalID.
+		// Only when pid in value equals to c.physicalID, the key can be deleted.
 		if c.idxInfo.Global {
-			tempValElem.Global = true
-			tempValElem.Handle = kv.NewPartitionHandle(c.phyTblID, h)
+			if val, err := txn.GetMemBuffer().Get(context.Background(), key); err == nil {
+				segs := tablecodec.SplitIndexValue(val)
+				if len(segs.PartitionID) != 0 {
+					_, pid, err := codec.DecodeInt(segs.PartitionID)
+					if err != nil {
+						return err
+					}
+					if pid != c.phyTblID {
+						continue
+					}
+				}
+			}
 		}
+
 		if distinct {
 			if len(key) > 0 {
 				okToDelete := true
@@ -604,12 +430,10 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 						return err
 					}
 					if len(originVal) > 0 {
-						oh, err := tablecodec.DecodeHandleInIndexValue(originVal)
+						oh, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, c.tblInfo.IsCommonHandle)
 						if err != nil {
 							return err
 						}
-						// The handle passed in may be a `PartitionHandle`,
-						// so we can't directly do comparation with them.
 						if !h.Equal(oh) {
 							okToDelete = false
 						}
@@ -629,19 +453,10 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				if err != nil {
 					return err
 				}
-				metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
 			}
 		} else {
 			if len(key) > 0 {
-				if c.mayDDLMergingTempIndex() {
-					// Here may have the situation:
-					// DML: Deleting the normal index key.
-					// DDL: Writing the same normal index key, but it does not lock primary record.
-					// In this case, we should lock the index key in DML to grantee the serialization.
-					err = txn.GetMemBuffer().DeleteWithFlags(key, kv.SetNeedLocked)
-				} else {
-					err = txn.GetMemBuffer().Delete(key)
-				}
+				err = txn.GetMemBuffer().Delete(key)
 				if err != nil {
 					return err
 				}
@@ -652,12 +467,11 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 				if err != nil {
 					return err
 				}
-				metrics.DDLAddOneTempIndexWrite(ctx.ConnectionID(), c.tblInfo.ID, doubleWrite)
 			}
 		}
 		if c.idxInfo.State == model.StatePublic {
 			// If the index is in public state, delete this index means it must exists.
-			err = setAssertion(txn, key, kv.AssertExist)
+			err = txn.SetAssertion(key, kv.SetAssertExist)
 		}
 		if err != nil {
 			return err
@@ -666,26 +480,26 @@ func (c *index) Delete(ctx table.MutateContext, txn kv.Transaction, indexedValue
 	return nil
 }
 
-// mayDDLMergingTempIndex checks whether the DDL worker may be merging the temporary index to the normal index.
-// In most times, if an index is not unique, its primary record is assumed to be mutated and locked.
-// The only exception is when the DDL worker is merging the temporary index in fast reorging,
-// the DDL txn will not lock the primary record to reduce unnecessary conflicts.
-// At this time, the index record should be locked in force
-// to make sure the serialization between the DDL and DML transactions.
-func (c *index) mayDDLMergingTempIndex() bool {
-	return c.idxInfo.BackfillState == model.BackfillStateReadyToMerge ||
-		c.idxInfo.BackfillState == model.BackfillStateMerging
-}
-
-func (c *index) GenIndexKVIter(ec errctx.Context, loc *time.Location, indexedValue []types.Datum,
+func (c *index) GenIndexKVIter(sc *stmtctx.StatementContext, indexedValue []types.Datum,
 	h kv.Handle, handleRestoreData []types.Datum) table.IndexKVGenerator {
 	var mvIndexValues [][]types.Datum
 	if c.Meta().MVIndex {
 		mvIndexValues = c.getIndexedValue(indexedValue)
-		return table.NewMultiValueIndexKVGenerator(c, ec, loc, h, handleRestoreData, mvIndexValues)
+		return table.NewMultiValueIndexKVGenerator(c, sc, h, handleRestoreData, mvIndexValues)
 	}
-	return table.NewPlainIndexKVGenerator(c, ec, loc, h, handleRestoreData, indexedValue)
+	return table.NewPlainIndexKVGenerator(c, sc, h, handleRestoreData, indexedValue)
 }
+
+const (
+	// TempIndexKeyTypeNone means the key is not a temporary index key.
+	TempIndexKeyTypeNone byte = 0
+	// TempIndexKeyTypeDelete indicates this value is written in the delete-only stage.
+	TempIndexKeyTypeDelete byte = 'd'
+	// TempIndexKeyTypeBackfill indicates this value is written in the backfill stage.
+	TempIndexKeyTypeBackfill byte = 'b'
+	// TempIndexKeyTypeMerge indicates this value is written in the merge stage.
+	TempIndexKeyTypeMerge byte = 'm'
+)
 
 // GenTempIdxKeyByState is used to get the key version and the temporary key.
 // The tempKeyVer means the temp index key/value version.
@@ -693,67 +507,44 @@ func GenTempIdxKeyByState(indexInfo *model.IndexInfo, indexKey kv.Key) (key, tem
 	if indexInfo.State != model.StatePublic {
 		switch indexInfo.BackfillState {
 		case model.BackfillStateInapplicable:
-			return indexKey, nil, tablecodec.TempIndexKeyTypeNone
+			return indexKey, nil, TempIndexKeyTypeNone
 		case model.BackfillStateRunning:
 			// Write to the temporary index.
 			tablecodec.IndexKey2TempIndexKey(indexKey)
 			if indexInfo.State == model.StateDeleteOnly {
-				return nil, indexKey, tablecodec.TempIndexKeyTypeDelete
+				return nil, indexKey, TempIndexKeyTypeDelete
 			}
-			return nil, indexKey, tablecodec.TempIndexKeyTypeBackfill
+			return nil, indexKey, TempIndexKeyTypeBackfill
 		case model.BackfillStateReadyToMerge, model.BackfillStateMerging:
 			// Double write
 			tmp := make([]byte, len(indexKey))
 			copy(tmp, indexKey)
 			tablecodec.IndexKey2TempIndexKey(tmp)
-			return indexKey, tmp, tablecodec.TempIndexKeyTypeMerge
+			return indexKey, tmp, TempIndexKeyTypeMerge
 		}
 	}
-	return indexKey, nil, tablecodec.TempIndexKeyTypeNone
+	return indexKey, nil, TempIndexKeyTypeNone
 }
 
-func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
+func (c *index) Exist(sc *stmtctx.StatementContext, txn kv.Transaction, indexedValue []types.Datum, h kv.Handle) (bool, kv.Handle, error) {
 	indexedValues := c.getIndexedValue(indexedValue)
 	for _, val := range indexedValues {
-		key, distinct, err := c.GenIndexKey(ec, loc, val, h, nil)
+		key, distinct, err := c.GenIndexKey(sc, val, h, nil)
 		if err != nil {
 			return false, nil, err
 		}
-
 		// If index current is in creating status and using ingest mode, we need first
 		// check key exist status in temp index.
 		key, tempKey, _ := GenTempIdxKeyByState(c.idxInfo, key)
 		if len(tempKey) > 0 {
 			key = tempKey
 		}
-
-		if distinct {
-			dupHandle, err := FetchDuplicatedHandle(context.Background(), key, txn)
-			if err != nil {
-				return false, nil, err
-			}
-			if dupHandle == nil || !dupHandle.Equal(h) {
-				return false, nil, nil
-			}
-			continue
-		}
-
-		val, err := getKeyInTxn(context.Background(), txn, key)
-		if err != nil {
+		foundKey, dupHandle, err := FetchDuplicatedHandle(context.TODO(), key, distinct, txn, c.tblInfo.ID, c.tblInfo.IsCommonHandle)
+		if err != nil || !foundKey {
 			return false, nil, err
 		}
-		if len(tempKey) > 0 {
-			tempVal, err := tablecodec.DecodeTempIndexValue(val)
-			if err != nil {
-				return false, nil, err
-			}
-			if tempVal.IsEmpty() || tempVal.Current().Delete {
-				return false, nil, nil
-			}
-			continue
-		}
-		if len(val) == 0 {
-			return false, nil, nil
+		if dupHandle != nil && !dupHandle.Equal(h) {
+			return false, nil, err
 		}
 		continue
 	}
@@ -761,45 +552,48 @@ func (c *index) Exist(ec errctx.Context, loc *time.Location, txn kv.Transaction,
 }
 
 // FetchDuplicatedHandle is used to find the duplicated row's handle for a given unique index key.
-func FetchDuplicatedHandle(ctx context.Context, key kv.Key,
-	txn kv.Transaction) (dupHandle kv.Handle, err error) {
+func FetchDuplicatedHandle(ctx context.Context, key kv.Key, distinct bool,
+	txn kv.Transaction, tableID int64, isCommon bool) (foundKey bool, dupHandle kv.Handle, err error) {
 	if tablecodec.IsTempIndexKey(key) {
-		dupHandle, _, err := FetchDuplicatedHandleForTempIndexKey(ctx, key, txn)
-		return dupHandle, err
+		return fetchDuplicatedHandleForTempIndexKey(ctx, key, distinct, txn, tableID, isCommon)
 	}
 	// The index key is not from temp index.
 	val, err := getKeyInTxn(ctx, txn, key)
 	if err != nil || len(val) == 0 {
-		return nil, err
+		return false, nil, err
 	}
-	return tablecodec.DecodeHandleInIndexValue(val)
+	if distinct {
+		h, err := tablecodec.DecodeHandleInUniqueIndexValue(val, isCommon)
+		return true, h, err
+	}
+	return true, nil, nil
 }
 
-// FetchDuplicatedHandleForTempIndexKey is used to find the duplicated row's handle for a given unique index key.
-// It is used when the index key is from temp index.
-// The function will check the temp index key first, if not found, it will check the origin index key.
-func FetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key,
-	txn kv.Transaction) (dupHandle kv.Handle, oldVal []byte, err error) {
+func fetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key, distinct bool,
+	txn kv.Transaction, tableID int64, isCommon bool) (foundKey bool, dupHandle kv.Handle, err error) {
 	tempRawVal, err := getKeyInTxn(ctx, txn, tempKey)
 	if err != nil {
-		return nil, tempRawVal, err
+		return false, nil, err
 	}
 	if tempRawVal == nil {
 		originKey := tempKey.Clone()
 		tablecodec.TempIndexKey2IndexKey(originKey)
 		originVal, err := getKeyInTxn(ctx, txn, originKey)
 		if err != nil || originVal == nil {
-			return nil, nil, err
+			return false, nil, err
 		}
-		originHandle, err := tablecodec.DecodeHandleInIndexValue(originVal)
-		if err != nil {
-			return nil, nil, err
+		if distinct {
+			originHandle, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, isCommon)
+			if err != nil {
+				return false, nil, err
+			}
+			return true, originHandle, err
 		}
-		return originHandle, nil, err
+		return false, nil, nil
 	}
 	tempVal, err := tablecodec.DecodeTempIndexValue(tempRawVal)
 	if err != nil {
-		return nil, tempRawVal, err
+		return false, nil, err
 	}
 	curElem := tempVal.Current()
 	if curElem.Delete {
@@ -807,36 +601,41 @@ func FetchDuplicatedHandleForTempIndexKey(ctx context.Context, tempKey kv.Key,
 		tablecodec.TempIndexKey2IndexKey(originKey)
 		originVal, err := getKeyInTxn(ctx, txn, originKey)
 		if err != nil || originVal == nil {
-			return nil, tempRawVal, err
+			return false, nil, err
 		}
-		originHandle, err := tablecodec.DecodeHandleInIndexValue(originVal)
-		if err != nil {
-			return nil, tempRawVal, err
+		if distinct {
+			originHandle, err := tablecodec.DecodeHandleInUniqueIndexValue(originVal, isCommon)
+			if err != nil {
+				return false, nil, err
+			}
+			if originHandle.Equal(curElem.Handle) {
+				// The key has been deleted. This is not a duplicated key.
+				return false, nil, nil
+			}
+			// The inequality means multiple modifications happened in the same key.
+			// We use the handle in origin index value to check if the row exists.
+			recPrefix := tablecodec.GenTableRecordPrefix(tableID)
+			rowKey := tablecodec.EncodeRecordKey(recPrefix, originHandle)
+			rowVal, err := getKeyInTxn(ctx, txn, rowKey)
+			if err != nil || rowVal == nil {
+				return false, nil, err
+			}
+			// The row exists. This is the duplicated key.
+			return true, originHandle, nil
 		}
-		if originHandle.Equal(curElem.Handle) {
-			// The key has been deleted. This is not a duplicated key.
-			return nil, tempRawVal, nil
-		}
-		// The inequality means multiple modifications happened in the same key.
-		// We use the handle in origin index value to check if the row exists.
-		tableID := tablecodec.DecodeTableID(tempKey)
-		recPrefix := tablecodec.GenTableRecordPrefix(tableID)
-		rowKey := tablecodec.EncodeRecordKey(recPrefix, originHandle)
-		rowVal, err := getKeyInTxn(ctx, txn, rowKey)
-		if err != nil || rowVal == nil {
-			return nil, tempRawVal, err
-		}
-		// The row exists. This is the duplicated key.
-		return originHandle, tempRawVal, nil
+		return false, nil, nil
 	}
 	// The value in temp index is not the delete marker.
-	h, err := tablecodec.DecodeHandleInIndexValue(curElem.Value)
-	return h, tempRawVal, err
+	if distinct {
+		h, err := tablecodec.DecodeHandleInUniqueIndexValue(curElem.Value, isCommon)
+		return true, h, err
+	}
+	return true, nil, nil
 }
 
 // getKeyInTxn gets the value of the key in the transaction, and ignore the ErrNotExist error.
 func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, error) {
-	val, err := kv.GetValue(ctx, txn, key)
+	val, err := txn.Get(ctx, key)
 	if err != nil {
 		if kv.IsErrNotFound(err) {
 			return nil, nil
@@ -846,30 +645,13 @@ func getKeyInTxn(ctx context.Context, txn kv.Transaction, key kv.Key) ([]byte, e
 	return val, nil
 }
 
-// FetchValues implements table.Index interface.
 func (c *index) FetchValues(r []types.Datum, vals []types.Datum) ([]types.Datum, error) {
-	return fetchIndexRow(c.idxInfo, r, vals, nil)
-}
-
-func fetchIndexRow(idxInfo *model.IndexInfo, r, vals []types.Datum, opt table.IndexRowLayoutOption) ([]types.Datum, error) {
-	needLength := len(idxInfo.Columns)
+	needLength := len(c.idxInfo.Columns)
 	if vals == nil || cap(vals) < needLength {
 		vals = make([]types.Datum, needLength)
 	}
 	vals = vals[:needLength]
-	// If the context has extra info, use the extra layout info to get index columns.
-	if len(opt) != 0 {
-		intest.Assert(len(opt) == len(idxInfo.Columns), "offsets length is not equal to index columns length, offset len: %d, index len: %d", len(opt), len(idxInfo.Columns))
-		for i, offset := range opt {
-			if offset < 0 || offset > len(r) {
-				return nil, table.ErrIndexOutBound.GenWithStackByArgs(idxInfo.Name, offset, r)
-			}
-			vals[i] = r[offset]
-		}
-		return vals, nil
-	}
-	// Otherwise use the full column layout.
-	for i, ic := range idxInfo.Columns {
+	for i, ic := range c.idxInfo.Columns {
 		if ic.Offset < 0 || ic.Offset >= len(r) {
 			return nil, table.ErrIndexOutBound.GenWithStackByArgs(ic.Name, ic.Offset, r)
 		}
@@ -903,11 +685,10 @@ func BuildRowcodecColInfoForIndexColumns(idxInfo *model.IndexInfo, tblInfo *mode
 	colInfo := make([]rowcodec.ColInfo, 0, len(idxInfo.Columns))
 	for _, idxCol := range idxInfo.Columns {
 		col := tblInfo.Columns[idxCol.Offset]
-		ft := model.GetIdxChangingFieldType(idxCol, col).Clone()
 		colInfo = append(colInfo, rowcodec.ColInfo{
 			ID:         col.ID,
-			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(ft.GetFlag()),
-			Ft:         ft,
+			IsPKHandle: tblInfo.PKIsHandle && mysql.HasPriKeyFlag(col.GetFlag()),
+			Ft:         rowcodec.FieldTypeFromModelColumn(col),
 		})
 	}
 	return colInfo
@@ -938,110 +719,4 @@ func TryAppendCommonHandleRowcodecColInfos(colInfo []rowcodec.ColInfo, tblInfo *
 		}
 	}
 	return colInfo
-}
-
-// GenIndexValueFromIndex generate index value from index.
-func GenIndexValueFromIndex(key []byte, value []byte, tblInfo *model.TableInfo, idxInfo *model.IndexInfo) ([]string, error) {
-	idxColLen := len(idxInfo.Columns)
-	colInfos := BuildRowcodecColInfoForIndexColumns(idxInfo, tblInfo)
-	values, err := tablecodec.DecodeIndexKV(key, value, idxColLen, tablecodec.HandleNotNeeded, colInfos)
-	if err != nil {
-		return nil, errors.Trace(err)
-	}
-	valueStr := make([]string, 0, idxColLen)
-	for i, val := range values[:idxColLen] {
-		d, err := tablecodec.DecodeColumnValue(val, colInfos[i].Ft, time.Local)
-		if err != nil {
-			return nil, errors.Trace(err)
-		}
-		str, err := d.ToString()
-		if err != nil {
-			str = string(val)
-		}
-		if types.IsBinaryStr(colInfos[i].Ft) || types.IsTypeBit(colInfos[i].Ft) {
-			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
-		}
-		valueStr = append(valueStr, str)
-	}
-
-	return valueStr, nil
-}
-
-// ExtractColumnsFromCondition returns the columns that are referenced in the index condition expression.
-// If `includeColumnsReferencedByVirtualGeneratedColumns` is true, it will recursively extract the columns from the virtual generated columns.
-// The returned columns might be duplicated.
-func ExtractColumnsFromCondition(ctx expression.BuildContext, idxInfo *model.IndexInfo, tblInfo *model.TableInfo, includeColumnsReferencedByVirtualGeneratedColumns bool) ([]*model.IndexColumn, error) {
-	if len(idxInfo.ConditionExprString) == 0 {
-		return nil, nil
-	}
-
-	expr, err := expression.ParseSimpleExpr(ctx, idxInfo.ConditionExprString, expression.WithTableInfo("", tblInfo))
-	if err != nil {
-		return nil, err
-	}
-	return extractColumnsFromExpr(expr, tblInfo, includeColumnsReferencedByVirtualGeneratedColumns)
-}
-
-// DedupIndexColumns deduplicates the index columns based on their Offset.
-func DedupIndexColumns(cols []*model.IndexColumn) []*model.IndexColumn {
-	if len(cols) <= 1 {
-		return cols
-	}
-
-	seen := make(map[int]struct{}, len(cols))
-	result := make([]*model.IndexColumn, 0, len(cols))
-	for _, col := range cols {
-		if _, found := seen[col.Offset]; !found {
-			seen[col.Offset] = struct{}{}
-			result = append(result, col)
-		}
-	}
-	return result
-}
-
-// extractColumnsFromExpr extracts the columns from the given expression.
-// If `includeVirtualGeneratedColumn` is true, it will recursively extract the columns from the virtual generated columns.
-// The returned columns might be duplicated.
-func extractColumnsFromExpr(expr expression.Expression, tblInfo *model.TableInfo, includeVirtualGeneratedColumn bool) ([]*model.IndexColumn, error) {
-	var neededCols []*model.IndexColumn
-	cols := expression.ExtractColumns(expr)
-	for _, col := range cols {
-		if tblInfo.Columns[col.Index].IsVirtualGenerated() {
-			if includeVirtualGeneratedColumn {
-				depCols, err := extractColumnsFromExpr(col.VirtualExpr, tblInfo, includeVirtualGeneratedColumn)
-				if err != nil {
-					return nil, err
-				}
-
-				neededCols = append(neededCols, depCols...)
-			}
-
-			neededCols = append(neededCols, &model.IndexColumn{
-				Name:   tblInfo.Columns[col.Index].Name,
-				Offset: col.Index,
-			})
-		} else {
-			neededCols = append(neededCols, &model.IndexColumn{
-				Name:   tblInfo.Columns[col.Index].Name,
-				Offset: col.Index,
-			})
-		}
-	}
-
-	return neededCols, nil
-}
-
-func init() {
-	evalCtx := exprstatic.NewEvalContext(
-		exprstatic.WithSQLMode(mysql.ModeNone),
-		exprstatic.WithTypeFlags(types.DefaultStmtFlags),
-		exprstatic.WithErrLevelMap(stmtctx.DefaultStmtErrLevels),
-	)
-
-	planCacheTracker := contextutil.NewPlanCacheTracker(contextutil.IgnoreWarn)
-
-	indexConditionECtx = exprstatic.NewExprContext(
-		exprstatic.WithEvalCtx(evalCtx),
-		exprstatic.WithPlanCacheTracker(&planCacheTracker),
-	)
 }

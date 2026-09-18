@@ -16,10 +16,9 @@ package stream
 
 import (
 	"encoding/binary"
-	"math"
 
 	"github.com/pingcap/errors"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
 )
 
 // Iterator specifies a read iterator Interface.
@@ -64,18 +63,7 @@ func (ei *EventIterator) Next() {
 
 // Valid checks whether the iterator is valid.
 func (ei *EventIterator) Valid() bool {
-	if ei.err != nil {
-		return false
-	}
-	buffLen := len(ei.buff)
-	// Check if buffer length exceeds uint32 range
-	// This prevents truncation when comparing with ei.pos (uint32)
-	if buffLen > math.MaxUint32 {
-		ei.err = errors.Annotatef(berrors.ErrInvalidArgument,
-			"buffer too large: %d bytes exceeds uint32 limit (%d bytes)", buffLen, math.MaxUint32)
-		return false
-	}
-	return ei.pos < uint32(buffLen)
+	return ei.err == nil && ei.pos < uint32(len(ei.buff))
 }
 
 // Key gets the key in kv-event if valid() == true

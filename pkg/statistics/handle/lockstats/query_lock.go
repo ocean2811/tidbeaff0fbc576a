@@ -15,18 +15,16 @@
 package lockstats
 
 import (
-	"context"
-
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/util"
 )
 
 const selectSQL = "SELECT table_id FROM mysql.stats_table_locked"
 
 // QueryLockedTables loads locked tables from mysql.stats_table_locked.
 // Return it as a map for fast query.
-func QueryLockedTables(ctx context.Context, sctx sessionctx.Context) (map[int64]struct{}, error) {
-	rows, _, err := util.ExecRowsWithCtx(ctx, sctx, selectSQL)
+func QueryLockedTables(sctx sessionctx.Context) (map[int64]struct{}, error) {
+	rows, _, err := util.ExecRows(sctx, selectSQL)
 	if err != nil {
 		return nil, err
 	}

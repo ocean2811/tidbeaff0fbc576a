@@ -23,16 +23,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 )
 
 type inGener struct {
 	defaultGener
 }
 
-func (g inGener) gen() any {
+func (g inGener) gen() interface{} {
 	if rand.Float64() < g.nullRation {
 		return nil
 	}

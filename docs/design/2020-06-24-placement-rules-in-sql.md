@@ -2,8 +2,8 @@
 
 - Author(s):     [djshow832](https://github.com/djshow832) (Ming Zhang), [morgo](https://github.com/morgo) (Morgan Tocker)
 - Last updated:  2022-01-06
-- Discussion PR: https://github.com/pingcap/tidb/pull/26221
-- Tracking Issue: https://github.com/pingcap/tidb/issues/18030
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/pull/26221
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/18030
 - Original Document (Chinese): https://docs.google.com/document/d/18Kdhi90dv33muF9k_VAIccNLeGf-DdQyUc8JlWF9Gok
 
 ## Table of Contents

@@ -22,9 +22,9 @@ import (
 
 	deadlockPb "github.com/pingcap/kvproto/pkg/deadlock"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/pd"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/tikv/kverrors"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/util/lockwaiter"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/pd"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/tikv/kverrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/util/lockwaiter"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -194,7 +194,7 @@ func (dt *DetectorClient) handleRemoteTask(requestType deadlockPb.DeadlockReques
 	dt.sendCh <- detectReq
 }
 
-// CleanUp processes cleanup task on local detector
+// CleanUp processes cleaup task on local detector
 // user interfaces
 func (dt *DetectorClient) CleanUp(startTs uint64) {
 	dt.handleRemoteTask(deadlockPb.DeadlockRequestType_CleanUp, startTs, 0, 0, diagnosticContext{})

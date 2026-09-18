@@ -17,13 +17,13 @@ package cardinality
 import (
 	"math"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/planner/planctx"
-	"github.com/pingcap/tidb/pkg/planner/property"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/property"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
 )
 
 // EstimateFullJoinRowCount estimates the row count of a full join.
-func EstimateFullJoinRowCount(sctx planctx.PlanContext,
+func EstimateFullJoinRowCount(sctx sessionctx.Context,
 	isCartesian bool,
 	leftProfile, rightProfile *property.StatsInfo,
 	leftJoinKeys, rightJoinKeys []*expression.Column,
@@ -35,11 +35,11 @@ func EstimateFullJoinRowCount(sctx planctx.PlanContext,
 	var leftKeyNDV, rightKeyNDV float64
 	var leftColCnt, rightColCnt int
 	if len(leftJoinKeys) > 0 || len(rightJoinKeys) > 0 {
-		leftKeyNDV, leftColCnt = EstimateColsNDVWithMatchedLen(sctx, leftJoinKeys, leftSchema, leftProfile)
-		rightKeyNDV, rightColCnt = EstimateColsNDVWithMatchedLen(sctx, rightJoinKeys, rightSchema, rightProfile)
+		leftKeyNDV, leftColCnt = EstimateColsNDVWithMatchedLen(leftJoinKeys, leftSchema, leftProfile)
+		rightKeyNDV, rightColCnt = EstimateColsNDVWithMatchedLen(rightJoinKeys, rightSchema, rightProfile)
 	} else {
-		leftKeyNDV, leftColCnt = EstimateColsNDVWithMatchedLen(sctx, leftNAJoinKeys, leftSchema, leftProfile)
-		rightKeyNDV, rightColCnt = EstimateColsNDVWithMatchedLen(sctx, rightNAJoinKeys, rightSchema, rightProfile)
+		leftKeyNDV, leftColCnt = EstimateColsNDVWithMatchedLen(leftNAJoinKeys, leftSchema, leftProfile)
+		rightKeyNDV, rightColCnt = EstimateColsNDVWithMatchedLen(rightNAJoinKeys, rightSchema, rightProfile)
 	}
 	count := leftProfile.RowCount * rightProfile.RowCount / max(leftKeyNDV, rightKeyNDV)
 	if sctx.GetSessionVars().TiDBOptJoinReorderThreshold <= 0 {

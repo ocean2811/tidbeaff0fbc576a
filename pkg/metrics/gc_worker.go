@@ -15,7 +15,6 @@
 package metrics
 
 import (
-	metricscommon "github.com/pingcap/tidb/pkg/metrics/common"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/metrics"
 )
@@ -33,7 +32,7 @@ var (
 
 // InitGCWorkerMetrics initializes GC worker metrics.
 func InitGCWorkerMetrics() {
-	GCWorkerCounter = metricscommon.NewCounterVec(
+	GCWorkerCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -41,7 +40,7 @@ func InitGCWorkerMetrics() {
 			Help:      "Counter of gc worker actions.",
 		}, []string{"type"})
 
-	GCHistogram = metricscommon.NewHistogramVec(
+	GCHistogram = NewHistogramVec(
 		prometheus.HistogramOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -50,7 +49,7 @@ func InitGCWorkerMetrics() {
 			Buckets:   prometheus.ExponentialBuckets(1, 2, 20), // 1s ~ 6days
 		}, []string{"stage"})
 
-	GCConfigGauge = metricscommon.NewGaugeVec(
+	GCConfigGauge = NewGaugeVec(
 		prometheus.GaugeOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -58,7 +57,7 @@ func InitGCWorkerMetrics() {
 			Help:      "Gauge of GC configs.",
 		}, []string{"type"})
 
-	GCJobFailureCounter = metricscommon.NewCounterVec(
+	GCJobFailureCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -66,7 +65,7 @@ func InitGCWorkerMetrics() {
 			Help:      "Counter of gc job failure.",
 		}, []string{"type"})
 
-	GCActionRegionResultCounter = metricscommon.NewCounterVec(
+	GCActionRegionResultCounter = NewCounterVec(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -74,7 +73,7 @@ func InitGCWorkerMetrics() {
 			Help:      "Counter of gc action result on region level.",
 		}, []string{"type"})
 
-	GCRegionTooManyLocksCounter = metricscommon.NewCounter(
+	GCRegionTooManyLocksCounter = NewCounter(
 		prometheus.CounterOpts{
 			Namespace: "tidb",
 			Subsystem: "tikvclient",
@@ -82,9 +81,6 @@ func InitGCWorkerMetrics() {
 			Help:      "Counter of gc scan lock request more than once in the same region.",
 		})
 }
-
-// StageTotal is used in the "stage" label of GCHistogram to represent the total time of a turn of GC.
-const StageTotal = "total"
 
 func init() {
 	GCUnsafeDestroyRangeFailuresCounterVec = metrics.TiKVUnsafeDestroyRangeFailuresCounterVec

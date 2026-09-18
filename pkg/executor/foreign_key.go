@@ -22,25 +22,22 @@ import (
 	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	driver "github.com/ocean2811/tidbeaff0fbc576a/pkg/types/parser_driver"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/execdetails"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set"
 	"github.com/tikv/client-go/v2/txnkv/txnsnapshot"
 )
 
@@ -55,7 +52,7 @@ type WithForeignKeyTrigger interface {
 // When insert/update child table, need to check the row has related row exists in refer table.
 // When insert/update parent table, need to check the row doesn't have related row exists in refer table.
 type FKCheckExec struct {
-	*physicalop.FKCheck
+	*plannercore.FKCheck
 	*fkValueHelper
 	ctx sessionctx.Context
 
@@ -78,9 +75,9 @@ type FKCheckRuntimeStats struct {
 // FKCascadeExec uses to execute foreign key cascade behaviour.
 type FKCascadeExec struct {
 	*fkValueHelper
-	plan       *physicalop.FKCascade
+	plan       *plannercore.FKCascade
 	b          *executorBuilder
-	tp         physicalop.FKCascadeType
+	tp         plannercore.FKCascadeType
 	referredFK *model.ReferredFKInfo
 	childTable *model.TableInfo
 	fk         *model.FKInfo
@@ -107,7 +104,7 @@ type FKCascadeRuntimeStats struct {
 	Keys  int
 }
 
-func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*physicalop.FKCheck) (map[int64][]*FKCheckExec, error) {
+func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]table.Table, tblID2FKChecks map[int64][]*plannercore.FKCheck) (map[int64][]*FKCheckExec, error) {
 	fkChecksMap := make(map[int64][]*FKCheckExec)
 	for tid, tbl := range tblID2Table {
 		fkChecks, err := buildFKCheckExecs(sctx, tbl, tblID2FKChecks[tid])
@@ -121,7 +118,7 @@ func buildTblID2FKCheckExecs(sctx sessionctx.Context, tblID2Table map[int64]tabl
 	return fkChecksMap, nil
 }
 
-func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*physicalop.FKCheck) ([]*FKCheckExec, error) {
+func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*plannercore.FKCheck) ([]*FKCheckExec, error) {
 	fkCheckExecs := make([]*FKCheckExec, 0, len(fkChecks))
 	for _, fkCheck := range fkChecks {
 		fkCheckExec, err := buildFKCheckExec(sctx, tbl, fkCheck)
@@ -135,8 +132,8 @@ func buildFKCheckExecs(sctx sessionctx.Context, tbl table.Table, fkChecks []*phy
 	return fkCheckExecs, nil
 }
 
-func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *physicalop.FKCheck) (*FKCheckExec, error) {
-	var cols []ast.CIStr
+func buildFKCheckExec(sctx sessionctx.Context, tbl table.Table, fkCheck *plannercore.FKCheck) (*FKCheckExec, error) {
+	var cols []model.CIStr
 	if fkCheck.FK != nil {
 		cols = fkCheck.FK.Cols
 	} else if fkCheck.ReferredFK != nil {
@@ -177,7 +174,7 @@ func (fkc *FKCheckExec) updateRowNeedToCheck(sc *stmtctx.StatementContext, oldRo
 	if len(oldVals) == len(newVals) {
 		isSameValue := true
 		for i := range oldVals {
-			cmp, err := oldVals[i].Compare(sc.TypeCtx(), &newVals[i], collate.GetCollator(oldVals[i].Collation()))
+			cmp, err := oldVals[i].Compare(sc, &newVals[i], collate.GetCollator(oldVals[i].Collation()))
 			if err != nil || cmp != 0 {
 				isSameValue = false
 				break
@@ -223,7 +220,7 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 		fkc.stats = &FKCheckRuntimeStats{}
 		defer fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.ID(), fkc.stats)
 	}
-	if len(fkc.toBeCheckedKeys) == 0 && len(fkc.toBeCheckedPrefixKeys) == 0 && len(fkc.toBeLockedKeys) == 0 {
+	if len(fkc.toBeCheckedKeys) == 0 && len(fkc.toBeCheckedPrefixKeys) == 0 {
 		return nil
 	}
 	start := time.Now()
@@ -248,32 +245,20 @@ func (fkc *FKCheckExec) doCheck(ctx context.Context) error {
 	if fkc.stats != nil {
 		fkc.stats.Check = time.Since(start)
 	}
-
 	if len(fkc.toBeLockedKeys) == 0 {
 		return nil
 	}
-
-	// collect keys to be locked for pessimistic transaction, these keys will be locked in `handlePessimisticDML` after
-	// xlocks are acquired since we do not allow a slocked key to be a primary key for now.
-	if txn.IsPessimistic() {
-		txnCtx := fkc.ctx.GetSessionVars().TxnCtx
-		for _, k := range fkc.toBeLockedKeys {
-			txnCtx.AddUnchangedKeyForLock(k, true)
-		}
-		return nil
-	}
-
-	// doLockKeys for optimistic transaction, it won't send any request to tikv but adds `flagKeyLocked` to these keys
-	// so that LOCK records will be written during 2PC.
 	sessVars := fkc.ctx.GetSessionVars()
-	lockCtx, err := newLockCtx(fkc.ctx, sessVars.LockWaitTimeout, len(fkc.toBeLockedKeys), false)
+	lockCtx, err := newLockCtx(fkc.ctx, sessVars.LockWaitTimeout, len(fkc.toBeLockedKeys))
 	if err != nil {
 		return err
 	}
-	// doLockKeys may set TxnCtx.ForUpdate to 1, then if the lock meet write conflict, TiDB can't retry for update.
-	// So reset TxnCtx.ForUpdate to 0 then can be retry if meet write conflict.
+	// WARN: Since tidb current doesn't support `LOCK IN SHARE MODE`, therefore, performance will be very poor in concurrency cases.
+	// TODO(crazycs520):After TiDB support `LOCK IN SHARE MODE`, use `LOCK IN SHARE MODE` here.
 	forUpdate := atomic.LoadUint32(&sessVars.TxnCtx.ForUpdate)
 	err = doLockKeys(ctx, fkc.ctx, lockCtx, fkc.toBeLockedKeys...)
+	// doLockKeys may set TxnCtx.ForUpdate to 1, then if the lock meet write conflict, TiDB can't retry for update.
+	// So reset TxnCtx.ForUpdate to 0 then can be retry if meet write conflict.
 	atomic.StoreUint32(&sessVars.TxnCtx.ForUpdate, forUpdate)
 	if fkc.stats != nil {
 		fkc.stats.Lock = time.Since(start) - fkc.stats.Check
@@ -293,7 +278,7 @@ func (fkc *FKCheckExec) buildCheckKeyFromFKValue(sc *stmtctx.StatementContext, v
 		}
 		return key, true, nil
 	}
-	key, distinct, err := fkc.Idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), vals, nil, nil)
+	key, distinct, err := fkc.Idx.GenIndexKey(sc, vals, nil, nil)
 	if err != nil {
 		return nil, false, err
 	}
@@ -307,8 +292,7 @@ func (fkc *FKCheckExec) buildHandleFromFKValues(sc *stmtctx.StatementContext, va
 	if len(vals) == 1 && fkc.Idx == nil {
 		return kv.IntHandle(vals[0].GetInt64()), nil
 	}
-	handleBytes, err := codec.EncodeKey(sc.TimeZone(), nil, vals...)
-	err = sc.HandleError(err)
+	handleBytes, err := codec.EncodeKey(sc, nil, vals...)
 	if err != nil {
 		return nil, err
 	}
@@ -480,8 +464,7 @@ func (h *fkValueHelper) fetchFKValuesWithCheck(sc *stmtctx.StatementContext, row
 	if err != nil || h.hasNullValue(vals) {
 		return nil, err
 	}
-	keyBuf, err := codec.EncodeKey(sc.TimeZone(), nil, vals...)
-	err = sc.HandleError(err)
+	keyBuf, err := codec.EncodeKey(sc, nil, vals...)
 	if err != nil {
 		return nil, err
 	}
@@ -531,7 +514,7 @@ func (*fkValueHelper) hasNullValue(vals []types.Datum) bool {
 	return false
 }
 
-func getFKColumnsOffsets(tbInfo *model.TableInfo, cols []ast.CIStr) ([]int, error) {
+func getFKColumnsOffsets(tbInfo *model.TableInfo, cols []model.CIStr) ([]int, error) {
 	colsOffsets := make([]int, len(cols))
 	for i, col := range cols {
 		offset := -1
@@ -554,7 +537,7 @@ type fkCheckKey struct {
 	isPrefix bool
 }
 
-func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
+func (fkc FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementContext, txn kv.Transaction, rows []toBeCheckedRow) error {
 	if fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl != nil {
 		fkc.stats = &FKCheckRuntimeStats{}
 		defer fkc.ctx.GetSessionVars().StmtCtx.RuntimeStatsColl.RegisterStats(fkc.ID(), fkc.stats)
@@ -631,31 +614,7 @@ func (fkc *FKCheckExec) checkRows(ctx context.Context, sc *stmtctx.StatementCont
 	return nil
 }
 
-// checkFKIgnoreErr will use `fkc.checkRows` to check the rows. The `fkc.checkRows` will ignore the error and append the error as warning to the statement context.
-// It'll return whether an error has been ignored. If an error has been ignored, it'll return `true, nil`.
-func checkFKIgnoreErr(ctx context.Context, sctx sessionctx.Context, fkChecks []*FKCheckExec, row []types.Datum) (bool, error) {
-	txn, err := sctx.Txn(true)
-	if err != nil {
-		return false, err
-	}
-
-	fkToBeCheckedRows := [1]toBeCheckedRow{{row: row, ignored: false}}
-
-	for _, fkc := range fkChecks {
-		err := fkc.checkRows(ctx, sctx.GetSessionVars().StmtCtx, txn, fkToBeCheckedRows[:])
-		if err != nil {
-			return false, err
-		}
-	}
-
-	if fkToBeCheckedRows[0].ignored {
-		return true, nil
-	}
-
-	return false, nil
-}
-
-func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.Table, tblID2FKCascades map[int64][]*physicalop.FKCascade) (map[int64][]*FKCascadeExec, error) {
+func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.Table, tblID2FKCascades map[int64][]*plannercore.FKCascade) (map[int64][]*FKCascadeExec, error) {
 	fkCascadesMap := make(map[int64][]*FKCascadeExec)
 	for tid, tbl := range tblID2Table {
 		fkCascades, err := b.buildFKCascadeExecs(tbl, tblID2FKCascades[tid])
@@ -669,7 +628,7 @@ func (b *executorBuilder) buildTblID2FKCascadeExecs(tblID2Table map[int64]table.
 	return fkCascadesMap, nil
 }
 
-func (b *executorBuilder) buildFKCascadeExecs(tbl table.Table, fkCascades []*physicalop.FKCascade) ([]*FKCascadeExec, error) {
+func (b *executorBuilder) buildFKCascadeExecs(tbl table.Table, fkCascades []*plannercore.FKCascade) ([]*FKCascadeExec, error) {
 	fkCascadeExecs := make([]*FKCascadeExec, 0, len(fkCascades))
 	for _, fkCascade := range fkCascades {
 		fkCascadeExec, err := b.buildFKCascadeExec(tbl, fkCascade)
@@ -683,7 +642,7 @@ func (b *executorBuilder) buildFKCascadeExecs(tbl table.Table, fkCascades []*phy
 	return fkCascadeExecs, nil
 }
 
-func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *physicalop.FKCascade) (*FKCascadeExec, error) {
+func (b *executorBuilder) buildFKCascadeExec(tbl table.Table, fkCascade *plannercore.FKCascade) (*FKCascadeExec, error) {
 	colsOffsets, err := getFKColumnsOffsets(tbl.Meta(), fkCascade.ReferredFK.Cols)
 	if err != nil {
 		return nil, err
@@ -720,7 +679,7 @@ func (fkc *FKCascadeExec) onUpdateRow(sc *stmtctx.StatementContext, oldRow, newR
 	if err != nil || len(oldVals) == 0 {
 		return err
 	}
-	if ast.ReferOptionType(fkc.fk.OnUpdate) == ast.ReferOptionSetNull {
+	if model.ReferOptionType(fkc.fk.OnUpdate) == model.ReferOptionSetNull {
 		fkc.fkValues = append(fkc.fkValues, oldVals)
 		return nil
 	}
@@ -728,8 +687,7 @@ func (fkc *FKCascadeExec) onUpdateRow(sc *stmtctx.StatementContext, oldRow, newR
 	if err != nil {
 		return err
 	}
-	newValsKey, err := codec.EncodeKey(sc.TimeZone(), nil, newVals...)
-	err = sc.HandleError(err)
+	newValsKey, err := codec.EncodeKey(sc, nil, newVals...)
 	if err != nil {
 		return err
 	}
@@ -755,30 +713,30 @@ func (fkc *FKCascadeExec) buildExecutor(ctx context.Context) (exec.Executor, err
 }
 
 // maxHandleFKValueInOneCascade uses to limit the max handle fk value in one cascade executor,
-// this is to avoid performance issue, see: https://github.com/pingcap/tidb/issues/38631
+// this is to avoid performance issue, see: https://github.com/ocean2811/tidbeaff0fbc576a/issues/38631
 var maxHandleFKValueInOneCascade = 1024
 
-func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, error) {
+func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (plannercore.Plan, error) {
 	if len(fkc.fkValues) == 0 && len(fkc.fkUpdatedValuesMap) == 0 {
 		return nil, nil
 	}
-	var indexName ast.CIStr
+	var indexName model.CIStr
 	if fkc.fkIdx != nil {
 		indexName = fkc.fkIdx.Name
 	}
 	var stmtNode ast.StmtNode
 	switch fkc.tp {
-	case physicalop.FKCascadeOnDelete:
+	case plannercore.FKCascadeOnDelete:
 		fkValues := fkc.fetchOnDeleteOrUpdateFKValues()
-		switch ast.ReferOptionType(fkc.fk.OnDelete) {
-		case ast.ReferOptionCascade:
+		switch model.ReferOptionType(fkc.fk.OnDelete) {
+		case model.ReferOptionCascade:
 			stmtNode = GenCascadeDeleteAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, fkValues)
-		case ast.ReferOptionSetNull:
+		case model.ReferOptionSetNull:
 			stmtNode = GenCascadeSetNullAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, fkValues)
 		}
-	case physicalop.FKCascadeOnUpdate:
-		switch ast.ReferOptionType(fkc.fk.OnUpdate) {
-		case ast.ReferOptionCascade:
+	case plannercore.FKCascadeOnUpdate:
+		switch model.ReferOptionType(fkc.fk.OnUpdate) {
+		case model.ReferOptionCascade:
 			couple := fkc.fetchUpdatedValuesCouple()
 			if couple != nil && len(couple.NewValues) != 0 {
 				if fkc.stats != nil {
@@ -786,7 +744,7 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, er
 				}
 				stmtNode = GenCascadeUpdateAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, couple)
 			}
-		case ast.ReferOptionSetNull:
+		case model.ReferOptionSetNull:
 			fkValues := fkc.fetchOnDeleteOrUpdateFKValues()
 			stmtNode = GenCascadeSetNullAST(fkc.referredFK.ChildSchema, fkc.childTable.Name, indexName, fkc.fkCols, fkValues)
 		}
@@ -794,13 +752,12 @@ func (fkc *FKCascadeExec) buildFKCascadePlan(ctx context.Context) (base.Plan, er
 	if stmtNode == nil {
 		return nil, errors.Errorf("generate foreign key cascade ast failed, %v", fkc.tp)
 	}
-	sctx := fkc.b.sctx
-	nodeW := resolve.NewNodeW(stmtNode)
-	err := plannercore.Preprocess(ctx, sctx, nodeW)
+	sctx := fkc.b.ctx
+	err := plannercore.Preprocess(ctx, sctx, stmtNode)
 	if err != nil {
 		return nil, err
 	}
-	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx.GetPlanCtx(), nodeW, fkc.b.is)
+	finalPlan, err := planner.OptimizeForForeignKeyCascade(ctx, sctx, stmtNode, fkc.b.is)
 	if err != nil {
 		return nil, err
 	}
@@ -839,7 +796,7 @@ func (fkc *FKCascadeExec) fetchUpdatedValuesCouple() *UpdatedValuesCouple {
 }
 
 // GenCascadeDeleteAST uses to generate cascade delete ast, export for test.
-func GenCascadeDeleteAST(schema, table, idx ast.CIStr, cols []*model.ColumnInfo, fkValues [][]types.Datum) *ast.DeleteStmt {
+func GenCascadeDeleteAST(schema, table, idx model.CIStr, cols []*model.ColumnInfo, fkValues [][]types.Datum) *ast.DeleteStmt {
 	deleteStmt := &ast.DeleteStmt{
 		TableRefs: genTableRefsAST(schema, table, idx),
 		Where:     genWhereConditionAst(cols, fkValues),
@@ -848,7 +805,7 @@ func GenCascadeDeleteAST(schema, table, idx ast.CIStr, cols []*model.ColumnInfo,
 }
 
 // GenCascadeSetNullAST uses to generate foreign key `SET NULL` ast, export for test.
-func GenCascadeSetNullAST(schema, table, idx ast.CIStr, cols []*model.ColumnInfo, fkValues [][]types.Datum) *ast.UpdateStmt {
+func GenCascadeSetNullAST(schema, table, idx model.CIStr, cols []*model.ColumnInfo, fkValues [][]types.Datum) *ast.UpdateStmt {
 	newValues := make([]types.Datum, len(cols))
 	for i := range cols {
 		newValues[i] = types.NewDatum(nil)
@@ -861,7 +818,7 @@ func GenCascadeSetNullAST(schema, table, idx ast.CIStr, cols []*model.ColumnInfo
 }
 
 // GenCascadeUpdateAST uses to generate cascade update ast, export for test.
-func GenCascadeUpdateAST(schema, table, idx ast.CIStr, cols []*model.ColumnInfo, couple *UpdatedValuesCouple) *ast.UpdateStmt {
+func GenCascadeUpdateAST(schema, table, idx model.CIStr, cols []*model.ColumnInfo, couple *UpdatedValuesCouple) *ast.UpdateStmt {
 	list := make([]*ast.Assignment, 0, len(cols))
 	for i, col := range cols {
 		v := &driver.ValueExpr{Datum: couple.NewValues[i]}
@@ -880,11 +837,11 @@ func GenCascadeUpdateAST(schema, table, idx ast.CIStr, cols []*model.ColumnInfo,
 	return updateStmt
 }
 
-func genTableRefsAST(schema, table, idx ast.CIStr) *ast.TableRefsClause {
+func genTableRefsAST(schema, table, idx model.CIStr) *ast.TableRefsClause {
 	tn := &ast.TableName{Schema: schema, Name: table}
 	if idx.L != "" {
 		tn.IndexHints = []*ast.IndexHint{{
-			IndexNames: []ast.CIStr{idx},
+			IndexNames: []model.CIStr{idx},
 			HintType:   ast.HintUse,
 			HintScope:  ast.HintForScan,
 		}}

@@ -17,10 +17,10 @@ package sessiontxn
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
 )
 
 // EnterNewTxnType is the type to enter a new txn
@@ -99,12 +99,12 @@ type TxnAdvisable interface {
 	// AdviseWarmup provides warmup for inner state
 	AdviseWarmup() error
 	// AdviseOptimizeWithPlan providers optimization according to the plan
-	AdviseOptimizeWithPlan(plan any) error
+	AdviseOptimizeWithPlan(plan interface{}) error
 }
 
-// AdviseOptimizeWithPlanAndThenWarmUp first do `AdviseOptimizeWithPlan` to optimize the txn with plan
+// OptimizeWithPlanAndThenWarmUp first do `AdviseOptimizeWithPlan` to optimize the txn with plan
 // and then do `AdviseWarmup` to do some tso fetch if necessary
-func AdviseOptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan any) error {
+func OptimizeWithPlanAndThenWarmUp(sctx sessionctx.Context, plan interface{}) error {
 	txnManager := GetTxnManager(sctx)
 	if err := txnManager.AdviseOptimizeWithPlan(plan); err != nil {
 		return err
@@ -152,8 +152,6 @@ type TxnContextProvider interface {
 	OnLocalTemporaryTableCreated()
 	// ActivateTxn activates the transaction.
 	ActivateTxn() (kv.Transaction, error)
-	// SetOptionsBeforeCommit is called after execution and before commit, which sets necessary options for the transaction.
-	SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error
 }
 
 // TxnManager is an interface providing txn context management in session
@@ -161,7 +159,7 @@ type TxnManager interface {
 	TxnAdvisable
 	// GetTxnInfoSchema returns the information schema used by txn
 	// If the session is not in any transaction, for example: between two autocommit statements,
-	// this method will return the latest information schema in session that is same with `sessionctx.GetLatestInfoSchema()`
+	// this method will return the latest information schema in session that is same with `sessionctx.GetDomainInfoSchema()`
 	GetTxnInfoSchema() infoschema.InfoSchema
 	// GetTxnScope returns the current txn scope
 	GetTxnScope() string
@@ -211,8 +209,6 @@ type TxnManager interface {
 	ActivateTxn() (kv.Transaction, error)
 	// GetCurrentStmt returns the current statement node
 	GetCurrentStmt() ast.StmtNode
-	// SetOptionsBeforeCommit is called after execution and before commit, which sets necessary options for the transaction.
-	SetOptionsBeforeCommit(txn kv.Transaction, commitTSChecker func(uint64) bool) error
 }
 
 // NewTxn starts a new optimistic and active txn, it can be used for the below scenes:

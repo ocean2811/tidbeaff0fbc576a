@@ -14,18 +14,28 @@
 
 package collate
 
-import (
-	"unicode/utf8"
-
-	"github.com/pingcap/tidb/pkg/util/stringutil"
-)
+import "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/stringutil"
 
 type gbkChineseCICollator struct {
 }
 
 // Compare implements Collator interface.
 func (*gbkChineseCICollator) Compare(a, b string) int {
-	return compareCommon(a, b, gbkChineseCISortKey)
+	a = truncateTailingSpace(a)
+	b = truncateTailingSpace(b)
+
+	r1, r2 := rune(0), rune(0)
+	ai, bi := 0, 0
+	for ai < len(a) && bi < len(b) {
+		r1, ai = decodeRune(a, ai)
+		r2, bi = decodeRune(b, bi)
+
+		cmp := int(gbkChineseCISortKey(r1)) - int(gbkChineseCISortKey(r2))
+		if cmp != 0 {
+			return sign(cmp)
+		}
+	}
+	return sign((len(a) - ai) - (len(b) - bi))
 }
 
 // Key implements Collator interface.
@@ -33,27 +43,13 @@ func (g *gbkChineseCICollator) Key(str string) []byte {
 	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
 }
 
-// ImmutableKey implement Collator interface.
-func (g *gbkChineseCICollator) ImmutableKey(str string) []byte {
-	return g.KeyWithoutTrimRightSpace(truncateTailingSpace(str))
-}
-
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	buf := make([]byte, 0, len(str)*2)
-	i, rLen := 0, 0
+	i := 0
 	r := rune(0)
 	for i < len(str) {
-		// When the byte sequence is not a valid UTF-8 encoding of a rune, Golang returns RuneError('�') and size 1.
-		// See https://pkg.go.dev/unicode/utf8#DecodeRune for more details.
-		// Here we check both the size and rune to distinguish between invalid byte sequence and valid '�'.
-		r, rLen = utf8.DecodeRuneInString(str[i:])
-		invalid := r == utf8.RuneError && rLen == 1
-		if invalid {
-			return buf
-		}
-
-		i = i + rLen
+		r, i = decodeRune(str, i)
 		u16 := gbkChineseCISortKey(r)
 		if u16 > 0xFF {
 			buf = append(buf, byte(u16>>8))
@@ -63,19 +59,9 @@ func (*gbkChineseCICollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return buf
 }
 
-// MaxKeyLen implements Collator interface.
-func (*gbkChineseCICollator) MaxKeyLen(s string) int {
-	return utf8.RuneCountInString(s) * 2
-}
-
 // Pattern implements Collator interface.
 func (*gbkChineseCICollator) Pattern() WildcardPattern {
 	return &gbkChineseCIPattern{}
-}
-
-// Clone implements Collator interface.
-func (*gbkChineseCICollator) Clone() Collator {
-	return new(gbkChineseCICollator)
 }
 
 type gbkChineseCIPattern struct {
@@ -90,15 +76,15 @@ func (p *gbkChineseCIPattern) Compile(patternStr string, escape byte) {
 
 // DoMatch implements WildcardPattern interface.
 func (p *gbkChineseCIPattern) DoMatch(str string) bool {
-	return stringutil.DoMatchCustomized(str, p.patChars, p.patTypes, func(a, b rune) bool {
+	return stringutil.DoMatchInner(str, p.patChars, p.patTypes, func(a, b rune) bool {
 		return gbkChineseCISortKey(a) == gbkChineseCISortKey(b)
 	})
 }
 
-func gbkChineseCISortKey(r rune) uint32 {
+func gbkChineseCISortKey(r rune) uint16 {
 	if r > 0xFFFF {
 		return 0x3F
 	}
 
-	return uint32(gbkChineseCISortKeyTable[r])
+	return gbkChineseCISortKeyTable[r]
 }

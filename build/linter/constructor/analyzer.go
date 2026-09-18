@@ -21,13 +21,9 @@ import (
 	"strings"
 
 	"github.com/fatih/structtag"
-	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 	"golang.org/x/tools/go/ast/inspector"
 )
-
-// ConstructorUtilPath defines the path of the constructor utility package.
-const ConstructorUtilPath = "github.com/pingcap/tidb/pkg/util/linter/constructor"
 
 // Analyzer is the analyzer struct of constructor.
 // constructor only allows constructing a struct manually in some specific functions, which is specified with tags for
@@ -49,7 +45,7 @@ var Analyzer = &analysis.Analyzer{
 	Run:      run,
 }
 
-func getConstructorList(t types.Type, ignoreFields map[string]struct{}) []string {
+func getConstructorList(t types.Type) []string {
 	structTyp, ok := t.(*types.Struct)
 	if !ok {
 		var ptr *types.Pointer
@@ -64,18 +60,13 @@ func getConstructorList(t types.Type, ignoreFields map[string]struct{}) []string
 		}
 	}
 	var ctors []string
-	for i := range structTyp.NumFields() {
+	for i := 0; i < structTyp.NumFields(); i++ {
 		field := structTyp.Field(i)
 		named, ok := field.Type().(*types.Named)
 		if !ok {
 			continue
 		}
-		if ignoreFields != nil {
-			if _, ok := ignoreFields[field.Name()]; ok {
-				continue
-			}
-		}
-		if named.Obj().Name() == "Constructor" && named.Obj().Pkg().Path() == ConstructorUtilPath {
+		if named.Obj().Name() == "Constructor" && named.Obj().Pkg().Path() == "github.com/ocean2811/tidbeaff0fbc576a/util/linter/constructor" {
 			tags, err := structtag.Parse(structTyp.Tag(i))
 			// skip invalid tags
 			if err != nil {
@@ -90,7 +81,7 @@ func getConstructorList(t types.Type, ignoreFields map[string]struct{}) []string
 		}
 
 		if fieldStruct, ok := named.Underlying().(*types.Struct); ok {
-			ctors = append(ctors, getConstructorList(fieldStruct, nil)...)
+			ctors = append(ctors, getConstructorList(fieldStruct)...)
 		}
 	}
 	return ctors
@@ -124,25 +115,7 @@ func handleCompositeLit(pass *analysis.Pass, n *ast.CompositeLit, push bool, sta
 		return true
 	}
 
-	// Just ignore the specified fields. They'll be checked recursively later. In this round, we only need to avoid
-	// the case that the struct is implicitly initiated.
-	ignoreFields := make(map[string]struct{})
-	for i, elt := range n.Elts {
-		switch elt := elt.(type) {
-		case *ast.KeyValueExpr:
-			if ident, ok := elt.Key.(*ast.Ident); ok {
-				ignoreFields[ident.Name] = struct{}{}
-			}
-		default:
-			strctTyp, ok := t.(*types.Struct)
-			if !ok {
-				continue
-			}
-			ignoreFields[strctTyp.Field(i).Name()] = struct{}{}
-		}
-	}
-
-	ctors := getConstructorList(t, ignoreFields)
+	ctors := getConstructorList(t)
 	if len(ctors) == 0 {
 		return true
 	}
@@ -160,7 +133,7 @@ func handleCallExpr(pass *analysis.Pass, n *ast.CallExpr, push bool, stack []ast
 	}
 
 	t := pass.TypesInfo.TypeOf(n).Underlying()
-	ctors := getConstructorList(t, nil)
+	ctors := getConstructorList(t)
 	if len(ctors) == 0 {
 		return true
 	}
@@ -174,12 +147,7 @@ func handleValueSpec(pass *analysis.Pass, n *ast.ValueSpec, _ bool, stack []ast.
 		return true
 	}
 
-	// allow declaring a pointer, as it's actually not constructed.
-	if _, ok := t.(*types.Pointer); ok {
-		return true
-	}
-
-	ctors := getConstructorList(t.Underlying(), nil)
+	ctors := getConstructorList(t.Underlying())
 	if len(ctors) == 0 {
 		return true
 	}
@@ -187,7 +155,7 @@ func handleValueSpec(pass *analysis.Pass, n *ast.ValueSpec, _ bool, stack []ast.
 	return assertInConstructor(pass, n, stack, ctors)
 }
 
-func run(pass *analysis.Pass) (any, error) {
+func run(pass *analysis.Pass) (interface{}, error) {
 	for _, file := range pass.Files {
 		i := inspector.New([]*ast.File{file})
 
@@ -205,8 +173,4 @@ func run(pass *analysis.Pass) (any, error) {
 		})
 	}
 	return nil, nil
-}
-
-func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
 }

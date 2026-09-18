@@ -17,43 +17,26 @@ package core
 import (
 	"context"
 	"fmt"
-	"math"
-	"math/rand"
-	"net/url"
 	"reflect"
-	"slices"
-	"sort"
 	"strings"
 	"testing"
 	"unsafe"
 
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/planner/property"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/types"
-	driver "github.com/pingcap/tidb/pkg/types/parser_driver"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/hint"
-	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/ranger"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/aggregation"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/property"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hint"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -66,7 +49,6 @@ type visit struct {
 func TestShow(t *testing.T) {
 	node := &ast.ShowStmt{}
 	tps := []ast.ShowStmtType{
-		ast.ShowBinlogStatus,
 		ast.ShowEngines,
 		ast.ShowDatabases,
 		ast.ShowTables,
@@ -89,7 +71,6 @@ func TestShow(t *testing.T) {
 		ast.ShowMasterStatus,
 		ast.ShowBackups,
 		ast.ShowRestores,
-		ast.ShowStorageClassTransitions,
 	}
 	for _, tp := range tps {
 		node.Tp = tp
@@ -98,20 +79,6 @@ func TestShow(t *testing.T) {
 			require.Greater(t, col.RetType.GetFlen(), 0)
 		}
 	}
-
-	node.Tp = ast.ShowStorageClassTransitions
-	schema, names := buildShowSchema(node, false, false)
-	datetimeColumns := 0
-	for i, name := range names {
-		if name.ColName.O != "START_TIME" && name.ColName.O != "LAST_UPDATE_TIME" {
-			continue
-		}
-		datetimeColumns++
-		require.Equal(t, mysql.TypeDatetime, schema.Columns[i].RetType.GetType())
-		require.Equal(t, 26, schema.Columns[i].RetType.GetFlen())
-		require.Equal(t, types.MaxFsp, schema.Columns[i].RetType.GetDecimal())
-	}
-	require.Equal(t, 2, datetimeColumns)
 }
 
 func TestGetPathByIndexName(t *testing.T) {
@@ -122,24 +89,24 @@ func TestGetPathByIndexName(t *testing.T) {
 
 	accessPath := []*util.AccessPath{
 		{IsIntHandlePath: true},
-		{Index: &model.IndexInfo{Name: ast.NewCIStr("idx")}},
+		{Index: &model.IndexInfo{Name: model.NewCIStr("idx")}},
 		genTiFlashPath(tblInfo),
 	}
 
-	path := getPathByIndexName(accessPath, ast.NewCIStr("idx"), tblInfo)
+	path := getPathByIndexName(accessPath, model.NewCIStr("idx"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
 	// "id" is a prefix of "idx"
-	path = getPathByIndexName(accessPath, ast.NewCIStr("id"), tblInfo)
+	path = getPathByIndexName(accessPath, model.NewCIStr("id"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[1], path)
 
-	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, model.NewCIStr("primary"), tblInfo)
 	require.NotNil(t, path)
 	require.Equal(t, accessPath[0], path)
 
-	path = getPathByIndexName(accessPath, ast.NewCIStr("not exists"), tblInfo)
+	path = getPathByIndexName(accessPath, model.NewCIStr("not exists"), tblInfo)
 	require.Nil(t, path)
 
 	tblInfo = &model.TableInfo{
@@ -147,53 +114,25 @@ func TestGetPathByIndexName(t *testing.T) {
 		PKIsHandle: false,
 	}
 
-	path = getPathByIndexName(accessPath, ast.NewCIStr("primary"), tblInfo)
+	path = getPathByIndexName(accessPath, model.NewCIStr("primary"), tblInfo)
 	require.Nil(t, path)
-
-	t.Run("ignore exact and prefix-resolved long index without removing shorter sibling", func(t *testing.T) {
-		shortPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no")}}
-		longPath := &util.AccessPath{Index: &model.IndexInfo{Name: ast.NewCIStr("idx_contract_sys_no_delete_flag")}}
-		paths := []*util.AccessPath{shortPath, longPath}
-
-		tblInfo := &model.TableInfo{
-			Indices: []*model.IndexInfo{shortPath.Index, longPath.Index},
-		}
-
-		ignored := []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete_flag"), tblInfo)}
-		require.Same(t, longPath, ignored[0])
-		remained := removeIgnoredPaths(paths, ignored)
-		require.Len(t, remained, 1)
-		require.Same(t, shortPath, remained[0])
-
-		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("idx_contract_sys_no_delete"), tblInfo)}
-		require.Same(t, longPath, ignored[0])
-		remained = removeIgnoredPaths(paths, ignored)
-		require.Len(t, remained, 1)
-		require.Same(t, shortPath, remained[0])
-
-		ignored = []*util.AccessPath{getPathByIndexName(paths, ast.NewCIStr("Idx_Contract_Sys_No_Delete_Flag"), tblInfo)}
-		require.Same(t, longPath, ignored[0])
-		remained = removeIgnoredPaths(paths, ignored)
-		require.Len(t, remained, 1)
-		require.Same(t, shortPath, remained[0])
-	})
 }
 
 func TestRewriterPool(t *testing.T) {
-	ctx := coretestsdk.MockContext()
+	ctx := MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+	builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 
 	// Make sure PlanBuilder.getExpressionRewriter() provides clean rewriter from pool.
 	// First, pick one rewriter from the pool and make it dirty.
 	builder.rewriterCounter++
 	dirtyRewriter := builder.getExpressionRewriter(context.TODO(), nil)
 	dirtyRewriter.asScalar = true
-	dirtyRewriter.planCtx.aggrMap = make(map[*ast.AggregateFuncExpr]int)
+	dirtyRewriter.aggrMap = make(map[*ast.AggregateFuncExpr]int)
 	dirtyRewriter.preprocess = func(ast.Node) ast.Node { return nil }
-	dirtyRewriter.planCtx.insertPlan = &physicalop.Insert{}
+	dirtyRewriter.insertPlan = &Insert{}
 	dirtyRewriter.disableFoldCounter = 1
 	dirtyRewriter.ctxStack = make([]expression.Expression, 2)
 	dirtyRewriter.ctxNameStk = make([]*types.FieldName, 2)
@@ -203,45 +142,12 @@ func TestRewriterPool(t *testing.T) {
 	cleanRewriter := builder.getExpressionRewriter(context.TODO(), nil)
 	require.Equal(t, dirtyRewriter, cleanRewriter)
 	require.Equal(t, false, cleanRewriter.asScalar)
-	require.Nil(t, cleanRewriter.planCtx.aggrMap)
+	require.Nil(t, cleanRewriter.aggrMap)
 	require.Nil(t, cleanRewriter.preprocess)
-	require.Nil(t, cleanRewriter.planCtx.insertPlan)
+	require.Nil(t, cleanRewriter.insertPlan)
 	require.Zero(t, cleanRewriter.disableFoldCounter)
 	require.Len(t, cleanRewriter.ctxStack, 0)
 	builder.rewriterCounter--
-}
-
-func TestGetInsertColExprDeepCopiesValueExprFieldType(t *testing.T) {
-	ctx := coretestsdk.MockContext()
-	defer func() {
-		domain.GetDomain(ctx).StatsHandle().Close()
-	}()
-	builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
-
-	valueExpr, ok := ast.NewValueExpr(1, "", "").(*driver.ValueExpr)
-	require.True(t, ok)
-	valueExpr.Type.AddFlag(mysql.NotNullFlag)
-
-	col := &table.Column{
-		ColumnInfo: &model.ColumnInfo{
-			Name:      ast.NewCIStr("a"),
-			FieldType: *types.NewFieldType(mysql.TypeLonglong),
-		},
-	}
-	expr, err := builder.getInsertColExpr(context.TODO(), &physicalop.Insert{}, nil, col, valueExpr, nil)
-	require.NoError(t, err)
-
-	constExpr, ok := expr.(*expression.Constant)
-	require.True(t, ok)
-	require.NotSame(t, valueExpr.GetType(), constExpr.RetType)
-	require.Equal(t, mysql.TypeLonglong, valueExpr.Type.GetType())
-	require.True(t, mysql.HasNotNullFlag(valueExpr.Type.GetFlag()))
-
-	constExpr.RetType.SetType(mysql.TypeString)
-	constExpr.RetType.DelFlag(mysql.NotNullFlag)
-
-	require.Equal(t, mysql.TypeLonglong, valueExpr.Type.GetType())
-	require.True(t, mysql.HasNotNullFlag(valueExpr.Type.GetFlag()))
 }
 
 func TestDisableFold(t *testing.T) {
@@ -264,7 +170,7 @@ func TestDisableFold(t *testing.T) {
 		}},
 	}
 
-	ctx := coretestsdk.MockContext()
+	ctx := MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
@@ -274,12 +180,12 @@ func TestDisableFold(t *testing.T) {
 		stmt := st.(*ast.SelectStmt)
 		expr := stmt.Fields.Fields[0].Expr
 
-		builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+		builder, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 		builder.rewriterCounter++
 		rewriter := builder.getExpressionRewriter(context.TODO(), nil)
 		require.NotNil(t, rewriter)
 		require.Equal(t, 0, rewriter.disableFoldCounter)
-		rewrittenExpression, _, err := rewriteExprNode(rewriter, expr, true)
+		rewrittenExpression, _, err := builder.rewriteExprNode(rewriter, expr, true)
 		require.NoError(t, err)
 		require.Equal(t, 0, rewriter.disableFoldCounter)
 		builder.rewriterCounter--
@@ -296,32 +202,32 @@ func TestDeepClone(t *testing.T) {
 	tp := types.NewFieldType(mysql.TypeLonglong)
 	expr := &expression.Column{RetType: tp}
 	byItems := []*util.ByItems{{Expr: expr}}
-	sort1 := &physicalop.PhysicalSort{ByItems: byItems}
-	sort2 := &physicalop.PhysicalSort{ByItems: byItems}
-	checkDeepClone := func(p1, p2 base.PhysicalPlan) error {
+	sort1 := &PhysicalSort{ByItems: byItems}
+	sort2 := &PhysicalSort{ByItems: byItems}
+	checkDeepClone := func(p1, p2 PhysicalPlan) error {
 		whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context"}
-		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), nil, whiteList, nil)
+		return checkDeepClonedCore(reflect.ValueOf(p1), reflect.ValueOf(p2), typeName(reflect.TypeOf(p1)), whiteList, nil)
 	}
 	err := checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Equal(t, "same slice pointers, path *PhysicalSort.ByItems", err.Error())
+	require.Regexp(t, "invalid slice pointers, path PhysicalSort.ByItems", err.Error())
 
 	byItems2 := []*util.ByItems{{Expr: expr}}
 	sort2.ByItems = byItems2
 	err = checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Equal(t, "same pointer, path *PhysicalSort.ByItems[0].Expr", err.Error())
+	require.Regexp(t, "same pointer, path PhysicalSort.ByItems.*Expression", err.Error())
 
 	expr2 := &expression.Column{RetType: tp}
 	byItems2[0].Expr = expr2
 	err = checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Equal(t, "same pointer, path *PhysicalSort.ByItems[0].Expr.RetType", err.Error())
+	require.Regexp(t, "same pointer, path PhysicalSort.ByItems.*Expression.FieldType", err.Error())
 
 	expr2.RetType = types.NewFieldType(mysql.TypeString)
 	err = checkDeepClone(sort1, sort2)
 	require.Error(t, err)
-	require.Equal(t, "different values, path *PhysicalSort.ByItems[0].Expr.RetType.tp", err.Error())
+	require.Regexp(t, "different values, path PhysicalSort.ByItems.*Expression.FieldType.uint8", err.Error())
 
 	expr2.RetType = types.NewFieldType(mysql.TypeLonglong)
 	require.NoError(t, checkDeepClone(sort1, sort2))
@@ -334,7 +240,7 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	tblInfo := &model.TableInfo{}
 
 	// table scan
-	tableScan := &physicalop.PhysicalTableScan{
+	tableScan := &PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -342,17 +248,17 @@ func TestTablePlansAndTablePlanInPhysicalTableReaderClone(t *testing.T) {
 	tableScan.SetSchema(schema)
 
 	// table reader
-	tableReader := &physicalop.PhysicalTableReader{
-		TablePlan:  tableScan,
-		TablePlans: []base.PhysicalPlan{tableScan},
+	tableReader := &PhysicalTableReader{
+		tablePlan:  tableScan,
+		TablePlans: []PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
-	clonedPlan, err := tableReader.Clone(ctx)
+	clonedPlan, err := tableReader.Clone()
 	require.NoError(t, err)
-	newTableReader, ok := clonedPlan.(*physicalop.PhysicalTableReader)
+	newTableReader, ok := clonedPlan.(*PhysicalTableReader)
 	require.True(t, ok)
-	require.True(t, newTableReader.TablePlan == newTableReader.TablePlans[0])
+	require.True(t, newTableReader.tablePlan == newTableReader.TablePlans[0])
 }
 
 func TestPhysicalPlanClone(t *testing.T) {
@@ -369,7 +275,7 @@ func TestPhysicalPlanClone(t *testing.T) {
 	aggDescs := []*aggregation.AggFuncDesc{aggDesc1, aggDesc2}
 
 	// table scan
-	tableScan := &physicalop.PhysicalTableScan{
+	tableScan := &PhysicalTableScan{
 		AccessCondition: []expression.Expression{col, cst},
 		Table:           tblInfo,
 	}
@@ -378,97 +284,97 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(tableScan))
 
 	// table reader
-	tableReader := &physicalop.PhysicalTableReader{
-		TablePlan:  tableScan,
-		TablePlans: []base.PhysicalPlan{tableScan},
+	tableReader := &PhysicalTableReader{
+		tablePlan:  tableScan,
+		TablePlans: []PhysicalPlan{tableScan},
 		StoreType:  kv.TiFlash,
 	}
 	tableReader = tableReader.Init(ctx, 0)
 	require.NoError(t, checkPhysicalPlanClone(tableReader))
 
 	// index scan
-	indexScan := &physicalop.PhysicalIndexScan{
+	indexScan := &PhysicalIndexScan{
 		AccessCondition:  []expression.Expression{col, cst},
 		Table:            tblInfo,
 		Index:            idxInfo,
-		DataSourceSchema: schema,
+		dataSourceSchema: schema,
 	}
 	indexScan = indexScan.Init(ctx, 0)
 	indexScan.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(indexScan))
 
 	// index reader
-	indexReader := &physicalop.PhysicalIndexReader{
-		IndexPlan:     indexScan,
-		IndexPlans:    []base.PhysicalPlan{indexScan},
+	indexReader := &PhysicalIndexReader{
+		indexPlan:     indexScan,
+		IndexPlans:    []PhysicalPlan{indexScan},
 		OutputColumns: []*expression.Column{col, col},
 	}
 	indexReader = indexReader.Init(ctx, 0)
 	require.NoError(t, checkPhysicalPlanClone(indexReader))
 
 	// index lookup
-	indexLookup := &physicalop.PhysicalIndexLookUpReader{
-		IndexPlans:     []base.PhysicalPlan{indexReader},
-		IndexPlan:      indexScan,
-		TablePlans:     []base.PhysicalPlan{tableReader},
-		TablePlan:      tableScan,
+	indexLookup := &PhysicalIndexLookUpReader{
+		IndexPlans:     []PhysicalPlan{indexReader},
+		indexPlan:      indexScan,
+		TablePlans:     []PhysicalPlan{tableReader},
+		tablePlan:      tableScan,
 		ExtraHandleCol: col,
-		PushedLimit:    &physicalop.PushedDownLimit{Offset: 1, Count: 2},
+		PushedLimit:    &PushedDownLimit{1, 2},
 	}
-	indexLookup = indexLookup.Init(ctx, 0, util.IndexLookUpPushDownNone)
+	indexLookup = indexLookup.Init(ctx, 0)
 	require.NoError(t, checkPhysicalPlanClone(indexLookup))
 
 	// selection
-	sel := &physicalop.PhysicalSelection{Conditions: []expression.Expression{col, cst}}
+	sel := &PhysicalSelection{Conditions: []expression.Expression{col, cst}}
 	sel = sel.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sel))
 
 	// maxOneRow
-	maxOneRow := &physicalop.PhysicalMaxOneRow{}
+	maxOneRow := &PhysicalMaxOneRow{}
 	maxOneRow = maxOneRow.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(maxOneRow))
 
 	// projection
-	proj := &physicalop.PhysicalProjection{Exprs: []expression.Expression{col, cst}}
+	proj := &PhysicalProjection{Exprs: []expression.Expression{col, cst}}
 	proj = proj.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(proj))
 
 	// limit
-	lim := &physicalop.PhysicalLimit{Count: 1, Offset: 2}
+	lim := &PhysicalLimit{Count: 1, Offset: 2}
 	lim = lim.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(lim))
 
 	// sort
 	byItems := []*util.ByItems{{Expr: col}, {Expr: cst}}
-	sort := &physicalop.PhysicalSort{ByItems: byItems}
+	sort := &PhysicalSort{ByItems: byItems}
 	sort = sort.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(sort))
 
 	// topN
-	topN := &physicalop.PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
+	topN := &PhysicalTopN{ByItems: byItems, Offset: 2333, Count: 2333}
 	topN = topN.Init(ctx, stats, 0)
 	require.NoError(t, checkPhysicalPlanClone(topN))
 
 	// stream agg
-	streamAgg := &physicalop.PhysicalStreamAgg{BasePhysicalAgg: physicalop.BasePhysicalAgg{
+	streamAgg := &PhysicalStreamAgg{basePhysicalAgg{
 		AggFuncs:     aggDescs,
 		GroupByItems: []expression.Expression{col, cst},
 	}}
-	streamAgg = streamAgg.InitForStream(ctx, stats, 0, schema).(*physicalop.PhysicalStreamAgg)
+	streamAgg = streamAgg.initForStream(ctx, stats, 0)
+	streamAgg.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(streamAgg))
 
 	// hash agg
-	hashAgg := &physicalop.PhysicalHashAgg{
-		BasePhysicalAgg: physicalop.BasePhysicalAgg{
-			AggFuncs:     aggDescs,
-			GroupByItems: []expression.Expression{col, cst},
-		},
-	}
-	hashAgg = hashAgg.InitForHash(ctx, stats, 0, schema).(*physicalop.PhysicalHashAgg)
+	hashAgg := &PhysicalHashAgg{basePhysicalAgg{
+		AggFuncs:     aggDescs,
+		GroupByItems: []expression.Expression{col, cst},
+	}}
+	hashAgg = hashAgg.initForHash(ctx, stats, 0)
+	hashAgg.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(hashAgg))
 
 	// hash join
-	hashJoin := &physicalop.PhysicalHashJoin{
+	hashJoin := &PhysicalHashJoin{
 		Concurrency:     4,
 		UseOuterToBuild: true,
 	}
@@ -477,67 +383,37 @@ func TestPhysicalPlanClone(t *testing.T) {
 	require.NoError(t, checkPhysicalPlanClone(hashJoin))
 
 	// merge join
-	mergeJoin := &physicalop.PhysicalMergeJoin{
+	mergeJoin := &PhysicalMergeJoin{
 		CompareFuncs: []expression.CompareFunc{expression.CompareInt},
 		Desc:         true,
 	}
 	mergeJoin = mergeJoin.Init(ctx, stats, 0)
 	mergeJoin.SetSchema(schema)
 	require.NoError(t, checkPhysicalPlanClone(mergeJoin))
-
-	// index join
-	baseJoin := physicalop.BasePhysicalJoin{
-		LeftJoinKeys:    []*expression.Column{col},
-		RightJoinKeys:   nil,
-		OtherConditions: []expression.Expression{col},
-	}
-
-	indexJoin := &physicalop.PhysicalIndexJoin{
-		BasePhysicalJoin: baseJoin,
-		InnerPlan:        indexScan,
-		Ranges:           ranger.Ranges{},
-	}
-	indexJoin = indexJoin.Init(ctx, stats, 0)
-	indexJoin.SetSchema(schema)
-	require.NoError(t, checkPhysicalPlanClone(indexJoin))
 }
 
 //go:linkname valueInterface reflect.valueInterface
-func valueInterface(v reflect.Value, safe bool) any
+func valueInterface(v reflect.Value, safe bool) interface{}
 
 func typeName(t reflect.Type) string {
 	path := t.String()
 	tmp := strings.Split(path, ".")
-	baseName := tmp[len(tmp)-1]
-	if strings.HasPrefix(path, "*") { // is a pointer
-		baseName = "*" + baseName
-	}
-	return baseName
+	return tmp[len(tmp)-1]
 }
 
-func checkPhysicalPlanClone(p base.PhysicalPlan) error {
-	cloned, err := p.Clone(p.SCtx())
+func checkPhysicalPlanClone(p PhysicalPlan) error {
+	cloned, err := p.Clone()
 	if err != nil {
 		return err
 	}
 	whiteList := []string{"*property.StatsInfo", "*sessionctx.Context", "*mock.Context", "*types.FieldType"}
-	return checkDeepClonedCore(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), nil, whiteList, nil)
+	return checkDeepClonedCore(reflect.ValueOf(p), reflect.ValueOf(cloned), typeName(reflect.TypeOf(p)), whiteList, nil)
 }
 
 // checkDeepClonedCore is used to check if v2 is deep cloned from v1.
 // It's modified from reflect.deepValueEqual. We cannot use reflect.DeepEqual here since they have different
 // logic, for example, if two pointers point the same address, they will pass the DeepEqual check while failing in the DeepClone check.
-func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, whiteTypeList []string, visited map[visit]bool) error {
-	skipPath := false
-	for _, p := range whitePathList {
-		if strings.HasSuffix(path, p) {
-			skipPath = true
-		}
-	}
-	if skipPath {
-		return nil
-	}
-
+func checkDeepClonedCore(v1, v2 reflect.Value, path string, whiteList []string, visited map[visit]bool) error {
 	if !v1.IsValid() || !v2.IsValid() {
 		if v1.IsValid() != v2.IsValid() {
 			return errors.Errorf("invalid")
@@ -574,8 +450,8 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 
 	switch v1.Kind() {
 	case reflect.Array:
-		for i := range v1.Len() {
-			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
+		for i := 0; i < v1.Len(); i++ {
+			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whiteList, visited); err != nil {
 				return err
 			}
 		}
@@ -593,10 +469,10 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 			return errors.Errorf("different slices nil %v, %v, path %v", v1.IsNil(), v2.IsNil(), path)
 		}
 		if v1.Pointer() == v2.Pointer() {
-			return errors.Errorf("same slice pointers, path %v", path)
+			return errors.Errorf("invalid slice pointers, path %v", path)
 		}
-		for i := range v1.Len() {
-			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whitePathList, whiteTypeList, visited); err != nil {
+		for i := 0; i < v1.Len(); i++ {
+			if err := checkDeepClonedCore(v1.Index(i), v2.Index(i), fmt.Sprintf("%v[%v]", path, i), whiteList, visited); err != nil {
 				return err
 			}
 		}
@@ -607,36 +483,41 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 		if v1.IsNil() != v2.IsNil() {
 			return errors.Errorf("invalid interfaces, path %v", path)
 		}
-		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whitePathList, whiteTypeList, visited)
+		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whiteList, visited)
 	case reflect.Ptr:
 		if v1.IsNil() && v2.IsNil() {
 			return nil
 		}
 		if v1.Pointer() == v2.Pointer() {
 			typeName := v1.Type().String()
-			inWhiteList := slices.Contains(whiteTypeList, typeName)
+			inWhiteList := false
+			for _, whiteName := range whiteList {
+				if whiteName == typeName {
+					inWhiteList = true
+					break
+				}
+			}
 			if inWhiteList {
 				return nil
 			}
 			return errors.Errorf("same pointer, path %v", path)
 		}
-		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whitePathList, whiteTypeList, visited)
+		return checkDeepClonedCore(v1.Elem(), v2.Elem(), path, whiteList, visited)
 	case reflect.Struct:
 		for i, n := 0, v1.NumField(); i < n; i++ {
-			fieldName := v1.Type().Field(i).Name
-			if err := checkDeepClonedCore(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, fieldName), whitePathList, whiteTypeList, visited); err != nil {
+			if err := checkDeepClonedCore(v1.Field(i), v2.Field(i), fmt.Sprintf("%v.%v", path, typeName(v1.Field(i).Type())), whiteList, visited); err != nil {
 				return err
 			}
 		}
 	case reflect.Map:
-		if v1.IsNil() && v2.IsNil() {
+		if (v1.IsNil() && v2.IsNil()) || (v1.Len() == 0 && v2.Len() == 0) {
 			return nil
 		}
 		if v1.IsNil() != v2.IsNil() || v1.Len() != v2.Len() {
 			return errors.Errorf("different maps nil: %v, %v, len: %v, %v, path: %v", v1.IsNil(), v2.IsNil(), v1.Len(), v2.Len(), path)
 		}
 		if v1.Pointer() == v2.Pointer() {
-			return errors.Errorf("same map pointers, path %v", path)
+			return errors.Errorf("invalid map pointers, path %v", path)
 		}
 		if len(v1.MapKeys()) != len(v2.MapKeys()) {
 			return errors.Errorf("invalid map")
@@ -645,10 +526,9 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 			val1 := v1.MapIndex(k)
 			val2 := v2.MapIndex(k)
 			if !val1.IsValid() || !val2.IsValid() {
-				return errors.Errorf("invalid map value at %v", fmt.Sprintf("%v[%v]", path, typeName(k.Type())))
-			}
-			if err := checkDeepClonedCore(val1, val2, fmt.Sprintf("%v[%v]", path, typeName(k.Type())), whitePathList, whiteTypeList, visited); err != nil {
-				return err
+				if err := checkDeepClonedCore(val1, val2, fmt.Sprintf("%v[%v]", path, typeName(k.Type())), whiteList, visited); err != nil {
+					return err
+				}
 			}
 		}
 	case reflect.Func:
@@ -664,10 +544,13 @@ func checkDeepClonedCore(v1, v2 reflect.Value, path string, whitePathList, white
 	return nil
 }
 
-func TestHandleAnalyzeOptions(t *testing.T) {
+func TestHandleAnalyzeOptionsV1AndV2(t *testing.T) {
+	require.Equal(t, len(analyzeOptionDefault), len(analyzeOptionDefaultV2), "analyzeOptionDefault and analyzeOptionDefaultV2 should have the same length")
+
 	tests := []struct {
 		name        string
 		opts        []ast.AnalyzeOpt
+		statsVer    int
 		ExpectedErr string
 	}{
 		{
@@ -675,10 +558,22 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 			opts: []ast.AnalyzeOpt{
 				{
 					Type:  ast.AnalyzeOptNumTopN,
-					Value: ast.NewValueExpr(100000+1, "", ""),
+					Value: ast.NewValueExpr(16384+1, "", ""),
 				},
 			},
-			ExpectedErr: "Value of analyze option TOPN should not be larger than 100000",
+			statsVer:    statistics.Version1,
+			ExpectedErr: "Value of analyze option TOPN should not be larger than 16384",
+		},
+		{
+			name: "Use SampleRate option in stats version 1",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptSampleRate,
+					Value: ast.NewValueExpr(1, "", ""),
+				},
+			},
+			statsVer:    statistics.Version1,
+			ExpectedErr: "Version 1's statistics doesn't support the SAMPLERATE option, please set tidb_analyze_version to 2",
 		},
 		{
 			name: "Too big SampleRate option",
@@ -688,6 +583,7 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(2, "", ""),
 				},
 			},
+			statsVer:    statistics.Version2,
 			ExpectedErr: "Value of analyze option SAMPLERATE should not larger than 1.000000, and should be greater than 0",
 		},
 		{
@@ -695,10 +591,11 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 			opts: []ast.AnalyzeOpt{
 				{
 					Type:  ast.AnalyzeOptNumBuckets,
-					Value: ast.NewValueExpr(100000+1, "", ""),
+					Value: ast.NewValueExpr(1024+1, "", ""),
 				},
 			},
-			ExpectedErr: "Value of analyze option BUCKETS should be positive and not larger than 100000",
+			statsVer:    2,
+			ExpectedErr: "Value of analyze option BUCKETS should be positive and not larger than 1024",
 		},
 		{
 			name: "Set both sample num and sample rate",
@@ -712,224 +609,120 @@ func TestHandleAnalyzeOptions(t *testing.T) {
 					Value: ast.NewValueExpr(0.1, "", ""),
 				},
 			},
+			statsVer:    statistics.Version2,
 			ExpectedErr: "ou can only either set the value of the sample num or set the value of the sample rate. Don't set both of them",
+		},
+		{
+			name: "Too big CMSketchDepth and CMSketchWidth option",
+			opts: []ast.AnalyzeOpt{
+				{
+					Type:  ast.AnalyzeOptCMSketchDepth,
+					Value: ast.NewValueExpr(1024, "", ""),
+				},
+				{
+					Type:  ast.AnalyzeOptCMSketchWidth,
+					Value: ast.NewValueExpr(2048, "", ""),
+				},
+			},
+			statsVer:    statistics.Version1,
+			ExpectedErr: "cm sketch size(depth * width) should not larger than 1258291",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, _, err := handleAnalyzeOptions(tt.opts)
+			_, err := handleAnalyzeOptions(tt.opts, tt.statsVer)
 			if tt.ExpectedErr != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tt.ExpectedErr)
 			} else {
 				require.NoError(t, err)
 			}
+
+			if tt.statsVer == statistics.Version2 {
+				_, err := handleAnalyzeOptionsV2(tt.opts)
+				if tt.ExpectedErr != "" {
+					require.Error(t, err)
+					require.Contains(t, err.Error(), tt.ExpectedErr)
+				} else {
+					require.NoError(t, err)
+				}
+			}
 		})
 	}
 }
 
-func TestHandleAnalyzeOptionsWithDefault(t *testing.T) {
-	// An option specified as DEFAULT is reported in the reset set rather than
-	// being dropped.
-	optMap, resetOpts, err := handleAnalyzeOptions([]ast.AnalyzeOpt{
-		{Type: ast.AnalyzeOptNumBuckets},
-		{Type: ast.AnalyzeOptNumSamples},
-		{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr(0.1, "", "")},
-	})
-	require.NoError(t, err)
-	require.Equal(t, map[ast.AnalyzeOptionType]uint64{
-		ast.AnalyzeOptSampleRate: math.Float64bits(0.1),
-	}, optMap)
-	require.Equal(t, map[ast.AnalyzeOptionType]struct{}{
-		ast.AnalyzeOptNumBuckets: {},
-		ast.AnalyzeOptNumSamples: {},
-	}, resetOpts)
-
-	// DEFAULT SAMPLES does not conflict with an explicit sample rate and vice versa.
-	_, _, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
-		{Type: ast.AnalyzeOptSampleRate},
-		{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr(100, "", "")},
-	})
-	require.NoError(t, err)
-
-	// A DEFAULT clears an earlier value of the same option for the sample
-	// num/rate conflict check too, so resetting SAMPLES makes room for a
-	// SAMPLERATE that would otherwise be rejected as setting both.
-	_, _, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
-		{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr(100, "", "")},
-		{Type: ast.AnalyzeOptNumSamples},
-		{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr(0.1, "", "")},
-	})
-	require.NoError(t, err)
-
-	// Without the reset the same combination is still rejected.
-	_, _, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
-		{Type: ast.AnalyzeOptNumSamples, Value: ast.NewValueExpr(100, "", "")},
-		{Type: ast.AnalyzeOptSampleRate, Value: ast.NewValueExpr(0.1, "", "")},
-	})
-	require.ErrorContains(t, err, "You can only either set the value of the sample num or set the value of the sample rate")
-
-	// The last mention of an option wins, as for duplicated literals.
-	optMap, resetOpts, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
-		{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr(10, "", "")},
-		{Type: ast.AnalyzeOptNumTopN},
-	})
-	require.NoError(t, err)
-	require.Empty(t, optMap)
-	require.Equal(t, map[ast.AnalyzeOptionType]struct{}{ast.AnalyzeOptNumTopN: {}}, resetOpts)
-	optMap, resetOpts, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
-		{Type: ast.AnalyzeOptNumTopN},
-		{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr(10, "", "")},
-	})
-	require.NoError(t, err)
-	require.Equal(t, map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumTopN: 10}, optMap)
-	require.Empty(t, resetOpts)
-
-	// TOPN 0 is a pinned value that disables TopN collection, not a reset, so it
-	// must not be confused with DEFAULT TOPN.
-	optMap, resetOpts, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
-		{Type: ast.AnalyzeOptNumTopN, Value: ast.NewValueExpr(0, "", "")},
-	})
-	require.NoError(t, err)
-	require.Equal(t, map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumTopN: 0}, optMap)
-	require.Empty(t, resetOpts)
-}
-
-func TestMergeAnalyzeOptionsWithResets(t *testing.T) {
-	saved := map[ast.AnalyzeOptionType]uint64{
-		ast.AnalyzeOptNumBuckets: 100,
-		ast.AnalyzeOptNumTopN:    20,
-	}
-	// A reset drops the saved value, an explicit option overrides it, and
-	// untouched saved options are inherited.
-	merged := mergeAnalyzeOptions(
-		map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumSamples: 1000},
-		map[ast.AnalyzeOptionType]struct{}{ast.AnalyzeOptNumBuckets: {}},
-		saved,
-	)
-	require.Equal(t, map[ast.AnalyzeOptionType]uint64{
-		ast.AnalyzeOptNumTopN:    20,
-		ast.AnalyzeOptNumSamples: 1000,
-	}, merged)
-
-	// A pinned TOPN 0 overrides the saved value instead of unsetting it.
-	merged = mergeAnalyzeOptions(
-		map[ast.AnalyzeOptionType]uint64{ast.AnalyzeOptNumTopN: 0},
-		nil,
-		saved,
-	)
-	require.Equal(t, map[ast.AnalyzeOptionType]uint64{
-		ast.AnalyzeOptNumBuckets: 100,
-		ast.AnalyzeOptNumTopN:    0,
-	}, merged)
-}
-
-func TestAnalyzeBucketAndTopNDefaultsFromGlobalVars(t *testing.T) {
-	origBuckets := vardef.AnalyzeDefaultNumBuckets.Load()
-	origTopN := vardef.AnalyzeDefaultNumTopN.Load()
-	defer func() {
-		vardef.AnalyzeDefaultNumBuckets.Store(origBuckets)
-		vardef.AnalyzeDefaultNumTopN.Store(origTopN)
-	}()
-
-	vardef.AnalyzeDefaultNumBuckets.Store(512)
-	vardef.AnalyzeDefaultNumTopN.Store(150)
-
-	optMap, resetOpts, err := handleAnalyzeOptions(nil)
-	require.NoError(t, err)
-	require.Empty(t, optMap)
-	require.Empty(t, resetOpts)
-
-	filledMap := fillAnalyzeOptions(mergeAnalyzeOptions(optMap, resetOpts, nil))
-	require.Equal(t, uint64(512), filledMap[ast.AnalyzeOptNumBuckets])
-	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
-
-	testDefaults := AnalyzeOptionDefault()
-	require.Equal(t, uint64(512), testDefaults[ast.AnalyzeOptNumBuckets])
-	require.Equal(t, uint64(150), testDefaults[ast.AnalyzeOptNumTopN])
-
-	optMap, resetOpts, err = handleAnalyzeOptions([]ast.AnalyzeOpt{
-		{
-			Type:  ast.AnalyzeOptNumBuckets,
-			Value: ast.NewValueExpr(1024, "", ""),
-		},
-	})
-	require.NoError(t, err)
-	filledMap = fillAnalyzeOptions(mergeAnalyzeOptions(optMap, resetOpts, nil))
-	require.Equal(t, uint64(1024), filledMap[ast.AnalyzeOptNumBuckets])
-	require.Equal(t, uint64(150), filledMap[ast.AnalyzeOptNumTopN])
-}
-
 func TestGetFullAnalyzeColumnsInfo(t *testing.T) {
-	ctx := coretestsdk.MockContext()
+	ctx := MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	pb, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 
 	// Create a new TableName instance.
 	tableName := &ast.TableName{
-		Schema: ast.NewCIStr("test"),
-		Name:   ast.NewCIStr("my_table"),
+		Schema: model.NewCIStr("test"),
+		Name:   model.NewCIStr("my_table"),
 	}
 	columns := []*model.ColumnInfo{
 		{
 			ID:        1,
-			Name:      ast.NewCIStr("id"),
+			Name:      model.NewCIStr("id"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 		{
 			ID:        2,
-			Name:      ast.NewCIStr("name"),
+			Name:      model.NewCIStr("name"),
 			FieldType: *types.NewFieldType(mysql.TypeString),
 		},
 		{
 			ID:        3,
-			Name:      ast.NewCIStr("age"),
+			Name:      model.NewCIStr("age"),
 			FieldType: *types.NewFieldType(mysql.TypeLonglong),
 		},
 	}
-	tblNameW := &resolve.TableNameW{
-		TableName: tableName,
-		TableInfo: &model.TableInfo{
-			Columns: columns,
-		},
+	tableName.TableInfo = &model.TableInfo{
+		Columns: columns,
 	}
 
-	// Test case 1: AllColumns.
-	cols, _, err := pb.getFullAnalyzeColumnsInfo(tblNameW, ast.AllColumns, nil, nil, nil, false, false)
+	// Test case 1: DefaultChoice.
+	cols, _, err := pb.getFullAnalyzeColumnsInfo(tableName, model.DefaultChoice, nil, nil, nil, false, false)
+	require.NoError(t, err)
+	require.Equal(t, columns, cols)
+
+	// Test case 2: AllColumns.
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.AllColumns, nil, nil, nil, false, false)
 	require.NoError(t, err)
 	require.Equal(t, columns, cols)
 
 	mustAnalyzedCols := &calcOnceMap{data: make(map[int64]struct{})}
 
-	// TODO(0xPoe): Find a better way to mock SQL execution.
-	// Test case 2: PredicateColumns(default)
+	// TODO(hi-rustin): Find a better way to mock SQL execution.
+	// Test case 3: PredicateColumns.
 
-	// Test case 3: ColumnList.
+	// Test case 4: ColumnList.
 	specifiedCols := []*model.ColumnInfo{columns[0], columns[2]}
 	mustAnalyzedCols.data[3] = struct{}{}
-	cols, _, err = pb.getFullAnalyzeColumnsInfo(tblNameW, ast.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
+	cols, _, err = pb.getFullAnalyzeColumnsInfo(tableName, model.ColumnList, specifiedCols, nil, mustAnalyzedCols, false, false)
 	require.NoError(t, err)
 	require.Equal(t, specifiedCols, cols)
 }
 
 func TestRequireInsertAndSelectPriv(t *testing.T) {
-	ctx := coretestsdk.MockContext()
+	ctx := MockContext()
 	defer func() {
 		domain.GetDomain(ctx).StatsHandle().Close()
 	}()
-	pb, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
+	pb, _ := NewPlanBuilder().Init(ctx, nil, &hint.BlockHintProcessor{})
 
 	tables := []*ast.TableName{
 		{
-			Schema: ast.NewCIStr("test"),
-			Name:   ast.NewCIStr("t1"),
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("t1"),
 		},
 		{
-			Schema: ast.NewCIStr("Test"),
-			Name:   ast.NewCIStr("T2"),
+			Schema: model.NewCIStr("test"),
+			Name:   model.NewCIStr("t2"),
 		},
 	}
 
@@ -939,598 +732,4 @@ func TestRequireInsertAndSelectPriv(t *testing.T) {
 	require.Equal(t, "t1", pb.visitInfo[0].table)
 	require.Equal(t, mysql.InsertPriv, pb.visitInfo[0].privilege)
 	require.Equal(t, mysql.SelectPriv, pb.visitInfo[1].privilege)
-	require.Equal(t, "test", pb.visitInfo[2].db)
-	require.Equal(t, "t2", pb.visitInfo[2].table)
-}
-
-func TestBuildRefreshStatsPrivileges(t *testing.T) {
-	ctx := coretestsdk.MockContext()
-	defer func() {
-		domain.GetDomain(ctx).StatsHandle().Close()
-	}()
-	ctx.GetSessionVars().CurrentDB = "test"
-
-	p := parser.New()
-	testCases := []struct {
-		name            string
-		sql             string
-		expectedDB      string
-		expectedTable   string
-		expectedEntries int
-	}{
-		{
-			name:            "table scope",
-			sql:             "REFRESH STATS t1",
-			expectedDB:      "test",
-			expectedTable:   "t1",
-			expectedEntries: 1,
-		},
-		{
-			name:            "database scope",
-			sql:             "REFRESH STATS test.*",
-			expectedDB:      "test",
-			expectedTable:   "",
-			expectedEntries: 1,
-		},
-		{
-			name:            "global scope",
-			sql:             "REFRESH STATS *.*",
-			expectedDB:      "",
-			expectedTable:   "",
-			expectedEntries: 1,
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			builder, _ := NewPlanBuilder().Init(ctx, nil, hint.NewQBHintHandler(nil))
-			stmtNode, err := p.ParseOneStmt(tc.sql, "", "")
-			require.NoError(t, err)
-			rs := stmtNode.(*ast.RefreshStatsStmt)
-			builder.visitInfo = nil
-			_, err = builder.buildRefreshStats(rs)
-			require.NoError(t, err)
-			require.Len(t, builder.visitInfo, tc.expectedEntries)
-			vi := builder.visitInfo[0]
-			require.Equal(t, tc.expectedDB, vi.db)
-			require.Equal(t, tc.expectedTable, vi.table)
-			require.Equal(t, mysql.SelectPriv, vi.privilege)
-		})
-	}
-}
-
-func TestImportIntoCollAssignmentChecker(t *testing.T) {
-	cases := []struct {
-		expr       string
-		error      string
-		neededVars []string
-	}{
-		{
-			expr:       "@a+1",
-			neededVars: []string{"a"},
-		},
-		{
-			expr:       "@b+@c+@1",
-			neededVars: []string{"b", "c", "1"},
-		},
-		{
-			expr: "instr(substr(concat_ws('','b','~~'), 6)) + sysdate()",
-		},
-		{
-			expr: "now() + interval 1 day",
-		},
-		{
-			expr: "sysdate() + interval 1 month",
-		},
-		{
-			expr: "cast('123' as unsigned)",
-		},
-		{
-			expr:       "getvar('c')",
-			neededVars: []string{"c"},
-		},
-		{
-			expr:  "a",
-			error: "COLUMN reference is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "a+2",
-			error: "COLUMN reference is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "(select 1)",
-			error: "subquery is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "exists(select 1)",
-			error: "subquery is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "1 in (select 1)",
-			error: "subquery is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "1 + (select 1)",
-			error: "subquery is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "@@sql_mode",
-			error: "system variable is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "@@global.sql_mode",
-			error: "system variable is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "@a:=1",
-			error: "setting a variable in IMPORT INTO column assignment is not supported",
-		},
-		{
-			expr:  "default(t.a)",
-			error: "FUNCTION default is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "ROW_NUMBER() OVER(PARTITION BY 1)",
-			error: "window FUNCTION ROW_NUMBER is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "COUNT(1)",
-			error: "aggregate FUNCTION COUNT is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "grouping(1)",
-			error: "FUNCTION grouping is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "getvar(concat('a', 'b'))",
-			error: "the argument of getvar should be a constant string in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "getvar(now())",
-			error: "the argument of getvar should be a constant string in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "noexist()",
-			error: "FUNCTION noexist is not supported in IMPORT INTO column assignment",
-		},
-		{
-			expr:  "values(a)",
-			error: "COLUMN reference is not supported in IMPORT INTO column assignment",
-		},
-	}
-
-	for i, c := range cases {
-		t.Run(fmt.Sprintf("case-%d-%s", i, c.expr), func(t *testing.T) {
-			stmt, err := parser.New().ParseOneStmt("select "+c.expr, "", "")
-			require.NoError(t, err, c.expr)
-			expr := stmt.(*ast.SelectStmt).Fields.Fields[0].Expr
-
-			checker := newImportIntoCollAssignmentChecker()
-			checker.idx = i
-			ast.Walk(expr, checker)
-			if c.error != "" {
-				require.EqualError(t, checker.err, fmt.Sprintf("%s, index %d", c.error, i), c.expr)
-			} else {
-				require.NoError(t, checker.err, c.expr)
-			}
-
-			expectedNeededVars := make(map[string]int)
-			for _, v := range c.neededVars {
-				expectedNeededVars[v] = i
-			}
-			require.Equal(t, expectedNeededVars, checker.neededVars, c.expr)
-		})
-	}
-}
-
-func TestTraffic(t *testing.T) {
-	tests := []struct {
-		sql   string
-		cols  int
-		privs []string
-	}{
-		{
-			sql:   "traffic capture to '/tmp' duration='1s' encryption_method='aes' compress=true",
-			privs: []string{"TRAFFIC_CAPTURE_ADMIN"},
-		},
-		{
-			sql:   "traffic replay from '/tmp' user='root' password='123456' speed=1.0 read_only=true",
-			privs: []string{"TRAFFIC_REPLAY_ADMIN"},
-		},
-		{
-			sql:   "show traffic jobs",
-			privs: []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"},
-			cols:  8,
-		},
-		{
-			sql:   "cancel traffic jobs",
-			privs: []string{"TRAFFIC_CAPTURE_ADMIN", "TRAFFIC_REPLAY_ADMIN"},
-		},
-	}
-
-	parser := parser.New()
-	sctx := coretestsdk.MockContext()
-	ctx := context.TODO()
-	for _, test := range tests {
-		builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
-		stmt, err := parser.ParseOneStmt(test.sql, "", "")
-		require.NoError(t, err, test.sql)
-		p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
-		require.NoError(t, err, test.sql)
-		traffic, ok := p.(*Traffic)
-		require.True(t, ok, test.sql)
-		require.Equal(t, test.cols, len(traffic.OutputNames()), test.sql)
-		require.Equal(t, test.privs, builder.visitInfo[0].dynamicPrivs, test.sql)
-	}
-}
-
-func TestBuildAdminAlterDDLJobPlan(t *testing.T) {
-	parser := parser.New()
-	sctx := coretestsdk.MockContext()
-	ctx := context.TODO()
-	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
-
-	stmt, err := parser.ParseOneStmt("admin alter ddl jobs 1 thread = 16 ", "", "")
-	require.NoError(t, err)
-	p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
-	require.NoError(t, err)
-	plan, ok := p.(*AlterDDLJob)
-	require.True(t, ok)
-	require.Equal(t, plan.JobID, int64(1))
-	require.Len(t, plan.Options, 1)
-	require.Equal(t, plan.Options[0].Name, AlterDDLJobThread)
-	cons, ok := plan.Options[0].Value.(*expression.Constant)
-	require.True(t, ok)
-	require.Equal(t, cons.Value.GetInt64(), int64(16))
-
-	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 2 batch_size = 512 ", "", "")
-	require.NoError(t, err)
-	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
-	require.NoError(t, err)
-	plan, ok = p.(*AlterDDLJob)
-	require.True(t, ok)
-	require.Equal(t, plan.JobID, int64(2))
-	require.Len(t, plan.Options, 1)
-	require.Equal(t, plan.Options[0].Name, AlterDDLJobBatchSize)
-	cons, ok = plan.Options[0].Value.(*expression.Constant)
-	require.True(t, ok)
-	require.Equal(t, cons.Value.GetInt64(), int64(512))
-
-	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 3 max_write_speed = '10MiB' ", "", "")
-	require.NoError(t, err)
-	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
-	require.NoError(t, err)
-	plan, ok = p.(*AlterDDLJob)
-	require.True(t, ok)
-	require.Equal(t, plan.JobID, int64(3))
-	require.Len(t, plan.Options, 1)
-	require.Equal(t, plan.Options[0].Name, AlterDDLJobMaxWriteSpeed)
-	cons, ok = plan.Options[0].Value.(*expression.Constant)
-	require.True(t, ok)
-	require.Equal(t, cons.Value.GetString(), "10MiB")
-
-	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 4 max_write_speed = 1024", "", "")
-	require.NoError(t, err)
-	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
-	require.NoError(t, err)
-	plan, ok = p.(*AlterDDLJob)
-	require.True(t, ok)
-	require.Equal(t, plan.JobID, int64(4))
-	require.Len(t, plan.Options, 1)
-	require.Equal(t, AlterDDLJobMaxWriteSpeed, plan.Options[0].Name)
-	cons, ok = plan.Options[0].Value.(*expression.Constant)
-	require.True(t, ok)
-	require.EqualValues(t, 1024, cons.Value.GetInt64())
-
-	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 5 thread = 16, batch_size = 512, max_write_speed = '10MiB' ", "", "")
-	require.NoError(t, err)
-	p, err = builder.Build(ctx, resolve.NewNodeW(stmt))
-	require.NoError(t, err)
-	plan, ok = p.(*AlterDDLJob)
-	require.True(t, ok)
-	require.Equal(t, plan.JobID, int64(5))
-	require.Len(t, plan.Options, 3)
-	sort.Slice(plan.Options, func(i, j int) bool {
-		return plan.Options[i].Name < plan.Options[j].Name
-	})
-	require.Equal(t, plan.Options[0].Name, AlterDDLJobBatchSize)
-	cons, ok = plan.Options[0].Value.(*expression.Constant)
-	require.True(t, ok)
-	require.Equal(t, cons.Value.GetInt64(), int64(512))
-	require.Equal(t, plan.Options[1].Name, AlterDDLJobMaxWriteSpeed)
-	cons, ok = plan.Options[1].Value.(*expression.Constant)
-	require.True(t, ok)
-	require.Equal(t, cons.Value.GetString(), "10MiB")
-	require.Equal(t, plan.Options[2].Name, AlterDDLJobThread)
-	cons, ok = plan.Options[2].Value.(*expression.Constant)
-	require.True(t, ok)
-	require.Equal(t, cons.Value.GetInt64(), int64(16))
-
-	stmt, err = parser.ParseOneStmt("admin alter ddl jobs 4 aaa = 16", "", "")
-	require.NoError(t, err)
-	_, err = builder.Build(ctx, resolve.NewNodeW(stmt))
-	require.Equal(t, err.Error(), "unsupported admin alter ddl jobs config: aaa")
-}
-
-func TestGetMaxWriteSpeedFromExpression(t *testing.T) {
-	parser := parser.New()
-	sctx := coretestsdk.MockContext()
-	ctx := context.TODO()
-	builder, _ := NewPlanBuilder().Init(sctx, nil, hint.NewQBHintHandler(nil))
-	// random speed value
-	n := rand.Intn(units.PiB + 1)
-	stmt, err := parser.ParseOneStmt(fmt.Sprintf("admin alter ddl jobs 1 max_write_speed = %d ", n), "", "")
-	require.NoError(t, err)
-	p, err := builder.Build(ctx, resolve.NewNodeW(stmt))
-	require.NoError(t, err)
-	plan, ok := p.(*AlterDDLJob)
-	require.True(t, ok)
-	require.Equal(t, plan.JobID, int64(1))
-	require.Len(t, plan.Options, 1)
-	require.Equal(t, plan.Options[0].Name, AlterDDLJobMaxWriteSpeed)
-	_, ok = plan.Options[0].Value.(*expression.Constant)
-	require.True(t, ok)
-	maxWriteSpeed, err := GetMaxWriteSpeedFromExpression(plan.Options[0])
-	require.NoError(t, err)
-	require.Equal(t, int64(n), maxWriteSpeed)
-	// parse speed string error
-	opt := &AlterDDLJobOpt{
-		Name:  "test",
-		Value: expression.NewStrConst("MiB"),
-	}
-	_, err = GetMaxWriteSpeedFromExpression(opt)
-	require.Equal(t, "parse max_write_speed value error: invalid size: 'MiB'", err.Error())
-}
-
-func TestProcessNextGenS3Path(t *testing.T) {
-	bak := config.GetGlobalKeyspaceName()
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.KeyspaceName = "aaa"
-	})
-	t.Cleanup(func() {
-		config.UpdateGlobal(func(conf *config.Config) {
-			conf.KeyspaceName = bak
-		})
-	})
-	if kerneltype.IsNextGen() {
-		originalMode := deploymode.Get()
-		require.NoError(t, deploymode.Set(deploymode.Premium))
-		t.Cleanup(func() {
-			require.NoError(t, deploymode.Set(originalMode))
-		})
-	}
-
-	for _, str := range []string{
-		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
-		"oss://bucket?External-id=abc&role-arn=arn",
-		"oSS://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
-	} {
-		u, err := url.Parse(str)
-		require.NoError(t, err)
-		err = checkNextGenS3PathWithSem(u)
-		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-		require.ErrorContains(t, err, "IMPORT INTO with explicit external ID")
-	}
-
-	for _, str := range []string{
-		"s3://bucket?external-id=aaa&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external_id=aaa&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external-id=aaa&external_id=aaa&access-key=ak&secret-access-key=sk",
-		"s3://bucket?access-key=ak&secret-access-key=sk",
-		"s3://bucket?access_key=ak&secret_access_key=sk",
-		"oss://bucket?role-arn=arn",
-		"oss://bucket?role_arn=arn",
-	} {
-		u, err := url.Parse(str)
-		require.NoError(t, err)
-		err = checkNextGenS3PathWithSem(u)
-		require.NoError(t, err)
-	}
-
-	for _, str := range []string{
-		"s3://bucket",
-		"s3://bucket?access-key=&secret-access-key=",
-		"s3://bucket?access-key=ak",
-		"s3://bucket?secret-access-key=sk",
-		"s3://bucket?profile=dev",
-		"oss://bucket",
-		"oss://bucket?role-arn=",
-	} {
-		u, err := url.Parse(str)
-		require.NoError(t, err)
-		err = checkNextGenS3PathWithSem(u)
-		require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-		require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
-	}
-
-	if kerneltype.IsClassic() {
-		return
-	}
-	require.NoError(t, deploymode.Set(deploymode.Starter))
-	for _, str := range []string{
-		"S3://bucket?External-id=abc&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external_id=abc&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external-id=aaa&external_id=abc&access-key=ak&secret-access-key=sk",
-		"oss://bucket?External-id=abc&role-arn=arn",
-	} {
-		u, err := url.Parse(str)
-		require.NoError(t, err)
-		require.NoError(t, checkStarterS3Path(u))
-		require.NoError(t, checkNextGenS3PathWithSem(u))
-	}
-
-	for _, str := range []string{
-		"s3://bucket?access-key=ak&secret-access-key=sk",
-		"s3://bucket?external-id=&access-key=ak&secret-access-key=sk",
-		"s3://bucket?external-id=abc&external_id=&access-key=ak&secret-access-key=sk",
-		"oss://bucket?role-arn=arn",
-	} {
-		u, err := url.Parse(str)
-		require.NoError(t, err)
-		err = checkStarterS3Path(u)
-		require.ErrorContains(t, err, "external ID is required for Starter deployments")
-	}
-
-	u, err := url.Parse("s3://bucket?external-id=allowed")
-	require.NoError(t, err)
-	require.NoError(t, checkStarterS3Path(u))
-	err = checkNextGenS3PathWithSem(u)
-	require.ErrorIs(t, err, plannererrors.ErrNotSupportedWithSem)
-	require.ErrorContains(t, err, "IMPORT INTO from S3-like storage without access key/secret access key or role ARN")
-}
-
-func TestIndexLookUpReaderTryLookUpPushDown(t *testing.T) {
-	checkPushDownIndexLookUpReaderCommon := func(r *physicalop.PhysicalIndexLookUpReader) {
-		require.True(t, r.IndexLookUpPushDown)
-		tablePlans := physicalop.FlattenListPushDownPlan(r.TablePlan)
-		require.Len(t, r.TablePlans, len(tablePlans))
-		planIDMap := make(map[int]struct{})
-		for i, p := range tablePlans {
-			require.Equal(t, p, r.TablePlans[i], i)
-			// table plan should reset the stats info to zero
-			require.Zero(t, p.StatsInfo().RowCount)
-			_, ok := planIDMap[p.ID()]
-			require.False(t, ok, "duplicated plan id %d", p.ID())
-			planIDMap[p.ID()] = struct{}{}
-		}
-		indexPlans, m := physicalop.FlattenTreePushDownPlan(r.IndexPlan)
-		require.Len(t, r.IndexPlans, len(indexPlans))
-		for i, p := range indexPlans {
-			require.Equal(t, p, r.IndexPlans[i], i)
-			_, ok := planIDMap[p.ID()]
-			require.False(t, ok, "duplicated plan id %d", p.ID())
-			planIDMap[p.ID()] = struct{}{}
-		}
-		require.Equal(t, m, r.IndexPlansUnNatureOrders)
-	}
-
-	ctx := mock.NewContext()
-	tablePlan := physicalop.PhysicalTableScan{}.Init(ctx, 10)
-	tableInfo := &model.TableInfo{
-		IsCommonHandle: false,
-		Partition:      nil,
-	}
-	tablePlan.Table = tableInfo.Clone()
-	tablePlan.SetStats(&property.StatsInfo{
-		RowCount: 1000,
-	})
-	tableSchema := expression.NewSchema(
-		&expression.Column{ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-		&expression.Column{ID: 2, RetType: types.NewFieldType(mysql.TypeString)},
-		&expression.Column{ID: 3, RetType: types.NewFieldType(mysql.TypeFloat)},
-	)
-	tablePlan.SetSchema(tableSchema.Clone())
-	indexPlan := physicalop.PhysicalIndexScan{}.Init(ctx, 11)
-	indexPlan.SetStats(&property.StatsInfo{
-		RowCount: 1000,
-	})
-	indexSchema := expression.NewSchema(
-		&expression.Column{ID: 2, RetType: types.NewFieldType(mysql.TypeString)},
-		&expression.Column{ID: 1, RetType: types.NewFieldType(mysql.TypeLonglong)},
-	)
-	indexPlan.SetSchema(indexSchema.Clone())
-
-	// test for simple case: tablePlan and indexPlan are single plans without parent
-	check := func(p base.Plan) {
-		r, ok := p.(*physicalop.PhysicalIndexLookUpReader)
-		require.True(t, ok)
-		checkPushDownIndexLookUpReaderCommon(r)
-		require.Equal(t, map[int]int{
-			0: 2,
-		}, r.IndexPlansUnNatureOrders)
-		require.Len(t, r.TablePlans, 1)
-		require.IsType(t, &physicalop.PhysicalTableScan{}, r.TablePlans[0])
-		require.Len(t, r.IndexPlans, 3)
-		require.IsType(t, &physicalop.PhysicalIndexScan{}, r.IndexPlans[0])
-		require.IsType(t, &physicalop.PhysicalTableScan{}, r.IndexPlans[1])
-		lookup, ok := r.IndexPlans[2].(*physicalop.PhysicalLocalIndexLookUp)
-		require.True(t, ok)
-		require.Equal(t, []uint32{1}, lookup.IndexHandleOffsets)
-		require.Equal(t, tableSchema.String(), lookup.Schema().String())
-		require.Equal(t, 10, lookup.QueryBlockOffset())
-		require.Equal(t, tableSchema.String(), r.Schema().String())
-		require.Equal(t, 10, lookup.QueryBlockOffset())
-	}
-	reader := physicalop.PhysicalIndexLookUpReader{
-		TablePlan: tablePlan,
-		IndexPlan: indexPlan,
-		KeepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
-	check(reader)
-	cloned, err := reader.Clone(ctx)
-	require.NoError(t, err)
-	check(cloned)
-	clonedForCache, ok := reader.CloneForPlanCache(ctx)
-	require.True(t, ok)
-	check(clonedForCache)
-
-	// test for a more complex case: tablePlan and indexPlan are trees
-	tablePlan = physicalop.PhysicalTableScan{}.Init(ctx, 10)
-	tablePlan.Table = tableInfo.Clone()
-	tablePlan.SetStats(&property.StatsInfo{
-		RowCount: 500,
-	})
-	tablePlan.SetSchema(tableSchema.Clone())
-	selectionPlan := physicalop.PhysicalSelection{}.Init(ctx, &property.StatsInfo{
-		RowCount: 200,
-	}, tablePlan.QueryBlockOffset())
-	selectionPlan.SetChildren(tablePlan)
-	projectionPlan := physicalop.PhysicalProjection{}.Init(ctx, &property.StatsInfo{
-		RowCount: 200,
-	}, tablePlan.QueryBlockOffset())
-	projectionSchema := expression.NewSchema(
-		&expression.Column{ID: 2, RetType: types.NewFieldType(mysql.TypeString)},
-	)
-	projectionPlan.SetSchema(projectionSchema)
-	projectionPlan.SetChildren(selectionPlan)
-	indexPlan = physicalop.PhysicalIndexScan{}.Init(ctx, 11)
-	indexPlan.SetStats(&property.StatsInfo{
-		RowCount: 1000,
-	})
-	indexPlan.SetSchema(indexSchema.Clone())
-	limitPlan := physicalop.PhysicalLimit{}.Init(ctx, &property.StatsInfo{
-		RowCount: 1000,
-	}, indexPlan.QueryBlockOffset())
-	limitPlan.SetChildren(indexPlan)
-
-	check = func(p base.Plan) {
-		r, ok := p.(*physicalop.PhysicalIndexLookUpReader)
-		require.True(t, ok)
-		checkPushDownIndexLookUpReaderCommon(reader)
-		require.Equal(t, map[int]int{
-			1: 3,
-		}, r.IndexPlansUnNatureOrders)
-		require.Len(t, r.TablePlans, 3)
-		require.IsType(t, &physicalop.PhysicalTableScan{}, r.TablePlans[0])
-		require.IsType(t, &physicalop.PhysicalSelection{}, r.TablePlans[1])
-		require.IsType(t, &physicalop.PhysicalProjection{}, r.TablePlans[2])
-		require.Len(t, reader.IndexPlans, 6)
-		require.IsType(t, &physicalop.PhysicalIndexScan{}, r.IndexPlans[0])
-		require.IsType(t, &physicalop.PhysicalLimit{}, r.IndexPlans[1])
-		require.IsType(t, &physicalop.PhysicalTableScan{}, r.IndexPlans[2])
-		lookup, ok := r.IndexPlans[3].(*physicalop.PhysicalLocalIndexLookUp)
-		require.True(t, ok)
-		require.IsType(t, &physicalop.PhysicalSelection{}, r.IndexPlans[4])
-		require.IsType(t, &physicalop.PhysicalProjection{}, r.IndexPlans[5])
-		require.Equal(t, []uint32{1}, lookup.IndexHandleOffsets)
-		require.Equal(t, tableSchema.String(), lookup.Schema().String())
-		require.Equal(t, 10, lookup.QueryBlockOffset())
-		require.Equal(t, projectionSchema.String(), reader.Schema().String())
-		require.Equal(t, 10, lookup.QueryBlockOffset())
-	}
-
-	reader = physicalop.PhysicalIndexLookUpReader{
-		TablePlan: projectionPlan,
-		IndexPlan: limitPlan,
-		KeepOrder: false,
-	}.Init(ctx, tablePlan.QueryBlockOffset(), util.IndexLookUpPushDownByHint)
-	check(reader)
-	cloned, err = reader.Clone(ctx)
-	require.NoError(t, err)
-	check(cloned)
-	clonedForCache, ok = reader.CloneForPlanCache(ctx)
-	require.True(t, ok)
-	check(clonedForCache)
 }

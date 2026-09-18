@@ -16,16 +16,15 @@ package tiflashrec
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
 	"go.uber.org/zap"
 )
 
@@ -91,12 +90,12 @@ func (r *TiFlashRecorder) Rewrite(oldID int64, newID int64) {
 func (r *TiFlashRecorder) GenerateResetAlterTableDDLs(info infoschema.InfoSchema) []string {
 	items := make([]string, 0, len(r.items))
 	r.Iterate(func(id int64, replica model.TiFlashReplicaInfo) {
-		table, ok := info.TableByID(context.Background(), id)
+		table, ok := info.TableByID(id)
 		if !ok {
 			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
 			return
 		}
-		schema, ok := infoschema.SchemaByTable(info, table.Meta())
+		schema, ok := info.SchemaByTable(table.Meta())
 		if !ok {
 			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
 			return
@@ -130,15 +129,15 @@ func (r *TiFlashRecorder) GenerateResetAlterTableDDLs(info infoschema.InfoSchema
 
 func (r *TiFlashRecorder) GenerateAlterTableDDLs(info infoschema.InfoSchema) []string {
 	items := make([]string, 0, len(r.items))
-	r.Iterate(func(tableId int64, replica model.TiFlashReplicaInfo) {
-		table, ok := info.TableByID(context.Background(), tableId)
+	r.Iterate(func(id int64, replica model.TiFlashReplicaInfo) {
+		table, ok := info.TableByID(id)
 		if !ok {
-			log.Warn("Table does not exist, might get filtered out if a custom filter is specified, skipping", zap.Int64("tableId", tableId))
+			log.Warn("Table do not exist, skipping", zap.Int64("id", id))
 			return
 		}
-		schema, ok := infoschema.SchemaByTable(info, table.Meta())
+		schema, ok := info.SchemaByTable(table.Meta())
 		if !ok {
-			log.Warn("Schema do not exist, skipping", zap.Int64("tableId", tableId), zap.Stringer("table", table.Meta().Name))
+			log.Warn("Schema do not exist, skipping", zap.Int64("id", id), zap.Stringer("table", table.Meta().Name))
 			return
 		}
 		altTableSpec, err := alterTableSpecOf(replica, false)

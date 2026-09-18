@@ -18,7 +18,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"math"
 	"os"
 	"os/user"
 	"path/filepath"
@@ -29,14 +28,9 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
-	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	zaplog "github.com/pingcap/log"
-	meter_config "github.com/pingcap/metering_sdk/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/resourcegroup/ruv2"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/stretchr/testify/require"
 	tracing "github.com/uber/jaeger-client-go/config"
 )
@@ -63,7 +57,7 @@ func TestAtomicBoolUnmarshal(t *testing.T) {
 	require.Equal(t, "ab = \"false\"\n", firstBuffer.String())
 
 	_, err = toml.Decode("ab = 1", &d)
-	require.EqualError(t, err, "toml: line 1 (last key \"ab\"): Invalid value for bool type: 1")
+	require.EqualError(t, err, "Invalid value for bool type: 1")
 }
 
 func TestNullableBoolUnmarshal(t *testing.T) {
@@ -99,7 +93,7 @@ func TestNullableBoolUnmarshal(t *testing.T) {
 	require.Equal(t, nbUnset, log.EnableErrorStack)
 
 	_, err = toml.Decode("enable-error-stack = 1", &log)
-	require.EqualError(t, err, "toml: line 1 (last key \"enable-error-stack\"): Invalid value for bool type: 1")
+	require.EqualError(t, err, "Invalid value for bool type: 1")
 	require.Equal(t, nbUnset, log.EnableErrorStack)
 
 	// Test for UnmarshalJSON
@@ -132,7 +126,7 @@ func TestLogConfig(t *testing.T) {
 		require.Equal(t, expectedDisableErrorStack, conf.Log.DisableErrorStack)
 		require.Equal(t, expectedEnableTimestamp, conf.Log.EnableTimestamp)
 		require.Equal(t, expectedDisableTimestamp, conf.Log.DisableTimestamp)
-		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }), conf.Log.ToLogConfig())
+		require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, resultedDisableTimestamp, func(config *zaplog.Config) { config.DisableErrorVerbose = resultedDisableErrorVerbose }), conf.Log.ToLogConfig())
 		err := f.Truncate(0)
 		require.NoError(t, err)
 		_, err = f.Seek(0, 0)
@@ -171,290 +165,6 @@ disable-timestamp = true
 enable-error-stack = false
 disable-error-stack = false
 `, nbFalse, nbUnset, nbUnset, nbUnset, false, true)
-}
-
-func TestErrorMessageExtensionConfig(t *testing.T) {
-	configFile := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(configFile, []byte(`
-error-msg-extension = [
-  { pattern = "^Access denied for user '.+'@'.+' \\(using password: (YES|NO)\\)$", suffix = "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details" },
-  { pattern = "^require_secure_transport can not be set to ON with SEM\\(security enhanced mode\\) enabled$", suffix = "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details" },
-  { pattern = "^sleep\\(\\) argument is greater than [0-9]+$", suffix = "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details" },
-  { pattern = "^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details" },
-  { pattern = "^Access denied; you need \\(at least one of\\) the RESTRICTED_VARIABLES_ADMIN privilege\\(s\\) for this operation$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details" },
-  { pattern = "^Feature '.+' is not supported when security enhanced mode is enabled$", suffix = "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details" },
-]
-`), 0644))
-
-	conf := NewConfig()
-	conf.DeployMode = deploymode.Starter
-	require.NoError(t, conf.Load(configFile))
-	require.Equal(t, []ErrorMessageExtension{
-		{Pattern: `^Access denied for user '.+'@'.+' \(using password: (YES|NO)\)$`, Suffix: "see https://docs.pingcap.com/tidbcloud/select-cluster-tier#user-name-prefix for more details"},
-		{Pattern: `^require_secure_transport can not be set to ON with SEM\(security enhanced mode\) enabled$`, Suffix: "see https://docs.pingcap.com/tidbcloud/secure-connections-to-serverless-tier-clusters for more details"},
-		{Pattern: `^sleep\(\) argument is greater than [0-9]+$`, Suffix: "see https://docs.pingcap.com/tidbcloud/serverless-tier-limitations#sql for more details"},
-		{Pattern: `^[A-Z ]+ command denied to user '[^']+'@'[^']+' for table '[^']+'$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-tables for more details"},
-		{Pattern: `^Access denied; you need \(at least one of\) the RESTRICTED_VARIABLES_ADMIN privilege\(s\) for this operation$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#system-variables for more details"},
-		{Pattern: `^Feature '.+' is not supported when security enhanced mode is enabled$`, Suffix: "see https://docs.pingcap.com/tidbcloud/limited-sql-features#statements for more details"},
-	}, conf.ErrorMessageExtensions)
-
-	require.Empty(t, NewConfig().ErrorMessageExtensions)
-
-	originGlobalConfig := GetGlobalConfig()
-	StoreGlobalConfig(conf)
-	t.Cleanup(func() {
-		StoreGlobalConfig(originGlobalConfig)
-	})
-	preparedExtensions := GetErrorMessageExtensions()
-	require.NotEmpty(t, preparedExtensions)
-	preparedExtensions[0].Suffix = ""
-	require.NotEmpty(t, GetErrorMessageExtensions()[0].Suffix)
-}
-
-func TestErrorMessageExtensionInvalidRegexp(t *testing.T) {
-	conf := NewConfig()
-	conf.DeployMode = deploymode.Starter
-	conf.ErrorMessageExtensions = []ErrorMessageExtension{
-		{Pattern: "[", Suffix: "invalid regexp"},
-	}
-	require.ErrorContains(t, conf.Valid(), "invalid error-msg-extension regexp")
-
-	conf = NewConfig()
-	conf.DeployMode = deploymode.Starter
-	conf.ErrorMessageExtensions = []ErrorMessageExtension{
-		{Pattern: " \t", Suffix: "missing pattern"},
-	}
-	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
-
-	conf = NewConfig()
-	conf.ErrorMessageExtensions = []ErrorMessageExtension{
-		{Pattern: ".*", Suffix: "not allowed"},
-	}
-	require.ErrorContains(t, conf.Valid(), "error-msg-extension can only be configured when deploy-mode is starter")
-
-	configFile := filepath.Join(t.TempDir(), "config.toml")
-	require.NoError(t, os.WriteFile(configFile, []byte(`
-error-msg-extension = [
-  { pattern = ".*", suffix = "not allowed" },
-]
-`), 0644))
-	conf = NewConfig()
-	require.ErrorContains(t, conf.Load(configFile), "error-msg-extension can only be configured when deploy-mode is starter")
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`
-error-msg-extension = [
-  { suffix = "missing pattern" },
-]
-`), 0644))
-	conf = NewConfig()
-	conf.DeployMode = deploymode.Starter
-	require.NoError(t, conf.Load(configFile))
-	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`
-error-msg-extension = [
-  { pattern = "", suffix = "empty pattern" },
-]
-`), 0644))
-	conf = NewConfig()
-	conf.DeployMode = deploymode.Starter
-	require.NoError(t, conf.Load(configFile))
-	require.ErrorContains(t, conf.Valid(), "empty error-msg-extension pattern")
-}
-
-func TestKeyspaceObservability(t *testing.T) {
-	conf := NewConfig()
-	content := `
-[[keyspace-observability.fields]]
-source = "meta_a"
-metric-label = "keyspace_meta_label_a"
-slow-log-field = "Keyspace_meta_slow_a"
-stmt-log-field = "stmt_meta_a"
-required = true
-
-[[keyspace-observability.fields]]
-source = "meta_b"
-metric-label = "keyspace_meta_label_b"
-slow-log-field = "Keyspace_meta_slow_b"
-`
-	_, err := toml.Decode(content, conf)
-	require.NoError(t, err)
-	require.NoError(t, conf.KeyspaceObservability.Valid())
-	require.NoError(t, conf.ResolveKeyspaceObservability(map[string]string{
-		"meta_a": "value_a",
-		"meta_b": "value_b",
-	}))
-	require.Equal(t, map[string]string{"keyspace_meta_label_a": "value_a", "keyspace_meta_label_b": "value_b"}, conf.GetKeyspaceObservabilityMetricLabels())
-	require.Equal(t, []KeyspaceObservabilityLogField{
-		{Name: "Keyspace_meta_slow_a", Value: "value_a"},
-		{Name: "Keyspace_meta_slow_b", Value: "value_b"},
-	}, conf.GetKeyspaceObservabilitySlowLogFields())
-	require.Equal(t, map[string]string{"stmt_meta_a": "value_a"}, conf.GetKeyspaceObservabilityStmtLogFields())
-
-	require.ErrorContains(t, conf.ResolveKeyspaceObservability(map[string]string{"meta_b": "value_b"}), `missing required keyspace metadata entry "meta_a"`)
-}
-
-func TestKeyspaceObservabilityInvalid(t *testing.T) {
-	tests := []struct {
-		name    string
-		content string
-		err     string
-	}{
-		{
-			name: "empty source",
-			content: `
-[[keyspace-observability.fields]]
-source = ""
-metric-label = "keyspace_meta_label_a"
-`,
-			err: "source cannot be empty",
-		},
-		{
-			name: "empty output",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-`,
-			err: "at least one output must be set",
-		},
-		{
-			name: "invalid label",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-metric-label = "1_label"
-`,
-			err: `invalid metric-label "1_label"`,
-		},
-		{
-			name: "duplicate label",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-metric-label = "keyspace_meta_label_a"
-
-[[keyspace-observability.fields]]
-source = "meta_b"
-metric-label = "KEYSPACE_META_LABEL_A"
-`,
-			err: `duplicated metric-label "KEYSPACE_META_LABEL_A"`,
-		},
-		{
-			name: "reserved label without prefix",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-metric-label = "KEYSPACE_ID"
-`,
-			err: `metric-label "KEYSPACE_ID" must start with "keyspace_meta_"`,
-		},
-		{
-			name: "metric variable label without prefix",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-metric-label = "TYPE"
-`,
-			err: `metric-label "TYPE" must start with "keyspace_meta_"`,
-		},
-		{
-			name: "api label without prefix",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-metric-label = "api"
-`,
-			err: `metric-label "api" must start with "keyspace_meta_"`,
-		},
-		{
-			name: "service scope label without prefix",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-metric-label = "service_scope"
-`,
-			err: `metric-label "service_scope" must start with "keyspace_meta_"`,
-		},
-		{
-			name: "task id label without prefix",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-metric-label = "task_id"
-`,
-			err: `metric-label "task_id" must start with "keyspace_meta_"`,
-		},
-		{
-			name: "slow log field without prefix",
-			content: `
-	[[keyspace-observability.fields]]
-	source = "meta_a"
-	slow-log-field = "Digest"
-	`,
-			err: `slow-log-field "Digest" must start with "Keyspace_meta_"`,
-		},
-		{
-			name: "slow log field with lowercase prefix",
-			content: `
-	[[keyspace-observability.fields]]
-	source = "meta_a"
-	slow-log-field = "keyspace_meta_slow"
-	`,
-			err: `slow-log-field "keyspace_meta_slow" must start with "Keyspace_meta_"`,
-		},
-		{
-			name: "invalid slow log field",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-slow-log-field = "Bad Field"
-`,
-			err: `invalid slow-log-field "Bad Field"`,
-		},
-		{
-			name: "duplicate slow log field",
-			content: `
-	[[keyspace-observability.fields]]
-	source = "meta_a"
-	slow-log-field = "Keyspace_meta_slow"
-
-	[[keyspace-observability.fields]]
-	source = "meta_b"
-	slow-log-field = "Keyspace_meta_SLOW"
-	`,
-			err: `duplicated slow-log-field "Keyspace_meta_SLOW"`,
-		},
-		{
-			name: "duplicate stmt log field",
-			content: `
-[[keyspace-observability.fields]]
-source = "meta_a"
-stmt-log-field = "stmt_meta"
-
-[[keyspace-observability.fields]]
-source = "meta_b"
-stmt-log-field = "stmt_meta"
-`,
-			err: `duplicated stmt-log-field "stmt_meta"`,
-		},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			conf := NewConfig()
-			_, err := toml.Decode(tt.content, conf)
-			require.NoError(t, err)
-			require.ErrorContains(t, conf.KeyspaceObservability.Valid(), tt.err)
-		})
-	}
-
-	conf := NewConfig()
-	_, err := toml.Decode(`
-[[keyspace-observability.fields]]
-source = "meta_a"
-metric-label = "keyspace_meta_label_a"
-`, conf)
-	require.NoError(t, err)
-	require.ErrorContains(t, conf.Valid(), "keyspace-observability.fields can only be configured when deploy-mode is starter")
 }
 
 func TestRemovedVariableCheck(t *testing.T) {
@@ -581,7 +291,7 @@ enable-telemetry = true
 
 # deprecate-integer-display-length is used to be compatible with MySQL 8.0 in which the integer declared with display length will be returned with
 # <snip>
-deprecate-integer-display-length = true
+deprecate-integer-display-length = false
 
 # enable-enum-length-limit is used to deal with compatibility issues. When true, the enum/set element length is limited.
 # According to MySQL 8.0 Refman:
@@ -899,12 +609,24 @@ resolve-lock-lite-threshold = 16
 # The capacity in MB of the cache. Zero means disable coprocessor cache.
 capacity-mb = 1000.0
 
+[binlog]
+# enable to write binlog.
+# NOTE: If binlog is enabled with Kafka (e.g. arbiter cluster),
+# txn-total-size-limit should be less than 1073741824(1G) because this is the maximum size that can be handled by Kafka.
+enable = false
+
+# WriteTimeout specifies how long it will wait for writing binlog to pump.
+write-timeout = "15s"
+
 # If IgnoreError is true, when writing binlog meets error, TiDB would stop writing binlog,
 # but still provide service.
 ignore-error = false
 
 # use socket file to write binlog, for compatible with kafka version tidb-binlog.
 binlog-socket = ""
+
+# the strategy for sending binlog to pump, value can be "range" or "hash" now.
+strategy = "range"
 
 [pessimistic-txn]
 # max retry count for a statement in a pessimistic transaction.
@@ -961,153 +683,17 @@ engines = ["tikv", "tiflash", "tidb"]
 }
 
 func TestConfig(t *testing.T) {
-	t.Run("cross AZ weight is not configurable", func(t *testing.T) {
-		conf := NewConfig()
-		_, err := toml.Decode("[ru-v2.stmt-weights]\nCrossAZNetByte = 2\ncross-az-net-byte = 2\n", conf)
-		require.NoError(t, err)
-		require.Zero(t, conf.RUV2.StmtWeights.CrossAZNetByte)
-		require.NoError(t, json.Unmarshal([]byte(`{"ru-v2":{"stmt-weights":{"CrossAZNetByte":2,"cross-az-net-byte":2}}}`), conf))
-		require.Zero(t, conf.RUV2.StmtWeights.CrossAZNetByte)
-		conf.RUV2.StmtWeights.CrossAZNetByte = 2
-		data, err := json.Marshal(conf.RUV2.StmtWeights)
-		require.NoError(t, err)
-		require.NotContains(t, string(data), "CrossAZ")
-		require.NotContains(t, string(data), "cross-az")
-		var encoded bytes.Buffer
-		require.NoError(t, toml.NewEncoder(&encoded).Encode(conf.RUV2.StmtWeights))
-		require.NotContains(t, encoded.String(), "CrossAZ")
-		require.NotContains(t, encoded.String(), "cross-az")
-	})
-
-	t.Run("RU v2 statement weights", func(t *testing.T) {
-		field, ok := reflect.TypeOf(RUV2Config{}).FieldByName("StmtWeights")
-		require.True(t, ok)
-		require.True(t, field.Anonymous)
-		require.Equal(t, reflect.TypeOf(ruv2.StmtWeights{}), field.Type)
-		require.Equal(t, "stmt-weights", field.Tag.Get("toml"))
-		require.Equal(t, "stmt-weights", field.Tag.Get("json"))
-
-		require.Equal(t, ruv2.DefaultWeights(), NewConfig().RUV2.StmtWeights)
-
-		want := ruv2.StmtWeights{
-			CPUWork: 2, ScanByte: 3, NetByte: 5, FrontendCompileByte: 7,
-			HashStateRow: 11, JoinOutputRow: 13, WriteStatement: 17,
-			OperatorNum: 19, WriteKey: 23, WriteByte: 29,
-		}
-		conf := NewConfig()
-		meta, err := toml.Decode(`
-[ru-v2.stmt-weights]
-cpu-work = 2
-scan-byte = 3
-net-byte = 5
-frontend-compile-byte = 7
-hash-state-row = 11
-join-output-row = 13
-write-statement = 17
-operator-num = 19
-write-key = 23
-write-byte = 29
-`, conf)
-		require.NoError(t, err)
-		require.Empty(t, meta.Undecoded())
-		require.Equal(t, want, conf.RUV2.StmtWeights)
-
-		conf = NewConfig()
-		require.NoError(t, json.Unmarshal([]byte(`{
-			"ru-v2": {
-				"stmt-weights": {
-					"cpu-work": 2,
-					"scan-byte": 3,
-					"net-byte": 5,
-					"frontend-compile-byte": 7,
-					"hash-state-row": 11,
-					"join-output-row": 13,
-					"write-statement": 17,
-					"operator-num": 19,
-					"write-key": 23,
-					"write-byte": 29
-				}
-			}
-		}`), conf))
-		require.Equal(t, want, conf.RUV2.StmtWeights)
-
-		conf.RUV2.StmtWeights.CPUWork = -1
-		require.EqualError(t, conf.Valid(), "ru-v2.stmt-weights.cpu-work must be finite and non-negative, got -1")
-	})
-
-	t.Run("RU report mode", func(t *testing.T) {
-		require.Equal(t, RUReportModeResult, NewConfig().RUV2.ReportMode)
-		for _, mode := range []string{RUReportModeResult, RUReportModeFull} {
-			conf := NewConfig()
-			path := filepath.Join(t.TempDir(), "ru.toml")
-			require.NoError(t, os.WriteFile(path, []byte("[ru-v2]\nreport-mode = \""+mode+"\"\n"), 0600))
-			require.NoError(t, conf.Load(path))
-			require.NoError(t, conf.Valid())
-			require.Equal(t, mode, conf.RUV2.ReportMode)
-		}
-		for _, mode := range []string{"", "FULL", "invalid"} {
-			conf := NewConfig()
-			conf.RUV2.ReportMode = mode
-			require.ErrorContains(t, conf.Valid(), "invalid ru-v2.report-mode")
-		}
-	})
-	t.Run("DDL RU weights", func(t *testing.T) {
-		conf := NewConfig()
-		require.Equal(t, float64(1), conf.RUV2.DDLWeights.TxnKVBytes)
-		require.Equal(t, float64(1), conf.RUV2.DDLWeights.IngestKVBytes)
-
-		path := filepath.Join(t.TempDir(), "ru.toml")
-		require.NoError(t, os.WriteFile(path, []byte(`[ru-v2.ddl-weights]
-txn-kv-bytes = 2
-ingest-kv-bytes = 3
-`), 0600))
-		require.NoError(t, conf.Load(path))
-		require.NoError(t, conf.Valid())
-		require.Equal(t, float64(2), conf.RUV2.DDLWeights.TxnKVBytes)
-		require.Equal(t, float64(3), conf.RUV2.DDLWeights.IngestKVBytes)
-
-		encoded, err := json.Marshal(conf.RUV2.DDLWeights)
-		require.NoError(t, err)
-		require.JSONEq(t, `{"txn-kv-bytes":2,"ingest-kv-bytes":3}`, string(encoded))
-
-		for _, invalid := range []float64{-1, math.NaN(), math.Inf(1)} {
-			conf := NewConfig()
-			conf.RUV2.DDLWeights.TxnKVBytes = invalid
-			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.txn-kv-bytes")
-
-			conf = NewConfig()
-			conf.RUV2.DDLWeights.IngestKVBytes = invalid
-			require.ErrorContains(t, conf.Valid(), "ru-v2.ddl-weights.ingest-kv-bytes")
-		}
-	})
 	conf := new(Config)
 	conf.TempStoragePath = tempStorageDirName
+	conf.Binlog.Enable = true
+	conf.Binlog.IgnoreError = true
+	conf.Binlog.Strategy = "hash"
 	conf.Performance.TxnTotalSizeLimit = 1000
 	conf.TiKVClient.CommitTimeout = "10s"
 	conf.TiKVClient.RegionCacheTTL = 600
 	conf.Instance.EnableSlowLog.Store(logutil.DefaultTiDBEnableSlowLog)
 	storeDir := t.TempDir()
 	configFile := filepath.Join(storeDir, "config.toml")
-	hostedEmbeddingErr := "hosted-embedding can only be configured for starter deploy mode"
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`[hosted-embedding]`), 0644))
-	conf = NewConfig()
-	require.ErrorContains(t, conf.Load(configFile), hostedEmbeddingErr)
-
-	conf = NewConfig()
-	conf.HostedEmbedding.Enabled = true
-	require.ErrorContains(t, conf.Valid(), hostedEmbeddingErr)
-
-	conf = NewConfig()
-	conf.HostedEmbedding.APIEndpoint = "https://example.com/v1"
-	require.ErrorContains(t, conf.Valid(), hostedEmbeddingErr)
-
-	if kerneltype.IsNextGen() {
-		conf = NewConfig()
-		conf.DeployMode = deploymode.Starter
-		conf.HostedEmbedding.Enabled = true
-		require.NoError(t, conf.Valid())
-	}
 	f, err := os.Create(configFile)
 	require.NoError(t, err)
 	defer func(configFile string) {
@@ -1158,8 +744,7 @@ txn-total-size-limit=2000
 tcp-no-delay = false
 enable-load-fmsketch = true
 plan-replayer-dump-worker-concurrency = 1
-skip-init-stats = false
-lite-init-stats = true
+lite-init-stats = false
 force-init-stats = false
 [tikv-client]
 commit-timeout="41s"
@@ -1169,13 +754,11 @@ store-limit=0
 ttl-refreshed-txn-size=8192
 resolve-lock-lite-threshold = 16
 copr-req-timeout = "120s"
-grpc-keepalive-timeout = 0.2
 [tikv-client.async-commit]
 keys-limit=123
 total-key-size-limit=1024
 [experimental]
 allow-expression-index = true
-allow-enable-foreign-key-check-in-shared-lock = true
 [isolation-read]
 engines = ["tiflash"]
 [labels]
@@ -1205,6 +788,10 @@ max_connections = 200
 
 	require.NoError(t, conf.Load(configFile))
 
+	// Test that the original value will not be clear by load the config file that does not contain the option.
+	require.True(t, conf.Binlog.Enable)
+	require.Equal(t, "hash", conf.Binlog.Strategy)
+
 	// Test that the value will be overwritten by the config file.
 	require.Equal(t, uint64(2000), conf.Performance.TxnTotalSizeLimit)
 	require.True(t, conf.AlterPrimaryKey)
@@ -1217,7 +804,6 @@ max_connections = 200
 	require.Equal(t, uint(6000), conf.TiKVClient.RegionCacheTTL)
 	require.Equal(t, int64(0), conf.TiKVClient.StoreLimit)
 	require.Equal(t, int64(8192), conf.TiKVClient.TTLRefreshedTxnSize)
-	require.Equal(t, time.Millisecond*200, conf.TiKVClient.GetGrpcKeepAliveTimeout())
 	require.Equal(t, uint(1000), conf.TokenLimit)
 	require.True(t, conf.EnableTableLock)
 	require.Equal(t, uint64(5), conf.DelayCleanTableLock)
@@ -1247,15 +833,13 @@ max_connections = 200
 	require.True(t, conf.PessimisticTxn.PessimisticAutoCommit.Load())
 	require.Equal(t, "127.0.0.1:10100", conf.TopSQL.ReceiverAddress)
 	require.True(t, conf.Experimental.AllowsExpressionIndex)
-	require.True(t, conf.Experimental.AllowEnableForeignKeyCheckInSharedLock)
 	require.Equal(t, uint(20), conf.Status.GRPCKeepAliveTime)
 	require.Equal(t, uint(10), conf.Status.GRPCKeepAliveTimeout)
 	require.Equal(t, uint(2048), conf.Status.GRPCConcurrentStreams)
 	require.Equal(t, 10240, conf.Status.GRPCInitialWindowSize)
 	require.Equal(t, 40960, conf.Status.GRPCMaxSendMsgSize)
 	require.True(t, conf.Performance.EnableLoadFMSketch)
-	require.False(t, conf.Performance.SkipInitStats)
-	require.True(t, conf.Performance.LiteInitStats)
+	require.False(t, conf.Performance.LiteInitStats)
 	require.False(t, conf.Performance.ForceInitStats)
 
 	err = f.Truncate(0)
@@ -1318,52 +902,15 @@ spilled-file-encryption-method = "aes128-ctr"
 	require.NoError(t, f.Sync())
 	require.NoError(t, conf.Load(configFile))
 
-	conf = NewConfig()
-	require.Equal(t, time.Second*3, conf.TiKVClient.GetGrpcKeepAliveTimeout())
-	err = f.Truncate(0)
-	require.NoError(t, err)
-	_, err = f.Seek(0, 0)
-	require.NoError(t, err)
-	_, err = f.WriteString(`
-[tikv-client]
-grpc-keepalive-timeout = 3
-`)
-	require.NoError(t, err)
-	require.NoError(t, f.Sync())
-	require.NoError(t, conf.Load(configFile))
-	require.Equal(t, time.Second*3, conf.TiKVClient.GetGrpcKeepAliveTimeout())
-
-	err = f.Truncate(0)
-	require.NoError(t, err)
-	_, err = f.Seek(0, 0)
-	require.NoError(t, err)
-	_, err = f.WriteString(`
-[tikv-client]
-grpc-keepalive-timeout = 0.01
-`)
-	require.NoError(t, err)
-	require.NoError(t, f.Sync())
-	require.NoError(t, conf.Load(configFile))
-	require.NotNil(t, conf.Valid())
-	require.Equal(t, "grpc-keepalive-timeout should be at least 0.05, but got 0.010000", conf.Valid().Error())
-
 	configFile = "config.toml.example"
-	if kerneltype.IsNextGen() {
-		configFile = "config.toml.nextgen.example"
-	}
 	require.NoError(t, conf.Load(configFile))
-
-	require.Equal(t, RUReportModeResult, conf.RUV2.ReportMode)
 
 	// Make sure the example config is the same as default config except `auto_tls`.
 	conf.Security.AutoTLS = false
-	if kerneltype.IsNextGen() {
-		conf.PessimisticTxn.PessimisticAutoCommit.Store(true)
-	}
 	require.Equal(t, GetGlobalConfig(), conf)
 
 	// Test for log config.
-	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", "", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
+	require.Equal(t, logutil.NewLogConfig("info", "text", "tidb-slow.log", conf.Log.File, false, func(config *zaplog.Config) { config.DisableErrorVerbose = conf.Log.getDisableErrorStack() }), conf.Log.ToLogConfig())
 
 	// Test for tracing config.
 	tracingConf := &tracing.Configuration{
@@ -1451,7 +998,7 @@ xkNuJ2BlEGkwWLiRbKy1lNBBFUXKuhh3L/EIY10WTnr3TQzeL6H1
 	// test for config `toml` and `json` tag names
 	c1 := Config{}
 	st := reflect.TypeOf(c1)
-	for i := range st.NumField() {
+	for i := 0; i < st.NumField(); i++ {
 		field := st.Field(i)
 		require.Equal(t, field.Tag.Get("json"), field.Tag.Get("toml"))
 	}
@@ -1476,273 +1023,7 @@ func TestTxnTotalSizeLimitValid(t *testing.T) {
 	}
 }
 
-func TestDeployModeConfig(t *testing.T) {
-	conf := NewConfig()
-	require.Equal(t, deploymode.Premium, conf.DeployMode)
-	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
-	require.Zero(t, conf.StarterParams.MaxImportDataSize)
-	require.NoError(t, conf.Valid())
-	conf.DeployMode = deploymode.Mode(100)
-	require.ErrorContains(t, conf.Valid(), "invalid deploy-mode")
-	conf.DeployMode = deploymode.Premium
-	conf.MaxAllowedPacket = 0
-	require.NoError(t, conf.Valid())
-	conf.MaxAllowedPacket = DefMaxAllowedPacket
-
-	storeDir := t.TempDir()
-	configFile := filepath.Join(storeDir, "config.toml")
-
-	if kerneltype.IsClassic() {
-		require.NoError(t, os.WriteFile(configFile, []byte(`dxf-resource-limit = 30`), 0644))
-		conf = NewConfig()
-		require.ErrorContains(t, conf.Load(configFile), "dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
-
-		require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"`), 0644))
-		conf = NewConfig()
-		require.ErrorContains(t, conf.Load(configFile), "deploy-mode can only be configured for nextgen TiDB")
-
-		conf = NewConfig()
-		conf.DeployMode = deploymode.PremiumReserved
-		require.ErrorContains(t, conf.Valid(), "deploy-mode can only be configured for nextgen TiDB")
-		return
-	}
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"`), 0644))
-
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
-	require.Equal(t, DefDXFResourceLimit, conf.DXFResourceLimit)
-	require.Zero(t, conf.StarterParams.MaxImportDataSize)
-	require.NoError(t, conf.Valid())
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
-dxf-resource-limit = 30`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.Equal(t, deploymode.PremiumReserved, conf.DeployMode)
-	require.Equal(t, 30, conf.DXFResourceLimit)
-	require.NoError(t, conf.Valid())
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium"
-dxf-resource-limit = 100`), 0644))
-	conf = NewConfig()
-	require.ErrorContains(t, conf.Load(configFile), "dxf-resource-limit can only be configured when deploy-mode is premium_reserved")
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
-dxf-resource-limit = 9`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "premium_reserved"
-dxf-resource-limit = 101`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.ErrorContains(t, conf.Valid(), "dxf-resource-limit should be between 10 and 100")
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.Equal(t, deploymode.Starter, conf.DeployMode)
-	require.True(t, conf.Standby.EnableZeroBackend)
-	require.EqualValues(t, 25*units.GiB, conf.StarterParams.MaxImportDataSize)
-	require.NoError(t, conf.Valid())
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
-[hosted-embedding]
-enabled = true
-api-endpoint = "https://example.com/v1"
-api-key-path = "/tmp/embedding-api-key"`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.HostedEmbedding.Enabled)
-	require.Equal(t, "https://example.com/v1", conf.HostedEmbedding.APIEndpoint)
-	require.Equal(t, "/tmp/embedding-api-key", conf.HostedEmbedding.APIKeyPath)
-	require.NoError(t, conf.Valid())
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
-[starter-params]
-max-import-data-size = "1MiB"`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.EqualValues(t, 1024*1024, conf.StarterParams.MaxImportDataSize)
-	require.NoError(t, conf.Valid())
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
-[starter-params]
-max-import-data-size = "0B"`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.Zero(t, conf.StarterParams.MaxImportDataSize)
-	require.NoError(t, conf.Valid())
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
-[starter-params]
-bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.Equal(t, "/etc/tidb/starter-bootstrap.json", conf.StarterParams.BootstrapFile)
-	require.NoError(t, conf.Valid())
-
-	conf = NewConfig()
-	conf.StarterParams.EnableManagerNotifier = true
-	require.ErrorContains(t, conf.Valid(), "starter-params.enable-manager-notifier can only be configured for starter deploy mode")
-	conf = NewConfig()
-	conf.StarterParams.BootstrapFile = "/etc/tidb/starter-bootstrap.json"
-	require.ErrorContains(t, conf.Valid(), "starter-params.bootstrap-file can only be configured for starter deploy mode")
-	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
-bootstrap-file = ""`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.NoError(t, os.WriteFile(configFile, []byte(`[starter-params]
-bootstrap-file = "/etc/tidb/starter-bootstrap.json"`), 0644))
-	conf = NewConfig()
-	require.ErrorContains(t, conf.Load(configFile), "starter-params.bootstrap-file can only be configured for starter deploy mode")
-	conf = NewConfig()
-	conf.StarterParams.MaxImportDataSize = 1
-	require.ErrorContains(t, conf.Valid(), "starter-params.max-import-data-size can only be configured for starter deploy mode")
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`
-[standby]
-standby-mode = true
-activation-timeout = 30
-max-idle-seconds = 60
-`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.True(t, conf.Standby.StandByMode)
-	require.Equal(t, uint(30), conf.Standby.ActivationTimeout)
-	require.Equal(t, uint(60), conf.Standby.MaxIdleSeconds)
-	require.NoError(t, conf.Valid())
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`
-deploy-mode = "starter"
-[standby]
-enable-zero-backend = false
-`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.Equal(t, deploymode.Starter, conf.DeployMode)
-	require.False(t, conf.Standby.EnableZeroBackend)
-	require.NoError(t, conf.Valid())
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "starter"
-
-[[keyspace-observability.fields]]
-source = "meta_a"
-metric-label = "keyspace_meta_label_a"
-`), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.Equal(t, deploymode.Starter, conf.DeployMode)
-	require.NoError(t, conf.Valid())
-
-	require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"
-max-allowed-packet = %d`, minMaxAllowedPacket)), 0644))
-	conf = NewConfig()
-	require.NoError(t, conf.Load(configFile))
-	require.Equal(t, deploymode.Starter, conf.DeployMode)
-	require.Equal(t, uint64(minMaxAllowedPacket), conf.MaxAllowedPacket)
-	require.NoError(t, conf.Valid())
-
-	maxAllowedPacketErr := fmt.Sprintf("max-allowed-packet should be [%d, %d] and a multiple of %d", minMaxAllowedPacket, maxOfMaxAllowedPacket, maxAllowedPacketUnit)
-	for _, packetSize := range []uint64{0, minMaxAllowedPacket - 1, minMaxAllowedPacket + 1, maxOfMaxAllowedPacket + 1} {
-		require.NoError(t, os.WriteFile(configFile, []byte(fmt.Sprintf(`deploy-mode = "starter"
-max-allowed-packet = %d`, packetSize)), 0644))
-		conf = NewConfig()
-		require.NoError(t, conf.Load(configFile))
-		require.ErrorContains(t, conf.Valid(), maxAllowedPacketErr)
-	}
-
-	originDeployMode := deploymode.Get()
-	originGlobalConfig := GetGlobalConfig()
-	t.Cleanup(func() {
-		StoreGlobalConfig(originGlobalConfig)
-		require.NoError(t, deploymode.Set(originDeployMode))
-	})
-	require.NoError(t, deploymode.Set(deploymode.Starter))
-	conf = NewConfig()
-	conf.MaxAllowedPacket = minMaxAllowedPacket
-	StoreGlobalConfig(conf)
-	require.Equal(t, uint64(minMaxAllowedPacket), GetMaxAllowedPacket())
-	conf.MaxAllowedPacket = 0
-	StoreGlobalConfig(conf)
-	require.Equal(t, uint64(DefMaxAllowedPacket), GetMaxAllowedPacket())
-
-	t.Run("adjust starter config with full TLS env", func(t *testing.T) {
-		conf := NewConfig()
-		t.Setenv(EnvClusterCA, "/tmp/cluster-ca.pem")
-		t.Setenv(EnvClusterCert, "/tmp/cluster-cert.pem")
-		t.Setenv(EnvClusterKey, "/tmp/cluster-key.pem")
-		t.Setenv(EnvSQLCA, "/tmp/sql-ca.pem")
-		t.Setenv(EnvSQLCert, "/tmp/sql-cert.pem")
-		t.Setenv(EnvSQLKey, "/tmp/sql-key.pem")
-		require.NoError(t, conf.AdjustStarterConfig(true))
-		require.Equal(t, "/tmp/cluster-ca.pem", conf.Security.ClusterSSLCA)
-		require.Equal(t, "/tmp/cluster-cert.pem", conf.Security.ClusterSSLCert)
-		require.Equal(t, "/tmp/cluster-key.pem", conf.Security.ClusterSSLKey)
-		require.Equal(t, "/tmp/sql-ca.pem", conf.Security.SSLCA)
-		require.Equal(t, "/tmp/sql-cert.pem", conf.Security.SSLCert)
-		require.Equal(t, "/tmp/sql-key.pem", conf.Security.SSLKey)
-	})
-
-	t.Run("adjust starter config keeps CA when env overrides cert and key", func(t *testing.T) {
-		conf := NewConfig()
-		conf.Security.ClusterSSLCA = "/tmp/config-cluster-ca.pem"
-		conf.Security.ClusterSSLCert = "/tmp/config-cluster-cert.pem"
-		conf.Security.ClusterSSLKey = "/tmp/config-cluster-key.pem"
-		conf.Security.SSLCA = "/tmp/config-sql-ca.pem"
-		conf.Security.SSLCert = "/tmp/config-sql-cert.pem"
-		conf.Security.SSLKey = "/tmp/config-sql-key.pem"
-		t.Setenv(EnvClusterCert, "/tmp/env-cluster-cert.pem")
-		t.Setenv(EnvClusterKey, "/tmp/env-cluster-key.pem")
-		t.Setenv(EnvSQLCert, "/tmp/env-sql-cert.pem")
-		t.Setenv(EnvSQLKey, "/tmp/env-sql-key.pem")
-		require.NoError(t, conf.AdjustStarterConfig(true))
-		require.Equal(t, "/tmp/config-cluster-ca.pem", conf.Security.ClusterSSLCA)
-		require.Equal(t, "/tmp/env-cluster-cert.pem", conf.Security.ClusterSSLCert)
-		require.Equal(t, "/tmp/env-cluster-key.pem", conf.Security.ClusterSSLKey)
-		require.Equal(t, "/tmp/config-sql-ca.pem", conf.Security.SSLCA)
-		require.Equal(t, "/tmp/env-sql-cert.pem", conf.Security.SSLCert)
-		require.Equal(t, "/tmp/env-sql-key.pem", conf.Security.SSLKey)
-	})
-
-	t.Run("adjust starter config rejects incomplete TLS env", func(t *testing.T) {
-		conf := NewConfig()
-		t.Setenv(EnvClusterCert, "/tmp/env-cluster-cert.pem")
-		require.ErrorContains(t, conf.AdjustStarterConfig(true), "CLUSTER_CERT and CLUSTER_KEY must be set together")
-	})
-
-	require.NoError(t, os.WriteFile(configFile, []byte(`deploy-mode = "unknown"`), 0644))
-	conf = NewConfig()
-	require.ErrorContains(t, conf.Load(configFile), `invalid deploy mode "unknown"`)
-}
-
-func TestKeyspaceActivateModeConfig(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("only for nextgen kernel")
-	}
-
-	conf := NewConfig()
-	conf.DeployMode = deploymode.Starter
-	conf.KeyspaceActivateMode = true
-	require.NoError(t, conf.Valid())
-
-	conf.Standby.StandByMode = true
-	require.ErrorContains(t, conf.Valid(), "can't set standby and keyspace-activate mode at the same time")
-
-	conf.Standby.StandByMode = false
-	conf.DeployMode = deploymode.Premium
-	require.ErrorContains(t, conf.Valid(), "keyspace-activate can only be configured for starter deploy mode")
-}
-
 func TestConflictInstanceConfig(t *testing.T) {
-	t.Cleanup(func() {
-		ConflictOptions = nil
-		DeprecatedOptions = nil
-	})
-
 	var expectedNewName string
 	conf := new(Config)
 	storeDir := t.TempDir()
@@ -1773,7 +1054,7 @@ func TestConflictInstanceConfig(t *testing.T) {
 	_, err = f.WriteString("check-mb4-value-in-utf8 = true \nrun-ddl = true \n" +
 		"[log] \nenable-slow-log = true \n" +
 		"[performance] \nforce-priority = \"NO_PRIORITY\"\n" +
-		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"\ntidb_enable_ddl = false\ntidb_enable_stats_owner = false")
+		"[instance] \ntidb_check_mb4_value_in_utf8 = false \ntidb_enable_slow_log = false \ntidb_force_priority = \"LOW_PRIORITY\"\ntidb_enable_ddl = false")
 	require.NoError(t, err)
 	require.NoError(t, f.Sync())
 	err = conf.Load(configFile)
@@ -1787,7 +1068,6 @@ func TestConflictInstanceConfig(t *testing.T) {
 	require.Equal(t, "LOW_PRIORITY", conf.Instance.ForcePriority)
 	require.Equal(t, true, conf.RunDDL)
 	require.Equal(t, false, conf.Instance.TiDBEnableDDL.Load())
-	require.Equal(t, false, conf.Instance.TiDBEnableStatsOwner.Load())
 	require.Equal(t, 0, len(DeprecatedOptions))
 	for _, conflictOption := range ConflictOptions {
 		expectedConflictOption, ok := expectedConflictOptions[conflictOption.SectionName]
@@ -1801,11 +1081,6 @@ func TestConflictInstanceConfig(t *testing.T) {
 }
 
 func TestDeprecatedConfig(t *testing.T) {
-	t.Cleanup(func() {
-		ConflictOptions = nil
-		DeprecatedOptions = nil
-	})
-
 	var expectedNewName string
 	conf := new(Config)
 	storeDir := t.TempDir()
@@ -1894,63 +1169,6 @@ func TestTableColumnCountLimit(t *testing.T) {
 	checkValid(DefMaxOfTableColumnCountLimit, true)
 	checkValid(DefMaxOfTableColumnCountLimit+1, false)
 }
-func TestPluginAuditLog(t *testing.T) {
-	conf := NewConfig()
-	checkValid := func(bufferSize int, shouldBeValid bool) {
-		conf.Instance.PluginAuditLogBufferSize = bufferSize
-		require.Equal(t, shouldBeValid, conf.Valid() == nil)
-	}
-	checkValid(-1, false)
-	checkValid(MaxPluginAuditLogBufferSize, true)
-	checkValid(MaxPluginAuditLogBufferSize+1, false)
-
-	conf = NewConfig()
-	checkValid = func(flushInterval int, shouldBeValid bool) {
-		conf.Instance.PluginAuditLogFlushInterval = flushInterval
-		require.Equal(t, shouldBeValid, conf.Valid() == nil)
-	}
-	checkValid(-1, false)
-	checkValid(MaxPluginAuditLogFlushInterval, true)
-	checkValid(MaxPluginAuditLogFlushInterval+1, false)
-}
-
-func TestTokenLimit(t *testing.T) {
-	storeDir := t.TempDir()
-	configFile := filepath.Join(storeDir, "config.toml")
-	f, err := os.Create(configFile)
-	require.NoError(t, err)
-	defer func(configFile string) {
-		require.NoError(t, os.Remove(configFile))
-	}(configFile)
-
-	tests := []struct {
-		tokenLimit         uint
-		expectedTokenLimit uint
-	}{
-		{
-			0,
-			1000,
-		},
-		{
-			99999999999,
-			MaxTokenLimit,
-		},
-	}
-
-	for _, test := range tests {
-		require.NoError(t, f.Truncate(0))
-		_, err = f.Seek(0, 0)
-		require.NoError(t, err)
-		_, err = f.WriteString(fmt.Sprintf(`
-token-limit = %d
-`, test.tokenLimit))
-		require.NoError(t, err)
-		require.NoError(t, f.Sync())
-		conf := NewConfig()
-		require.NoError(t, conf.Load(configFile))
-		require.Equal(t, test.expectedTokenLimit, conf.TokenLimit)
-	}
-}
 
 func TestEncodeDefTempStorageDir(t *testing.T) {
 	tests := []struct {
@@ -1987,8 +1205,8 @@ func TestModifyThroughLDFlags(t *testing.T) {
 		EnableTelemetry       bool
 		CheckTableBeforeDrop  bool
 	}{
-		{"Community", "None", false, false},
-		{"Community", "1", false, true},
+		{"Community", "None", true, false},
+		{"Community", "1", true, true},
 		{"Enterprise", "None", false, false},
 		{"Enterprise", "1", false, true},
 	}
@@ -1998,7 +1216,7 @@ func TestModifyThroughLDFlags(t *testing.T) {
 	originalGlobalConfig := GetGlobalConfig()
 
 	for _, test := range tests {
-		defaultConf.EnableTelemetry = false
+		defaultConf.EnableTelemetry = true
 		CheckTableBeforeDrop = false
 
 		initByLDFlags(test.Edition, test.CheckBeforeDropLDFlag)
@@ -2069,7 +1287,7 @@ func TestConfigExample(t *testing.T) {
 func TestStatsLoadLimit(t *testing.T) {
 	conf := NewConfig()
 	checkConcurrencyValid := func(concurrency int, shouldBeValid bool) {
-		conf.Performance.StatsLoadConcurrency = concurrency
+		conf.Performance.StatsLoadConcurrency = uint(concurrency)
 		require.Equal(t, shouldBeValid, conf.Valid() == nil)
 	}
 	checkConcurrencyValid(DefStatsLoadConcurrencyLimit, true)
@@ -2087,40 +1305,6 @@ func TestStatsLoadLimit(t *testing.T) {
 	checkQueueSizeValid(DefMaxOfStatsLoadQueueSizeLimit+1, false)
 }
 
-func TestExternalWorkloadValid(t *testing.T) {
-	conf := NewConfig()
-	require.NoError(t, conf.Valid())
-
-	conf.ExternalWorkload.Enable = true
-	require.ErrorContains(t, conf.Valid(), "external-workload can only be configured when deploy-mode is starter")
-
-	conf = NewConfig()
-	confFile := filepath.Join(t.TempDir(), "tidb.toml")
-	require.NoError(t, os.WriteFile(confFile, []byte("[external-workload]\nenable = false\n"), 0644))
-	require.ErrorContains(t, conf.Load(confFile), "external-workload can only be configured when deploy-mode is starter")
-
-	if kerneltype.IsClassic() {
-		t.Skip("only for nextgen kernel")
-	}
-
-	conf = NewConfig()
-	conf.DeployMode = deploymode.Starter
-	conf.ExternalWorkload.Enable = true
-	require.ErrorContains(t, conf.Valid(), "external-workload controller-addr must not be empty")
-
-	conf.ExternalWorkload.ControllerAddr = "http://127.0.0.1:1234"
-	conf.ExternalWorkload.TidbPool = ""
-	require.ErrorContains(t, conf.Valid(), "external-workload tidb-pool must not be empty")
-
-	conf.ExternalWorkload.TidbPool = "pool-a"
-	conf.ExternalWorkload.Role = "unknown"
-	require.ErrorContains(t, conf.Valid(), `invalid external-workload role "unknown"`)
-
-	conf.ExternalWorkload.Role = " GCV2 "
-	require.NoError(t, conf.Valid())
-	require.Equal(t, RoleGCV2Worker, conf.ExternalWorkload.Role)
-}
-
 func TestGetGlobalKeyspaceName(t *testing.T) {
 	conf := NewConfig()
 	require.Empty(t, conf.KeyspaceName)
@@ -2133,21 +1317,6 @@ func TestGetGlobalKeyspaceName(t *testing.T) {
 
 	UpdateGlobal(func(conf *Config) {
 		conf.KeyspaceName = ""
-	})
-}
-
-func TestGetGlobalTiKVWorkerURL(t *testing.T) {
-	conf := NewConfig()
-	require.Empty(t, conf.TiKVWorkerURL)
-
-	UpdateGlobal(func(conf *Config) {
-		conf.TiKVWorkerURL = "tikv-worker-0:10080"
-	})
-
-	require.Equal(t, "tikv-worker-0:10080", GetGlobalConfig().TiKVWorkerURL)
-
-	UpdateGlobal(func(conf *Config) {
-		conf.TiKVWorkerURL = ""
 	})
 }
 
@@ -2188,61 +1357,4 @@ enforce-mpp = 1
 	err = conf.Load(configFile)
 	require.Error(t, err)
 	require.Equal(t, err.Error(), "toml: line 5 (last key \"performance.enforce-mpp\"): incompatible types: TOML value has type int64; destination has type boolean")
-}
-
-func TestKeyspaceName(t *testing.T) {
-	conf := NewConfig()
-	conf.KeyspaceName = "#!"
-	require.ErrorContains(t, conf.Valid(), "is invalid")
-	conf.KeyspaceName = "abc"
-	require.NoError(t, conf.Valid())
-	conf.KeyspaceName = "18446744073709551615" // max uint64
-	require.NoError(t, conf.Valid())
-	conf.KeyspaceName = "a18446744073709551615"
-	require.ErrorContains(t, conf.Valid(), "invalid keyspace name")
-}
-
-func TestMetering(t *testing.T) {
-	if kerneltype.IsClassic() {
-		t.Skip("skip metering test in classic kernel")
-	}
-	testCases := []struct {
-		name      string
-		uri       string
-		checkFunc func(*testing.T, *meter_config.MeteringConfig)
-	}{
-		{
-			name: "s3",
-			uri:  "s3://test-bucket/test-prefix?region-id=test-region",
-			checkFunc: func(t *testing.T, mcfg *meter_config.MeteringConfig) {
-				require.Equal(t, "s3", string(mcfg.Type))
-				require.Equal(t, "test-bucket", mcfg.Bucket)
-				require.Equal(t, "test-prefix", mcfg.Prefix)
-				require.Equal(t, "test-region", mcfg.Region)
-			},
-		},
-		{
-			name: "azure",
-			uri:  "azure://metering-data/test-prefix?account-name=test-account&account-key=test-key",
-			checkFunc: func(t *testing.T, mcfg *meter_config.MeteringConfig) {
-				require.Equal(t, "azure", string(mcfg.Type))
-				require.Equal(t, "metering-data", mcfg.Bucket)
-				require.Equal(t, "test-prefix", mcfg.Prefix)
-				require.NotNil(t, mcfg.Azure)
-				require.Equal(t, "test-account", mcfg.Azure.AccountName)
-				require.Equal(t, "test-key", mcfg.Azure.AccountKey)
-			},
-		},
-	}
-
-	for _, tc := range testCases {
-		t.Run(tc.name, func(t *testing.T) {
-			conf := NewConfig()
-			conf.MeteringStorageURI = tc.uri
-			require.NoError(t, conf.Valid())
-			mcfg, err := meter_config.NewFromURI(conf.MeteringStorageURI)
-			require.NoError(t, err)
-			tc.checkFunc(t, mcfg)
-		})
-	}
 }

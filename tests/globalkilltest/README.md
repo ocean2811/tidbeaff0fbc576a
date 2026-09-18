@@ -2,7 +2,7 @@
 
 GlobalKillTest is a test command tool for TiDB __"Global Kill"__ feature.
 
-_(About __"Global Kill"__, see [design doc](https://github.com/pingcap/tidb/blob/master/docs/design/2020-06-01-global-kill.md) for detail.)_
+_(About __"Global Kill"__, see [design doc](https://github.com/ocean2811/tidbeaff0fbc576a/blob/master/docs/design/2020-06-01-global-kill.md) for detail.)_
 
 ```
 Usage: ./run-tests.sh [options]
@@ -45,7 +45,7 @@ Usage: ./run-tests.sh [options]
 
 
 ## Prerequisite
-1. Build TiDB binary for test. See [Makefile](https://github.com/pingcap/tidb/blob/master/tests/globalkilltest/Makefile) for detail.
+1. Build TiDB binary for test. See [Makefile](https://github.com/ocean2811/tidbeaff0fbc576a/blob/master/tests/globalkilltest/Makefile) for detail.
 
 2. Prepare `pd-server` and `tikv-server` to setup a cluster for tests. You can download the binaries by `TiUP`
 
@@ -83,7 +83,7 @@ cd tests/globalkilltest
 
 ## How it works
 
-* TiDB is built by [Makefile](https://github.com/pingcap/tidb/blob/master/tests/globalkilltest/Makefile), to hack some timeout variables, as the default value of these variables are too long _(several hours)_ for automated testing.
+* TiDB is built by [Makefile](https://github.com/ocean2811/tidbeaff0fbc576a/blob/master/tests/globalkilltest/Makefile), to hack some timeout variables, as the default value of these variables are too long _(several hours)_ for automated testing.
 
 * Execute `SELECT SLEEP(x)` as payload, and kill the query before `x` expired. If the query had no error and elapsed less than `x`, the test is PASSED.
 

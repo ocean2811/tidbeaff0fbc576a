@@ -15,9 +15,9 @@
 package variable
 
 import (
-	mysql "github.com/pingcap/tidb/pkg/errno"
-	pmysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	mysql "github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	pmysql "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
 )
 
 // Error instances.
@@ -38,8 +38,7 @@ var (
 	errGlobalVariable              = dbterror.ClassVariable.NewStd(mysql.ErrGlobalVariable)
 	errLocalVariable               = dbterror.ClassVariable.NewStd(mysql.ErrLocalVariable)
 	errValueNotSupportedWhen       = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("%s = OFF is not supported when %s = ON", nil))
-	errSetGlobalMaxAllowedPacket   = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("SET GLOBAL max_allowed_packet is not supported in starter deployment mode", nil))
-	ErrNotSupportedInNextGen       = dbterror.ClassVariable.NewStdErr(mysql.ErrNotSupportedYet, pmysql.Message("%s is not supported in the next generation of TiDB", nil))
+	ErrStmtNotFound                = dbterror.ClassOptimizer.NewStd(mysql.ErrPreparedStmtNotFound)
 	ErrNotValidPassword            = dbterror.ClassExecutor.NewStd(mysql.ErrNotValidPassword)
 	// ErrFunctionsNoopImpl is an error to say the behavior is protected by the tidb_enable_noop_functions sysvar.
 	// This is copied from expression.ErrFunctionsNoopImpl to prevent circular dependencies.

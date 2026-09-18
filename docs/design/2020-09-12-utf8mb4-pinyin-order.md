@@ -2,7 +2,7 @@
 
 - Author(s):     [xiongjiwei](https://github.com/xiongjiwei)
 - Last updated:  2020-11-06
-- Discussion at: https://github.com/pingcap/tidb/issues/19747
+- Discussion at: https://github.com/ocean2811/tidbeaff0fbc576a/issues/19747
 
 ## Abstract
 This proposal proposes a new feature that supports `pinyin` order for chinese character.
@@ -73,6 +73,6 @@ There is no `utf8mb4_zh_pinyin_tidb_as_cs` collation in MySQL. We can comment `u
 
 ## Open issues (if applicable)
 
-https://github.com/pingcap/tidb/issues/19747
+https://github.com/ocean2811/tidbeaff0fbc576a/issues/19747
 
-https://github.com/pingcap/tidb/issues/10192
+https://github.com/ocean2811/tidbeaff0fbc576a/issues/10192

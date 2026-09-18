@@ -18,8 +18,8 @@ import (
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/resourcemanager/scheduler"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/scheduler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/util"
 	"go.uber.org/zap"
 )
 

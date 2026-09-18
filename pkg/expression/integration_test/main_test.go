@@ -17,10 +17,10 @@ package integration_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/testkit/testmain"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testmain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testsetup"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/timeutil"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
@@ -44,13 +44,12 @@ func TestMain(m *testing.M) {
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/ttlworker.(*ttlScanWorker).loop"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/client.(*mockClient).WatchCommand.func1"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/ttlworker.(*JobManager).jobLoop"),
+		goleak.IgnoreTopFunction("github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/ttlworker.(*ttlScanWorker).loop"),
+		goleak.IgnoreTopFunction("github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/client.(*mockClient).WatchCommand.func1"),
+		goleak.IgnoreTopFunction("github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/ttlworker.(*JobManager).jobLoop"),
 	}
 
 	goleak.VerifyTestMain(m, opts...)

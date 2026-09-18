@@ -1,4 +1,4 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "property",
@@ -8,33 +8,16 @@ go_library(
         "stats_info.go",
         "task_type.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/planner/property",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/property",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/expression",
-        "//pkg/planner/cascades/base",
-        "//pkg/planner/funcdep",
-        "//pkg/sessionctx/variable",
+        "//pkg/sessionctx/stmtctx",
         "//pkg/statistics",
         "//pkg/util/codec",
         "//pkg/util/collate",
-        "//pkg/util/intset",
         "//pkg/util/size",
         "@com_github_pingcap_log//:log",
         "@com_github_pingcap_tipb//go-tipb",
-    ],
-)
-
-go_test(
-    name = "property_test",
-    timeout = "short",
-    srcs = ["physical_property_test.go"],
-    embed = [":property"],
-    flaky = True,
-    deps = [
-        "//pkg/expression",
-        "//pkg/planner/funcdep",
-        "//pkg/util/intset",
-        "@com_github_stretchr_testify//require",
     ],
 )

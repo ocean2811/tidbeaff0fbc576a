@@ -15,15 +15,14 @@
 package domain_test
 
 import (
-	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/planner/extstore"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/replayer"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/replayer"
 	"github.com/stretchr/testify/require"
 )
 
@@ -69,16 +68,6 @@ func TestPlanReplayerHandleCollectTask(t *testing.T) {
 }
 
 func TestPlanReplayerHandleDumpTask(t *testing.T) {
-	tempDir := t.TempDir()
-	ctx := context.Background()
-	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
-	require.NoError(t, err)
-	extstore.SetGlobalExtStorageForTest(storage)
-	defer func() {
-		extstore.SetGlobalExtStorageForTest(nil)
-		storage.Close()
-	}()
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	prHandle := dom.GetPlanReplayerHandle()
@@ -94,7 +83,7 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 	tk.MustExec("delete from mysql.plan_replayer_task")
 	tk.MustExec("delete from mysql.plan_replayer_status")
 	tk.MustExec(fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%v','%v');", sqlDigest, planDigest))
-	err = prHandle.CollectPlanReplayerTask()
+	err := prHandle.CollectPlanReplayerTask()
 	require.NoError(t, err)
 	require.Len(t, prHandle.GetTasks(), 1)
 
@@ -136,49 +125,30 @@ func TestPlanReplayerHandleDumpTask(t *testing.T) {
 }
 
 func TestPlanReplayerGC(t *testing.T) {
-	ctx := context.Background()
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	handler := dom.GetDumpFileGCChecker()
 
-	tempDir := t.TempDir()
-	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
-	require.NoError(t, err)
-	extstore.SetGlobalExtStorageForTest(storage)
-	defer func() {
-		extstore.SetGlobalExtStorageForTest(nil)
-		storage.Close()
-	}()
-
 	startTime := time.Now()
 	time := startTime.UnixNano()
 	fileName := fmt.Sprintf("replayer_single_xxxxxx_%v.zip", time)
+	err := os.MkdirAll(replayer.GetPlanReplayerDirName(), os.ModePerm)
+	require.NoError(t, err)
 	tk.MustExec("insert into mysql.plan_replayer_status(sql_digest, plan_digest, token, instance) values" +
 		"('123','123','" + fileName + "','123')")
 	path := filepath.Join(replayer.GetPlanReplayerDirName(), fileName)
-	writer, err := storage.Create(ctx, path, nil)
+	zf, err := os.Create(path)
 	require.NoError(t, err)
-	err = writer.Close(ctx)
-	require.NoError(t, err)
-	handler.GCDumpFiles(ctx, 0, 0)
+	zf.Close()
+	handler.GCDumpFiles(0, 0)
 	tk.MustQuery("select count(*) from mysql.plan_replayer_status").Check(testkit.Rows("0"))
 
-	exists, err := storage.FileExists(ctx, path)
-	require.NoError(t, err)
-	require.False(t, exists)
+	_, err = os.Stat(path)
+	require.NotNil(t, err)
+	require.True(t, os.IsNotExist(err))
 }
 
 func TestInsertPlanReplayerStatus(t *testing.T) {
-	tempDir := t.TempDir()
-	ctx := context.Background()
-	storage, err := extstore.NewExtStorage(ctx, "file://"+tempDir, "")
-	require.NoError(t, err)
-	extstore.SetGlobalExtStorageForTest(storage)
-	defer func() {
-		extstore.SetGlobalExtStorageForTest(nil)
-		storage.Close()
-	}()
-
 	store, dom := testkit.CreateMockStoreAndDomain(t)
 	tk := testkit.NewTestKit(t, store)
 	prHandle := dom.GetPlanReplayerHandle()
@@ -206,7 +176,7 @@ SELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.colu
 	tk.MustExec("delete from mysql.plan_replayer_task")
 	tk.MustExec("delete from mysql.plan_replayer_status")
 	tk.MustExec(fmt.Sprintf("insert into mysql.plan_replayer_task (sql_digest, plan_digest) values ('%v','%v');", sqlDigest, planDigest))
-	err = prHandle.CollectPlanReplayerTask()
+	err := prHandle.CollectPlanReplayerTask()
 	require.NoError(t, err)
 	require.Len(t, prHandle.GetTasks(), 1)
 
@@ -218,6 +188,7 @@ SELECT * from tableA where SUBSTRING_INDEX(tableA.columnC, '_', 1) = tableA.colu
 	require.NotNil(t, task)
 	worker := prHandle.GetWorker()
 	success := worker.HandleTask(task)
+	defer os.RemoveAll(replayer.GetPlanReplayerDirName())
 	require.True(t, success)
 	require.Equal(t, prHandle.GetTaskStatus().GetRunningTaskStatusLen(), 0)
 	// assert memory task consumed

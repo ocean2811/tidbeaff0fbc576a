@@ -15,12 +15,11 @@
 package pdhelper
 
 import (
-	"context"
 	"testing"
 	"time"
 
 	"github.com/jellydator/ttlcache/v3"
-	"github.com/pingcap/tidb/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
 	"github.com/stretchr/testify/require"
 )
 
@@ -34,7 +33,7 @@ func (m *mockClient) getMissCnt() int {
 	return m.missCnt
 }
 
-func (m *mockClient) getFakeApproximateTableCountFromStorage(_ context.Context, _ sessionctx.Context, _ int64, _, _, _ string) (float64, bool) {
+func (m *mockClient) getFakeApproximateTableCountFromStorage(_ sessionctx.Context, _ int64, _, _, _ string) (float64, bool) {
 	m.missCnt++
 	return 1.0, true
 }
@@ -48,22 +47,21 @@ func TestTTLCache(t *testing.T) {
 		cacheForApproximateTableCountFromStorage: cache,
 		getApproximateTableCountFromStorageFunc:  globalMockClient.getFakeApproximateTableCountFromStorage,
 	}
-	ctx := context.Background()
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 1, "db", "table", "partition") // Miss
+	helper.GetApproximateTableCountFromStorage(nil, 1, "db", "table", "partition") // Miss
 	require.Equal(t, 1, globalMockClient.getMissCnt())
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 1, "db", "table", "partition") // Hit
+	helper.GetApproximateTableCountFromStorage(nil, 1, "db", "table", "partition") // Hit
 	require.Equal(t, 1, globalMockClient.getMissCnt())
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 2, "db1", "table1", "partition") // Miss
+	helper.GetApproximateTableCountFromStorage(nil, 2, "db1", "table1", "partition") // Miss
 	require.Equal(t, 2, globalMockClient.getMissCnt())
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 3, "db2", "table2", "partition") // Miss
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 1, "db", "table", "partition")   // Miss
+	helper.GetApproximateTableCountFromStorage(nil, 3, "db2", "table2", "partition") // Miss
+	helper.GetApproximateTableCountFromStorage(nil, 1, "db", "table", "partition")   // Miss
 	require.Equal(t, 4, globalMockClient.getMissCnt())
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 3, "db2", "table2", "partition") // Hit
+	helper.GetApproximateTableCountFromStorage(nil, 3, "db2", "table2", "partition") // Hit
 	require.Equal(t, 4, globalMockClient.getMissCnt())
 	time.Sleep(200 * time.Millisecond)
 	// All is miss.
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 1, "db", "table", "partition")
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 2, "db1", "table1", "partition")
-	helper.GetApproximateTableCountFromStorage(ctx, nil, 3, "db2", "table2", "partition")
+	helper.GetApproximateTableCountFromStorage(nil, 1, "db", "table", "partition")
+	helper.GetApproximateTableCountFromStorage(nil, 2, "db1", "table1", "partition")
+	helper.GetApproximateTableCountFromStorage(nil, 3, "db2", "table2", "partition")
 	require.Equal(t, 7, globalMockClient.getMissCnt())
 }

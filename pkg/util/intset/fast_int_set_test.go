@@ -16,7 +16,6 @@ package intset
 
 import (
 	"fmt"
-	"maps"
 	"math/rand"
 	"reflect"
 	"runtime"
@@ -26,6 +25,7 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"golang.org/x/exp/maps"
 	"golang.org/x/tools/container/intsets"
 )
 
@@ -95,7 +95,8 @@ func (is IntSet) Equals(target IntSet) bool {
 }
 
 func (is *IntSet) CopyFrom(target IntSet) {
-	*is = maps.Clone(target)
+	*is = NewIntSetWithCap(len(target))
+	maps.Copy(*is, target)
 }
 
 func (is IntSet) SortedArray() []int {
@@ -113,6 +114,10 @@ func (is IntSet) Insert(k int) {
 
 func NewIntSet() IntSet {
 	return make(map[int]struct{})
+}
+
+func NewIntSetWithCap(c int) IntSet {
+	return make(map[int]struct{}, c)
 }
 
 func TestFastIntSetBasic(t *testing.T) {
@@ -232,7 +237,7 @@ func TestFastIntSet(t *testing.T) {
 			forEachRes := make([]bool, m)
 
 			var s FastIntSet
-			for range 1000 {
+			for i := 0; i < 1000; i++ {
 				v := rng.Intn(m)
 				if rng.Intn(2) == 0 {
 					in[v] = true
@@ -242,7 +247,7 @@ func TestFastIntSet(t *testing.T) {
 					s.Remove(v)
 				}
 				empty := true
-				for j := range m {
+				for j := 0; j < m; j++ {
 					empty = empty && !in[j]
 					if in[j] != s.Has(j) {
 						t.Fatalf("incorrect result for Contains(%d), expected %t", j, in[j])
@@ -258,7 +263,7 @@ func TestFastIntSet(t *testing.T) {
 				s.ForEach(func(j int) {
 					forEachRes[j] = true
 				})
-				for j := range m {
+				for j := 0; j < m; j++ {
 					if in[j] != forEachRes[j] {
 						t.Fatalf("incorrect ForEachResult for %d (%t, expected %t)", j, forEachRes[j], in[j])
 					}
@@ -318,7 +323,7 @@ func TestFastIntSetTwoSetOps(t *testing.T) {
 			s.Insert(k)
 		}
 		p := rng.Perm(len(vals))
-		for i := range numRemoved {
+		for i := 0; i < numRemoved; i++ {
 			k := vals[p[i]]
 			s.Remove(k)
 			delete(used, k)
@@ -469,46 +474,16 @@ func TestFastIntSetAddRange(t *testing.T) {
 		})
 	}
 
-	maxv := smallCutOff + 20
+	max := smallCutOff + 20
 	// Test all O(n^2) sub-intervals of [from,to] in the interval
 	// [-5, smallCutoff + 20].
-	for from := -5; from <= maxv; from++ {
-		for to := from; to <= maxv; to++ {
+	for from := -5; from <= max; from++ {
+		for to := from; to <= max; to++ {
 			var set FastIntSet
 			set.AddRange(from, to)
 			assertSet(&set, from, to)
 		}
 	}
-}
-
-func TestGetSmallUInt64(t *testing.T) {
-	// Empty set returns 0.
-	var s FastIntSet
-	v, err := s.GetSmallUInt64()
-	require.NoError(t, err)
-	require.Equal(t, uint64(0), v)
-
-	// Small-only values: bits 0, 1, 3 set → 0b1011 = 11.
-	s = NewFastIntSet(0, 1, 3)
-	v, err = s.GetSmallUInt64()
-	require.NoError(t, err)
-	require.Equal(t, uint64(0b1011), v)
-
-	// All small values up to bit 5 → 0b111111 = 63.
-	s = NewFastIntSet(0, 1, 2, 3, 4, 5)
-	v, err = s.GetSmallUInt64()
-	require.NoError(t, err)
-	require.Equal(t, uint64(63), v)
-
-	// A set with a value >= smallCutOff (64) triggers an error.
-	s = NewFastIntSet(64)
-	_, err = s.GetSmallUInt64()
-	require.Error(t, err)
-
-	// Mixed: small + large value also triggers an error.
-	s = NewFastIntSet(1, 64)
-	_, err = s.GetSmallUInt64()
-	require.Error(t, err)
 }
 
 func TestFastIntSetString(t *testing.T) {

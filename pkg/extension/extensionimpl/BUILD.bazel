@@ -3,13 +3,12 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "extensionimpl",
     srcs = ["bootstrap.go"],
-    importpath = "github.com/pingcap/tidb/pkg/extension/extensionimpl",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/extension/extensionimpl",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/domain",
         "//pkg/extension",
         "//pkg/kv",
-        "//pkg/sessionctx",
         "//pkg/util/chunk",
         "//pkg/util/sqlexec",
         "@com_github_pingcap_errors//:errors",

@@ -17,10 +17,8 @@ package toomanytests
 import (
 	"go/ast"
 	"go/token"
-	"path/filepath"
 	"strings"
 
-	"github.com/pingcap/tidb/build/linter/util"
 	"golang.org/x/tools/go/analysis"
 )
 
@@ -30,7 +28,6 @@ var Analyzer = &analysis.Analyzer{
 	Doc:  "too many tests in the package",
 	Run: func(pass *analysis.Pass) (any, error) {
 		cnt := 0
-		var pos token.Pos
 		for _, f := range pass.Files {
 			astFile := pass.Fset.File(f.Pos())
 			if !isTestFile(astFile) {
@@ -45,12 +42,10 @@ var Analyzer = &analysis.Analyzer{
 					}
 				}
 			}
-			pos = f.Pos()
-		}
-		pkgName := filepath.Dir(pass.Fset.Position(pos).Filename)
-		if cnt > checkRule(pkgName) {
-			pass.Reportf(pos, "%s: Too many test cases in one package: %d", pkgName, cnt)
-			return nil, nil
+			if cnt > 50 {
+				pass.Reportf(f.Pos(), "%s: Too many test cases in one package", pass.Pkg.Name())
+				return nil, nil
+			}
 		}
 		return nil, nil
 	},
@@ -58,20 +53,4 @@ var Analyzer = &analysis.Analyzer{
 
 func isTestFile(file *token.File) bool {
 	return strings.HasSuffix(file.Name(), "_test.go")
-}
-
-func checkRule(pkg string) int {
-	switch pkg {
-	case "pkg/planner/core":
-		return 210
-	case "pkg/util/topsql/reporter":
-		return 90 // TopRU has generated_cases + multi-scenario tests
-	default:
-		return 50
-	}
-}
-
-func init() {
-	util.SkipAnalyzerByConfig(Analyzer)
-	util.SkipAnalyzer(Analyzer)
 }

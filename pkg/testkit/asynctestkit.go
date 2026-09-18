@@ -23,11 +23,10 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/atomic"
@@ -89,17 +88,17 @@ func GetStack() []byte {
 func (tk *AsyncTestKit) ConcurrentRun(
 	concurrent int,
 	loops int,
-	prepareFunc func(ctx context.Context, tk *AsyncTestKit, concurrent int, currentLoop int) [][][]any,
-	writeFunc func(ctx context.Context, tk *AsyncTestKit, input [][]any),
+	prepareFunc func(ctx context.Context, tk *AsyncTestKit, concurrent int, currentLoop int) [][][]interface{},
+	writeFunc func(ctx context.Context, tk *AsyncTestKit, input [][]interface{}),
 	checkFunc func(ctx context.Context, tk *AsyncTestKit),
 ) {
-	channel := make([]chan [][]any, concurrent)
+	channel := make([]chan [][]interface{}, concurrent)
 	contextList := make([]context.Context, concurrent)
 	doneList := make([]context.CancelFunc, concurrent)
 
-	for i := range concurrent {
+	for i := 0; i < concurrent; i++ {
 		w := i
-		channel[w] = make(chan [][]any, 1)
+		channel[w] = make(chan [][]interface{}, 1)
 		contextList[w], doneList[w] = context.WithCancel(context.Background())
 		contextList[w] = tk.OpenSession(contextList[w], "test")
 		go func() {
@@ -116,7 +115,7 @@ func (tk *AsyncTestKit) ConcurrentRun(
 	}
 
 	defer func() {
-		for i := range concurrent {
+		for i := 0; i < concurrent; i++ {
 			tk.CloseSession(contextList[i])
 		}
 	}()
@@ -125,25 +124,25 @@ func (tk *AsyncTestKit) ConcurrentRun(
 	defer tk.CloseSession(ctx)
 	tk.MustExec(ctx, "use test")
 
-	for j := range loops {
+	for j := 0; j < loops; j++ {
 		data := prepareFunc(ctx, tk, concurrent, j)
-		for i := range concurrent {
+		for i := 0; i < concurrent; i++ {
 			channel[i] <- data[i]
 		}
 	}
 
-	for i := range concurrent {
+	for i := 0; i < concurrent; i++ {
 		close(channel[i])
 	}
 
-	for i := range concurrent {
+	for i := 0; i < concurrent; i++ {
 		<-contextList[i].Done()
 	}
 	checkFunc(ctx, tk)
 }
 
 // Exec executes a sql statement.
-func (tk *AsyncTestKit) Exec(ctx context.Context, sql string, args ...any) (sqlexec.RecordSet, error) {
+func (tk *AsyncTestKit) Exec(ctx context.Context, sql string, args ...interface{}) (sqlexec.RecordSet, error) {
 	se := TryRetrieveSession(ctx)
 	tk.require.NotNil(se)
 
@@ -176,7 +175,7 @@ func (tk *AsyncTestKit) Exec(ctx context.Context, sql string, args ...any) (sqle
 }
 
 // MustExec executes a sql statement and asserts nil error.
-func (tk *AsyncTestKit) MustExec(ctx context.Context, sql string, args ...any) {
+func (tk *AsyncTestKit) MustExec(ctx context.Context, sql string, args ...interface{}) {
 	res, err := tk.Exec(ctx, sql, args...)
 	tk.require.NoErrorf(err, "sql:%s, %v, error stack %v", sql, args, errors.ErrorStack(err))
 	if res != nil {
@@ -191,7 +190,7 @@ func (tk *AsyncTestKit) MustGetErrMsg(ctx context.Context, sql string, errStr st
 }
 
 // ExecToErr executes a sql statement and discard results.
-func (tk *AsyncTestKit) ExecToErr(ctx context.Context, sql string, args ...any) error {
+func (tk *AsyncTestKit) ExecToErr(ctx context.Context, sql string, args ...interface{}) error {
 	res, err := tk.Exec(ctx, sql, args...)
 	if res != nil {
 		tk.require.NoError(res.Close())
@@ -201,7 +200,7 @@ func (tk *AsyncTestKit) ExecToErr(ctx context.Context, sql string, args ...any) 
 
 // MustQuery query the statements and returns result rows.
 // If expected result is set it asserts the query result equals expected result.
-func (tk *AsyncTestKit) MustQuery(ctx context.Context, sql string, args ...any) *Result {
+func (tk *AsyncTestKit) MustQuery(ctx context.Context, sql string, args ...interface{}) *Result {
 	comment := fmt.Sprintf("sql:%s, args:%v", sql, args)
 	rs, err := tk.Exec(ctx, sql, args...)
 	tk.require.NoError(err, comment)
@@ -222,7 +221,7 @@ func (tk *AsyncTestKit) resultSetToResult(ctx context.Context, rs sqlexec.Record
 	for i := range rows {
 		row := rows[i]
 		resultRow := make([]string, row.Len())
-		for j := range row.Len() {
+		for j := 0; j < row.Len(); j++ {
 			if row.IsNull(j) {
 				resultRow[j] = "<nil>"
 			} else {
@@ -241,10 +240,10 @@ type sessionCtxKeyType struct{}
 var sessionKey = sessionCtxKeyType{}
 
 // TryRetrieveSession tries retrieve session from context.
-func TryRetrieveSession(ctx context.Context) sessionapi.Session {
+func TryRetrieveSession(ctx context.Context) session.Session {
 	s := ctx.Value(sessionKey)
 	if s == nil {
 		return nil
 	}
-	return s.(sessionapi.Session)
+	return s.(session.Session)
 }

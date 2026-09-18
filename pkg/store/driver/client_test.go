@@ -21,7 +21,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/util/tracing"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/tracing"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
@@ -45,7 +46,7 @@ func (c *mockTiKVClient) SendRequest(ctx context.Context, addr string, req *tikv
 func TestInjectTracingClient(t *testing.T) {
 	cases := []struct {
 		name            string
-		trace           *tracing.TraceInfo
+		trace           *model.TraceInfo
 		existSourceStmt *kvrpcpb.SourceStmt
 	}{
 		{
@@ -54,20 +55,20 @@ func TestInjectTracingClient(t *testing.T) {
 		},
 		{
 			name: "trace not nil",
-			trace: &tracing.TraceInfo{
+			trace: &model.TraceInfo{
 				ConnectionID: 123,
 				SessionAlias: "alias123",
 			},
 		},
 		{
 			name: "only connection id in trace valid",
-			trace: &tracing.TraceInfo{
+			trace: &model.TraceInfo{
 				ConnectionID: 456,
 			},
 		},
 		{
 			name: "only session alias in trace valid and sourceStmt exists",
-			trace: &tracing.TraceInfo{
+			trace: &model.TraceInfo{
 				SessionAlias: "alias456",
 			},
 			existSourceStmt: &kvrpcpb.SourceStmt{},

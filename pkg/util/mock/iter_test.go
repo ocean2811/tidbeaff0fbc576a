@@ -14,10 +14,9 @@
 package mock
 
 import (
-	"slices"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -26,7 +25,7 @@ func newSliceIterWithCopy(data []*kv.Entry) *SliceIter {
 		return NewSliceIter(nil)
 	}
 
-	return NewSliceIter(slices.Clone(data))
+	return NewSliceIter(append([]*kv.Entry{}, data...))
 }
 
 func TestSliceIter(t *testing.T) {

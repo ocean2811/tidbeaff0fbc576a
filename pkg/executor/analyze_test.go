@@ -15,37 +15,31 @@
 package executor_test
 
 import (
-	"context"
 	"fmt"
+	"os"
 	"strconv"
-	"sync/atomic"
+	"strings"
 	"testing"
-	"time"
 
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/statistics"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
 	"github.com/stretchr/testify/require"
 )
 
 func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (bool, error) {
-	for i := range hg.Buckets {
+	for i := 0; i < len(hg.Buckets); i++ {
 		lower, upper := hg.GetLower(i), hg.GetUpper(i)
-		cmp, err := upper.Compare(sc.TypeCtx(), lower, collate.GetBinaryCollator())
+		cmp, err := upper.Compare(sc, lower, collate.GetBinaryCollator())
 		if cmp < 0 || err != nil {
 			return false, err
 		}
@@ -53,72 +47,12 @@ func checkHistogram(sc *stmtctx.StatementContext, hg *statistics.Histogram) (boo
 			continue
 		}
 		previousUpper := hg.GetUpper(i - 1)
-		cmp, err = lower.Compare(sc.TypeCtx(), previousUpper, collate.GetBinaryCollator())
+		cmp, err = lower.Compare(sc, previousUpper, collate.GetBinaryCollator())
 		if cmp <= 0 || err != nil {
 			return false, err
 		}
 	}
 	return true, nil
-}
-
-func TestAnalyzeBuildsRequest(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustQuery("select @@tidb_analyze_store_batch_size").Check(testkit.Rows("4"))
-	tk.MustExec("set @@tidb_analyze_store_batch_size = 9")
-	tk.MustQuery("select @@tidb_analyze_store_batch_size").Check(testkit.Rows("8"))
-	tk.MustExec("set @@tidb_analyze_store_batch_size = 4")
-
-	var requestCount atomic.Int64
-	var lastRequest atomic.Pointer[kv.Request]
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeColumnsRequestBuilt", func(req *kv.Request) {
-		// BuildCopIterator clears StoreBatchSize in place, so preserve the request
-		// as Analyze built it.
-		snapshot := *req
-		lastRequest.Store(&snapshot)
-		requestCount.Add(1)
-	})
-
-	// Values at MaxInt64 and MaxInt64+1 exercise the unsigned-handle boundary.
-	// Full-sampling Analyze should cover them with one unordered request. The
-	// generic store batch size must not override the Analyze-specific default.
-	tk.MustExec("set @@tidb_analyze_distsql_scan_concurrency = 6")
-	tk.MustExec("set @@tidb_store_batch_size = 8")
-	tk.MustExec("create table tu(a bigint unsigned primary key)")
-	tk.MustExec("insert into tu values (9223372036854775807), (9223372036854775808)")
-	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
-	require.Equal(t, int64(1), requestCount.Load())
-	request := lastRequest.Load()
-	require.False(t, request.KeepOrder)
-	require.True(t, request.AllowBatchTaskDataMerge)
-	require.True(t, request.ExecuteBatchTasksSerially)
-	require.Equal(t, 6, request.Concurrency)
-	require.Equal(t, 4, request.StoreBatchSize)
-
-	bucketRows := tk.MustQuery("show stats_buckets where db_name = 'test' and table_name = 'tu' and column_name = 'a' and is_index = 0").Rows()
-	bounds := make(map[string]struct{}, 2*len(bucketRows))
-	for _, row := range bucketRows {
-		bounds[row[8].(string)] = struct{}{}
-		bounds[row[9].(string)] = struct{}{}
-	}
-	require.Contains(t, bounds, "9223372036854775807")
-	require.Contains(t, bounds, "9223372036854775808")
-
-	// An empty unsigned half must not stop the request before its signed range.
-	// Zero disables Analyze store batching without changing the generic setting.
-	tk.MustExec("set @@tidb_analyze_store_batch_size = 0")
-	tk.MustExec("truncate table tu")
-	tk.MustExec("insert into tu values (1)")
-	tk.MustExec("analyze table tu with 1 samplerate, 0 topn, 2 buckets")
-	require.Equal(t, int64(2), requestCount.Load())
-	request = lastRequest.Load()
-	require.False(t, request.AllowBatchTaskDataMerge)
-	require.False(t, request.ExecuteBatchTasksSerially)
-	require.Zero(t, request.StoreBatchSize)
-	metaRows := tk.MustQuery("show stats_meta where db_name = 'test' and table_name = 'tu'").Rows()
-	require.Len(t, metaRows, 1)
-	require.Equal(t, "1", metaRows[0][5])
 }
 
 func TestAnalyzeIndexExtractTopN(t *testing.T) {
@@ -130,6 +64,7 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	}()
 	var dom *domain.Domain
 	session.DisableStats4Test()
+	session.SetSchemaLease(0)
 	dom, err = session.BootstrapSession(store)
 	require.NoError(t, err)
 	defer dom.Close()
@@ -144,28 +79,46 @@ func TestAnalyzeIndexExtractTopN(t *testing.T) {
 	tk.MustExec("analyze table t")
 
 	is := tk.Session().(sessionctx.Context).GetInfoSchema().(infoschema.InfoSchema)
-	table, err := is.TableByName(context.Background(), ast.NewCIStr("test_index_extract_topn"), ast.NewCIStr("t"))
+	table, err := is.TableByName(model.NewCIStr("test_index_extract_topn"), model.NewCIStr("t"))
 	require.NoError(t, err)
 	tableInfo := table.Meta()
-	tbl := dom.StatsHandle().GetPhysicalTableStats(tableInfo.ID, tableInfo)
+	tbl := dom.StatsHandle().GetTableStats(tableInfo)
 
 	// Construct TopN, should be (1, 1) -> 2 and (1, 2) -> 2
 	topn := statistics.NewTopN(2)
 	{
-		key1, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(1))
+		key1, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(1))
 		require.NoError(t, err)
 		topn.AppendTopN(key1, 2)
-		key2, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx.TimeZone(), nil, types.NewIntDatum(1), types.NewIntDatum(2))
+		key2, err := codec.EncodeKey(tk.Session().GetSessionVars().StmtCtx, nil, types.NewIntDatum(1), types.NewIntDatum(2))
 		require.NoError(t, err)
 		topn.AppendTopN(key2, 2)
 	}
-	tbl.ForEachIndexImmutable(func(_ int64, idx *statistics.Index) bool {
+	for _, idx := range tbl.Indices {
 		ok, err := checkHistogram(tk.Session().GetSessionVars().StmtCtx, &idx.Histogram)
 		require.NoError(t, err)
 		require.True(t, ok)
 		require.True(t, idx.TopN.Equal(topn))
-		return false
-	})
+	}
+}
+
+func TestAnalyzePartitionTableForFloat(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
+	tk.MustExec("use test")
+	tk.MustExec("CREATE TABLE t1 ( id bigint(20) unsigned NOT NULL AUTO_INCREMENT, num float(9,8) DEFAULT NULL, PRIMARY KEY (id)  ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin PARTITION BY HASH (id) PARTITIONS 128;")
+	// To reproduce the error we meet in https://github.com/ocean2811/tidbeaff0fbc576a/issues/35910, we should use the data provided in this issue
+	b, err := os.ReadFile("testdata/analyze_test_data.sql")
+	require.NoError(t, err)
+	sqls := strings.Split(string(b), ";")
+	for _, sql := range sqls {
+		if len(sql) < 1 {
+			continue
+		}
+		tk.MustExec(sql)
+	}
+	tk.MustExec("analyze table t1")
 }
 
 func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
@@ -174,16 +127,20 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 	tk.MustExec("set @@tidb_partition_prune_mode='dynamic'")
 	tk.MustExec("use test")
 	tk.MustExec("create table t(id int) partition by hash(id) partitions 4")
-	tk.MustExec("select * from t where id = 0")
-	do, err := session.GetDomain(store)
-	require.NoError(t, err)
-	statsHandle := do.StatsHandle()
-	require.NoError(t, statsHandle.DumpColStatsUsageToKV())
 	testcases := []struct {
 		concurrency string
 	}{
 		{
 			concurrency: "1",
+		},
+		{
+			concurrency: "2",
+		},
+		{
+			concurrency: "3",
+		},
+		{
+			concurrency: "4",
 		},
 		{
 			concurrency: "5",
@@ -193,6 +150,8 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 	for _, tc := range testcases {
 		concurrency := tc.concurrency
 		fmt.Println("testcase ", concurrency)
+		tk.MustExec(fmt.Sprintf("set @@global.tidb_merge_partition_stats_concurrency=%v", concurrency))
+		tk.MustQuery("select @@global.tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
 		tk.MustExec(fmt.Sprintf("set @@tidb_analyze_partition_concurrency=%v", concurrency))
 		tk.MustQuery("select @@tidb_analyze_partition_concurrency").Check(testkit.Rows(concurrency))
 
@@ -205,164 +164,80 @@ func TestAnalyzePartitionTableByConcurrencyInDynamic(t *testing.T) {
 			tk.MustExec(fmt.Sprintf("insert into t (id) values (%v)", j))
 		}
 	}
-	var expected [][]any
+	var expected [][]interface{}
 	for i := 1; i <= 20; i++ {
-		expected = append(expected, []any{
+		expected = append(expected, []interface{}{
 			strconv.FormatInt(int64(i), 10), "500",
 		})
+	}
+	testcases = []struct {
+		concurrency string
+	}{
+		{
+			concurrency: "1",
+		},
+		{
+			concurrency: "2",
+		},
+		{
+			concurrency: "3",
+		},
+		{
+			concurrency: "4",
+		},
+		{
+			concurrency: "5",
+		},
 	}
 	for _, tc := range testcases {
 		concurrency := tc.concurrency
 		fmt.Println("testcase ", concurrency)
+		tk.MustExec(fmt.Sprintf("set @@tidb_merge_partition_stats_concurrency=%v", concurrency))
+		tk.MustQuery("select @@tidb_merge_partition_stats_concurrency").Check(testkit.Rows(concurrency))
 		tk.MustExec("analyze table t")
 		tk.MustQuery("show stats_topn where partition_name = 'global' and table_name = 't'").CheckAt([]int{5, 6}, expected)
 	}
 }
 
-func TestAnalyzeSaveResultErrorDoesNotHang(t *testing.T) {
+func TestMergeGlobalStatsWithUnAnalyzedPartition(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
-	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("create table t (a int) partition by hash(a) partitions 4")
-	for i := 0; i < 20; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d)", i))
-	}
-
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/statistics/handle/storage/saveAnalyzeResultToStorageErr", "1*return(true)")
-
-	done := make(chan error, 1)
-	go func() {
-		done <- tk.ExecToErr("analyze table t")
-	}()
-	select {
-	case err := <-done:
-		require.Error(t, err)
-	case <-time.After(5 * time.Second):
-		t.Fatal("analyze hangs after save analyze result error")
-	}
+	tk.MustExec("set tidb_partition_prune_mode=dynamic;")
+	tk.MustExec("CREATE TABLE `t` (   `id` int(11) DEFAULT NULL,   `a` int(11) DEFAULT NULL, `b` int(11) DEFAULT NULL, `c` int(11) DEFAULT NULL ) PARTITION BY RANGE (`id`) (PARTITION `p0` VALUES LESS THAN (3),  PARTITION `p1` VALUES LESS THAN (7),  PARTITION `p2` VALUES LESS THAN (11));")
+	tk.MustExec("insert into t values (1,1,1,1),(2,2,2,2),(4,4,4,4),(5,5,5,5),(6,6,6,6),(8,8,8,8),(9,9,9,9);")
+	tk.MustExec("create index idxa on t (a);")
+	tk.MustExec("create index idxb on t (b);")
+	tk.MustExec("create index idxc on t (c);")
+	tk.MustExec("analyze table t partition p0 index idxa;")
+	tk.MustExec("analyze table t partition p1 index idxb;")
+	tk.MustExec("analyze table t partition p2 index idxc;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 The version 2 would collect all statistics not only the selected indexes",
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p2, reason to use this rate is \"use min(1, 110000/10000) as the sample-rate=1\""))
+	tk.MustExec("analyze table t partition p0;")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Note 1105 Analyze use auto adjusted sample rate 1.000000 for table test.t's partition p0, reason to use this rate is \"use min(1, 110000/2) as the sample-rate=1\""))
 }
 
-func TestBuildAnalyzePreFlushUsesStatementContext(t *testing.T) {
+func TestSetFastAnalyzeSystemVariable(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_pre_analyze_flush_ctx(a int, b int, key idx_b(b))")
-	tk.MustExec("insert into t_pre_analyze_flush_ctx values (1, 1), (2, 2)")
-
-	stmtNodes, err := tk.Session().Parse(context.Background(), "analyze table t_pre_analyze_flush_ctx all columns")
-	require.NoError(t, err)
-	require.Len(t, stmtNodes, 1)
-	stmt, err := (&executor.Compiler{Ctx: tk.Session()}).Compile(context.Background(), stmtNodes[0])
-	require.NoError(t, err)
-
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	err = executor.BuildExecutorForTest(ctx, stmt)
-	require.ErrorIs(t, err, context.Canceled)
+	tk.MustExec("set @@session.tidb_enable_fast_analyze=1")
+	tk.MustQuery("show warnings").Check(testkit.Rows(
+		"Warning 1105 the fast analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"))
 }
 
-func TestAnalyzeKillDuringSaveDoesNotHang(t *testing.T) {
+func TestIncrementalAnalyze(t *testing.T) {
+	msg := "the incremental analyze feature has already been removed in TiDB v7.5.0, so this will have no effect"
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("delete from mysql.analyze_jobs")
-	tk.MustExec("set @@tidb_analyze_partition_concurrency=1")
-	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("create table t (a int, b int, key idx_b(b)) partition by hash(a) partitions 4")
-	for i := 0; i < 20; i++ {
-		tk.MustExec(fmt.Sprintf("insert into t values (%d, %d)", i, i))
-	}
-	workerPaused := make(chan struct{})
-	releaseWorker := make(chan struct{})
-	thirdSendPaused := make(chan struct{})
-	releaseThirdSend := make(chan struct{})
-	var workerHookCount, sendHookCount atomic.Int64
-
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSaveWorkerBeforeHandleSignal", func() {
-		if workerHookCount.Add(1) == 1 {
-			close(workerPaused)
-			<-releaseWorker
-		}
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeBeforeSendToSaveResults", func() {
-		if sendHookCount.Add(1) == 3 {
-			close(thirdSendPaused)
-			<-releaseThirdSend
-		}
-	})
-
-	done := make(chan error, 1)
-	go func() {
-		done <- tk.ExecToErr("analyze table t")
-	}()
-
-	select {
-	case <-workerPaused:
-	case <-time.After(5 * time.Second):
-		t.Fatal("save worker did not reach first kill-check point")
-	}
-	select {
-	case <-thirdSendPaused:
-	case <-time.After(10 * time.Second):
-		t.Fatal("analyze did not reach third send to save channel")
-	}
-	tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
-	close(releaseWorker)
-	close(releaseThirdSend)
-
-	select {
-	case err := <-done:
-		require.ErrorContains(t, err, exeerrors.ErrQueryInterrupted.Error())
-	case <-time.After(5 * time.Second):
-		t.Fatal("analyze hangs after kill during save")
-	}
-	interruptedRows := tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name = 't' and lower(state) = 'failed' and fail_reason like ?", "%"+exeerrors.ErrQueryInterrupted.Error()+"%").Rows()
-	require.Len(t, interruptedRows, 1)
-	require.NotEqual(t, "0", interruptedRows[0][0])
-	tk.MustQuery("select count(*) from mysql.analyze_jobs where table_name = 't' and lower(state) = 'failed' and fail_reason like ?", "%context canceled%").Check(testkit.Rows("0"))
-}
-
-func TestAnalyzeV2ReleaseColumnCollectorMemoryImmediately(t *testing.T) {
-	const valueLen = 8 * 1024
-	// Ensure sample values are small enough to be retained in the collector;
-	// values exceeding MaxSampleValueLength are truncated, which would make
-	// the memory-release assertions unreliable.
-	require.Greater(t, statistics.MaxSampleValueLength, valueLen)
-
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("set @@tidb_analyze_version=2")
-	tk.MustExec("set @@tidb_build_sampling_stats_concurrency=1")
-	tk.MustExec("set @@tidb_analyze_skip_column_types = ''")
-	tk.MustExec("drop table if exists t_mem_release")
-	tk.MustExec("create table t_mem_release(a text collate utf8mb4_general_ci)")
-	tk.MustExec(fmt.Sprintf("insert into t_mem_release values (repeat('a', %d))", valueLen))
-	for range 6 {
-		tk.MustExec("insert into t_mem_release select a from t_mem_release")
-	}
-
-	var beforeBytes atomic.Int64
-	var afterBytes atomic.Int64
-	var beforeCollectorMem atomic.Int64
-	var afterCollectorMem atomic.Int64
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildBeforeReleaseCollectorMemory", func(collectorMemSize, bytesConsumed int64) {
-		if beforeBytes.CompareAndSwap(0, bytesConsumed) {
-			beforeCollectorMem.Store(collectorMemSize)
-		}
-	})
-	testfailpoint.EnableCall(t, "github.com/pingcap/tidb/pkg/executor/analyzeSamplingBuildAfterReleaseCollectorMemory", func(collectorMemSize, bytesConsumed int64) {
-		if afterBytes.CompareAndSwap(0, bytesConsumed) {
-			afterCollectorMem.Store(collectorMemSize)
-		}
-	})
-
-	tk.MustExec("analyze table t_mem_release with 1.0 samplerate")
-
-	require.NotZero(t, beforeBytes.Load())
-	require.NotZero(t, afterBytes.Load())
-	require.Equal(t, beforeCollectorMem.Load(), afterCollectorMem.Load())
-	require.Equal(t, beforeCollectorMem.Load(), beforeBytes.Load()-afterBytes.Load())
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b))")
+	tk.MustMatchErrMsg("analyze incremental table t index", msg)
+	// Create a partition table.
+	tk.MustExec("drop table if exists t")
+	tk.MustExec("create table t(a int, b int, primary key(a), index idx(b)) partition by range(a) (partition p0 values less than (10), partition p1 values less than (20))")
+	tk.MustMatchErrMsg("analyze incremental table t partition p0 index idx", msg)
 }

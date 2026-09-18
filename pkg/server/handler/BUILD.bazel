@@ -1,22 +1,19 @@
-load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
+load("@io_bazel_rules_go//go:def.bzl", "go_library")
 
 go_library(
     name = "handler",
     srcs = [
-        "auto_id_owner_handler.go",
         "tikv_handler.go",
         "upgrade_handler.go",
         "util.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/server/handler",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/domain/infosync",
-        "//pkg/domain/serverinfo",
         "//pkg/infoschema",
         "//pkg/kv",
-        "//pkg/meta/model",
-        "//pkg/parser/ast",
+        "//pkg/parser/model",
         "//pkg/parser/terror",
         "//pkg/session",
         "//pkg/sessionctx/stmtctx",
@@ -34,16 +31,6 @@ go_library(
         "@com_github_pingcap_kvproto//pkg/kvrpcpb",
         "@com_github_pingcap_kvproto//pkg/metapb",
         "@com_github_tikv_client_go_v2//tikv",
-        "@com_github_tikv_pd_client//opt",
         "@org_uber_go_zap//:zap",
     ],
-)
-
-go_test(
-    name = "handler_test",
-    timeout = "short",
-    srcs = ["auto_id_owner_handler_test.go"],
-    embed = [":handler"],
-    flaky = True,
-    deps = ["@com_github_stretchr_testify//require"],
 )

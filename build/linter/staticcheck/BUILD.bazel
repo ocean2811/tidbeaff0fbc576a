@@ -8,7 +8,7 @@ load("//build/linter/staticcheck:def.bzl", "ANALYZERS")
             "analyzer.go",
             "util.go",
         ],
-        importpath = "github.com/pingcap/tidb/build/linter/staticcheck/" + analyzer,
+        importpath = "github.com/ocean2811/tidbeaff0fbc576a/build/linter/staticcheck/" + analyzer,
         visibility = ["//visibility:public"],
         x_defs = {"name": analyzer},
         deps = [

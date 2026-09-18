@@ -7,9 +7,9 @@ import (
 	"database/sql"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/br/pkg/version"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
 )
 
 const (
@@ -134,7 +134,7 @@ func (c *ConsistencyLockDumpingTables) Setup(tctx *tcontext.Context) error {
 			return errTiDBDisableTableLock
 		}
 	}
-	blockList := make(map[string]map[string]any)
+	blockList := make(map[string]map[string]interface{})
 	return utils.WithRetry(tctx, func() error {
 		lockTablesSQL := buildLockTablesSQL(c.conf.Tables, blockList)
 		var err error

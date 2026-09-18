@@ -15,24 +15,17 @@
 package ddl
 
 import (
-	"context"
-	"errors"
 	"testing"
-	"time"
 
-	"github.com/pingcap/kvproto/pkg/keyspacepb"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func Test_getTTLInfoInOptions(t *testing.T) {
 	falseValue := false
 	trueValue := true
-	twentyFiveHours := "25h"
+	twentyFourHours := "24h"
 
 	cases := []struct {
 		options            []*ast.TableOption
@@ -52,17 +45,17 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 			[]*ast.TableOption{
 				{
 					Tp:            ast.TableOptionTTL,
-					ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
+					ColumnName:    &ast.ColumnName{Name: model.NewCIStr("test_column")},
 					Value:         ast.NewValueExpr(5, "", ""),
 					TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
 				},
 			},
 			&model.TTLInfo{
-				ColumnName:       ast.NewCIStr("test_column"),
+				ColumnName:       model.NewCIStr("test_column"),
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      model.DefaultTTLJobInterval,
+				JobInterval:      "1h",
 			},
 			nil,
 			nil,
@@ -76,17 +69,17 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				},
 				{
 					Tp:            ast.TableOptionTTL,
-					ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
+					ColumnName:    &ast.ColumnName{Name: model.NewCIStr("test_column")},
 					Value:         ast.NewValueExpr(5, "", ""),
 					TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
 				},
 			},
 			&model.TTLInfo{
-				ColumnName:       ast.NewCIStr("test_column"),
+				ColumnName:       model.NewCIStr("test_column"),
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           false,
-				JobInterval:      model.DefaultTTLJobInterval,
+				JobInterval:      "1h",
 			},
 			&falseValue,
 			nil,
@@ -100,7 +93,7 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				},
 				{
 					Tp:            ast.TableOptionTTL,
-					ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
+					ColumnName:    &ast.ColumnName{Name: model.NewCIStr("test_column")},
 					Value:         ast.NewValueExpr(5, "", ""),
 					TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
 				},
@@ -110,11 +103,11 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 				},
 			},
 			&model.TTLInfo{
-				ColumnName:       ast.NewCIStr("test_column"),
+				ColumnName:       model.NewCIStr("test_column"),
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      model.DefaultTTLJobInterval,
+				JobInterval:      "1h",
 			},
 			&trueValue,
 			nil,
@@ -124,24 +117,24 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 			[]*ast.TableOption{
 				{
 					Tp:            ast.TableOptionTTL,
-					ColumnName:    &ast.ColumnName{Name: ast.NewCIStr("test_column")},
+					ColumnName:    &ast.ColumnName{Name: model.NewCIStr("test_column")},
 					Value:         ast.NewValueExpr(5, "", ""),
 					TimeUnitValue: &ast.TimeUnitExpr{Unit: ast.TimeUnitYear},
 				},
 				{
 					Tp:       ast.TableOptionTTLJobInterval,
-					StrValue: "25h",
+					StrValue: "24h",
 				},
 			},
 			&model.TTLInfo{
-				ColumnName:       ast.NewCIStr("test_column"),
+				ColumnName:       model.NewCIStr("test_column"),
 				IntervalExprStr:  "5",
 				IntervalTimeUnit: int(ast.TimeUnitYear),
 				Enable:           true,
-				JobInterval:      "25h",
+				JobInterval:      "24h",
 			},
 			nil,
-			&twentyFiveHours,
+			&twentyFourHours,
 			nil,
 		},
 	}
@@ -154,126 +147,4 @@ func Test_getTTLInfoInOptions(t *testing.T) {
 		assert.Equal(t, c.ttlCronJobSchedule, ttlCronJobSchedule)
 		assert.Equal(t, c.err, err)
 	}
-}
-
-type fakeExternalWorkloadManager struct {
-	role             config.ExternalWorkloadRole
-	registeredTable  int64
-	registerEnabled  bool
-	deletedTable     int64
-	deleteErr        error
-	recycledCreateTS uint64
-	updatedEnable    *bool
-	registerErr      error
-}
-
-func (m *fakeExternalWorkloadManager) Close() error { return nil }
-func (m *fakeExternalWorkloadManager) Role() config.ExternalWorkloadRole {
-	return m.role
-}
-func (*fakeExternalWorkloadManager) Meta() *keyspacepb.KeyspaceMeta { return nil }
-func (*fakeExternalWorkloadManager) InitializeGCV2(context.Context, time.Duration) error {
-	return nil
-}
-func (*fakeExternalWorkloadManager) AbortGCV2(context.Context) error { return nil }
-func (*fakeExternalWorkloadManager) RegisterGCV2(context.Context, uint64, time.Duration) error {
-	return nil
-}
-func (*fakeExternalWorkloadManager) RecycleGCV2(context.Context, uint64) error {
-	return nil
-}
-func (*fakeExternalWorkloadManager) UpdateGCLifeTime(context.Context, time.Duration) error {
-	return nil
-}
-func (m *fakeExternalWorkloadManager) RegisterTTLTableInfo(_ context.Context, tableID int64, ttlJobEnable bool) error {
-	m.registeredTable = tableID
-	m.registerEnabled = ttlJobEnable
-	return m.registerErr
-}
-func (m *fakeExternalWorkloadManager) DeleteTTLTableInfo(_ context.Context, tableID int64) error {
-	m.deletedTable = tableID
-	return m.deleteErr
-}
-func (m *fakeExternalWorkloadManager) RecycleTTLTask(_ context.Context, completedJobCreateTime uint64) error {
-	m.recycledCreateTS = completedJobCreateTime
-	return nil
-}
-func (m *fakeExternalWorkloadManager) UpdateTTLJobEnable(_ context.Context, ttlJobEnable bool) error {
-	m.updatedEnable = &ttlJobEnable
-	return nil
-}
-func (*fakeExternalWorkloadManager) RegisterAutoAnalyze(context.Context, uint64) error {
-	return nil
-}
-func (*fakeExternalWorkloadManager) RecycleAutoAnalyze(context.Context, uint64) error {
-	return nil
-}
-
-func TestExternalWorkloadTTLTableReportsOnlyFromMaster(t *testing.T) {
-	origEnable := vardef.EnableTTLJob.Load()
-	vardef.EnableTTLJob.Store(false)
-	defer vardef.EnableTTLJob.Store(origEnable)
-
-	tblInfo := &model.TableInfo{
-		ID: 123,
-		TTLInfo: &model.TTLInfo{
-			Enable: true,
-		},
-	}
-
-	master := &fakeExternalWorkloadManager{role: config.RoleMaster}
-	dc := &ddlCtx{extWorkload: master}
-	require.NoError(t, dc.registerTTLTableToExternalWorkload(context.Background(), tblInfo))
-	require.Equal(t, int64(123), master.registeredTable)
-	require.False(t, master.registerEnabled)
-
-	require.NoError(t, dc.deleteTTLTableFromExternalWorkload(context.Background(), tblInfo.ID))
-	require.Equal(t, int64(123), master.deletedTable)
-
-	ttlWorker := &fakeExternalWorkloadManager{role: config.RoleTTLTaskWorker}
-	dc = &ddlCtx{extWorkload: ttlWorker}
-	require.NoError(t, dc.registerTTLTableToExternalWorkload(context.Background(), tblInfo))
-	require.NoError(t, dc.deleteTTLTableFromExternalWorkload(context.Background(), tblInfo.ID))
-	require.Equal(t, int64(123), ttlWorker.registeredTable)
-	require.Equal(t, int64(123), ttlWorker.deletedTable)
-}
-
-func TestExternalWorkloadTTLTableRegisterSkipsDisabledTTL(t *testing.T) {
-	manager := &fakeExternalWorkloadManager{role: config.RoleMaster}
-	dc := &ddlCtx{extWorkload: manager}
-	require.NoError(t, dc.registerTTLTableToExternalWorkload(context.Background(), &model.TableInfo{
-		ID:      123,
-		TTLInfo: &model.TTLInfo{Enable: false},
-	}))
-	require.Zero(t, manager.registeredTable)
-}
-
-func TestExternalWorkloadTTLTableRegisterReturnsError(t *testing.T) {
-	boom := errors.New("boom")
-	manager := &fakeExternalWorkloadManager{role: config.RoleMaster, registerErr: boom}
-	dc := &ddlCtx{extWorkload: manager}
-	err := dc.registerTTLTableToExternalWorkload(context.Background(), &model.TableInfo{
-		ID:      123,
-		TTLInfo: &model.TTLInfo{Enable: true},
-	})
-	require.ErrorIs(t, err, boom)
-}
-
-func TestExternalWorkloadTTLTableDeleteReturnsError(t *testing.T) {
-	boom := errors.New("boom")
-	manager := &fakeExternalWorkloadManager{role: config.RoleMaster, deleteErr: boom}
-	dc := &ddlCtx{extWorkload: manager}
-	err := dc.deleteTTLTableFromExternalWorkload(context.Background(), 123)
-	require.ErrorIs(t, err, boom)
-	require.Equal(t, int64(123), manager.deletedTable)
-}
-
-func TestExternalWorkloadTTLTableSyncDeletesDisabledTTL(t *testing.T) {
-	manager := &fakeExternalWorkloadManager{role: config.RoleMaster}
-	dc := &ddlCtx{extWorkload: manager}
-	require.NoError(t, dc.syncTTLTableToExternalWorkload(context.Background(), &model.TableInfo{
-		ID:      123,
-		TTLInfo: &model.TTLInfo{Enable: false},
-	}))
-	require.Equal(t, int64(123), manager.deletedTable)
 }

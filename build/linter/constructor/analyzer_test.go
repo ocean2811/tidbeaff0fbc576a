@@ -17,26 +17,17 @@
 package constructor_test
 
 import (
-	"reflect"
 	"testing"
 
-	"github.com/pingcap/tidb/build/linter/constructor"
-	cutil "github.com/pingcap/tidb/pkg/util/linter/constructor"
-	"github.com/stretchr/testify/require"
+	"github.com/ocean2811/tidbeaff0fbc576a/build/linter/constructor"
 	"golang.org/x/tools/go/analysis/analysistest"
 )
 
 // TODO: investigate the CI environment and check how to run this test in CI.
 // The CI environment doesn't have `go` executable in $PATH.
 
-func TestAnalyzer(t *testing.T) {
+func Test(t *testing.T) {
 	testdata := analysistest.TestData()
-	pkgs := []string{"t", constructor.ConstructorUtilPath}
+	pkgs := []string{"t", "github.com/ocean2811/tidbeaff0fbc576a/util/linter/constructor"}
 	analysistest.Run(t, testdata, constructor.Analyzer, pkgs...)
-}
-
-func TestUtilPath(t *testing.T) {
-	c := cutil.Constructor{}
-	typ := reflect.TypeOf(c)
-	require.Equal(t, typ.PkgPath(), constructor.ConstructorUtilPath)
 }

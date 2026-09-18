@@ -17,9 +17,9 @@ package kv
 import (
 	"strings"
 
-	mysql "github.com/pingcap/tidb/pkg/errno"
-	pmysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/dbterror"
+	mysql "github.com/ocean2811/tidbeaff0fbc576a/pkg/errno"
+	pmysql "github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror"
 )
 
 // TxnRetryableMark is used to uniform the commit error messages which could retry the transaction.
@@ -47,10 +47,7 @@ var (
 	ErrTxnTooLarge = dbterror.ClassKV.NewStd(mysql.ErrTxnTooLarge)
 	// ErrEntryTooLarge is the error when a key value entry is too large.
 	ErrEntryTooLarge = dbterror.ClassKV.NewStd(mysql.ErrEntryTooLarge)
-	// ErrKeyTooLarge is the error when a key is too large to be handled by MemBuffer.
-	ErrKeyTooLarge = dbterror.ClassKV.NewStd(mysql.ErrKeyTooLarge)
-	// ErrKeyExists returns when key is already exist. Caller should try to use
-	// GenKeyExistsErr to generate this error for correct format.
+	// ErrKeyExists returns when key is already exist.
 	ErrKeyExists = dbterror.ClassKV.NewStd(mysql.ErrDupEntry)
 	// ErrNotImplemented returns when a function is not implemented yet.
 	ErrNotImplemented = dbterror.ClassKV.NewStd(mysql.ErrNotImplemented)
@@ -70,8 +67,6 @@ var (
 			mysql.MySQLErrName[mysql.ErrWriteConflictInTiDB].RedactArgPos,
 		),
 	)
-	// ErrSharedLockLost is a transaction-fatal indication that shared-lock ownership may have been lost during upgrade.
-	ErrSharedLockLost = dbterror.ClassTiKV.NewStd(mysql.ErrSharedLockLost)
 	// ErrLockExpire is the error when the lock is expired.
 	ErrLockExpire = dbterror.ClassTiKV.NewStd(mysql.ErrLockExpire)
 	// ErrAssertionFailed is the error when an assertion fails.
@@ -96,8 +91,23 @@ func IsErrNotFound(err error) bool {
 	return ErrNotExist.Equal(err)
 }
 
-// GenKeyExistsErr generates a ErrKeyExists, it concat the handle columns data
-// with '-'. This is consistent with MySQL.
-func GenKeyExistsErr(keyCols []string, keyName string) error {
-	return ErrKeyExists.FastGenByArgs(strings.Join(keyCols, "-"), keyName)
+// GetDuplicateErrorHandleString is used to concat the handle columns data with '-'.
+// This is consistent with MySQL.
+func GetDuplicateErrorHandleString(handle Handle) string {
+	dt, err := handle.Data()
+	if err != nil {
+		return err.Error()
+	}
+	var sb strings.Builder
+	for i, d := range dt {
+		if i != 0 {
+			sb.WriteString("-")
+		}
+		s, err := d.ToString()
+		if err != nil {
+			return err.Error()
+		}
+		sb.WriteString(s)
+	}
+	return sb.String()
 }

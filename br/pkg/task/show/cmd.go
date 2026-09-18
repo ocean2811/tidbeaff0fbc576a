@@ -8,17 +8,17 @@ import (
 
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/task"
-	"github.com/pingcap/tidb/pkg/objstore"
+	berrors "github.com/ocean2811/tidbeaff0fbc576a/br/pkg/errors"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/metautil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/task"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
 type Config struct {
 	Storage    string
-	BackendCfg objstore.BackendOptions
+	BackendCfg storage.BackendOptions
 	Cipher     backuppb.CipherInfo
 }
 
@@ -93,7 +93,7 @@ func (exec *CmdExecutor) Read(ctx context.Context) (ShowResult, error) {
 		out := make(chan *metautil.Table, 16)
 		errc := make(chan error, 1)
 		go func() {
-			errc <- exec.meta.ReadSchemasFiles(ctx, out, metautil.SkipFiles, metautil.SkipStats)
+			errc <- exec.meta.ReadSchemasFiles(ctx, out, metautil.SkipFiles)
 			close(out)
 		}()
 		ts, err := collectResult(ctx, out, errc, convertTable)

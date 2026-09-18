@@ -25,39 +25,50 @@ import (
 	"time"
 
 	"github.com/pingcap/kvproto/pkg/coprocessor"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/intest"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
-	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/stringutil"
 	"github.com/pingcap/tipb/go-tipb"
 	"go.uber.org/zap"
 )
 
+// MemTablePredicateExtractor is used to extract some predicates from `WHERE` clause
+// and push the predicates down to the data retrieving on reading memory table stage.
+//
+// e.g:
+// SELECT * FROM cluster_config WHERE type='tikv' AND instance='192.168.1.9:2379'
+// We must request all components in the cluster via HTTP API for retrieving
+// configurations and filter them by `type/instance` columns.
+//
+// The purpose of defining a `MemTablePredicateExtractor` is to optimize this
+// 1. Define a `ClusterConfigTablePredicateExtractor`
+// 2. Extract the `type/instance` columns on the logic optimizing stage and save them via fields.
+// 3. Passing the extractor to the `ClusterReaderExecExec` executor
+// 4. Executor sends requests to the target components instead of all of the components
+type MemTablePredicateExtractor interface {
+	// Extracts predicates which can be pushed down and returns the remained predicates
+	Extract(sessionctx.Context, *expression.Schema, []*types.FieldName, []expression.Expression) (remained []expression.Expression)
+	explainInfo(p *PhysicalMemTable) string
+}
+
 // extractHelper contains some common utililty functions for all extractor.
 // define an individual struct instead of a bunch of un-exported functions
 // to avoid polluting the global scope of current package.
-type extractHelper struct {
-	enableScalarPushDown bool
-	pushedDownFuncs      map[string]func(string) string
+type extractHelper struct{}
 
-	// Store whether the extracted strings for a specific column are converted to lower case
-	extractLowerString map[string]bool
-}
-
-func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
+func (extractHelper) extractColInConsExpr(extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
 	args := expr.GetArgs()
 	col, isCol := args[0].(*expression.Column)
 	if !isCol {
@@ -77,119 +88,20 @@ func (extractHelper) extractColInConsExpr(ctx base.PlanContext, extractCols map[
 		}
 		v := constant.Value
 		if constant.ParamMarker != nil {
-			var err error
-			v, err = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
-			intest.AssertNoError(err, "fail to get param")
-			if err != nil {
-				logutil.BgLogger().Warn("fail to get param", zap.Error(err))
-				return "", nil
-			}
+			v = constant.ParamMarker.GetUserVar()
 		}
 		results = append(results, v)
 	}
 	return name.ColName.L, results
 }
 
-func (helper *extractHelper) setColumnPushedDownFn(
-	colNameL string,
-	extractCols map[int64]*types.FieldName,
-	expr *expression.ScalarFunction,
-) {
-	scalar := helper.extractColBinaryOpScalarFunc(extractCols, expr)
-	if scalar == nil {
-		return
-	}
-	switch scalar.FuncName.L {
-	case ast.Lower:
-		helper.pushedDownFuncs = make(map[string]func(string) string)
-		helper.pushedDownFuncs[colNameL] = strings.ToLower
-	case ast.Upper:
-		helper.pushedDownFuncs = make(map[string]func(string) string)
-		helper.pushedDownFuncs[colNameL] = strings.ToUpper
-	}
-}
-
-func (extractHelper) isPushDownSupported(fnNameL string) bool {
-	return slices.Contains([]string{ast.Lower, ast.Upper}, fnNameL)
-}
-
-// extractColBinaryOpScalarFunc extract the scalar function from a binary operation. For example,
-// `eq(lower(col), "constant")` returns `lower`.
-func (extractHelper) extractColBinaryOpScalarFunc(
-	extractCols map[int64]*types.FieldName,
-	expr *expression.ScalarFunction,
-) (sf *expression.ScalarFunction) {
-	args := expr.GetArgs()
-	var constIdx int
-	// c = 'rhs'
-	// 'lhs' = c
-	for i := range 2 {
-		_, isConst := args[i].(*expression.Constant)
-		if isConst {
-			constIdx = i
-			break
-		}
-	}
-	scalar, isScalar := args[1-constIdx].(*expression.ScalarFunction)
-	if !isScalar {
-		return nil
-	}
-	args = scalar.GetArgs()
-	if len(args) != 1 {
-		return nil
-	}
-	col, isCol := args[0].(*expression.Column)
-	if !isCol {
-		return nil
-	}
-	_, found := extractCols[col.UniqueID]
-	if !found {
-		return nil
-	}
-	return scalar
-}
-
-func (helper *extractHelper) tryToFindInnerColAndIdx(args []expression.Expression) (innerCol *expression.Column, colIdx int) {
-	if !helper.enableScalarPushDown {
-		return nil, -1
-	}
-	var scalar *expression.ScalarFunction
-	for i := range 2 {
-		var isScalar bool
-		scalar, isScalar = args[i].(*expression.ScalarFunction)
-		if isScalar {
-			colIdx = i
-			break
-		}
-	}
-	if scalar != nil {
-		args := scalar.GetArgs()
-		if len(args) != 1 {
-			return nil, -1
-		}
-		col, isCol := args[0].(*expression.Column)
-		if !isCol {
-			return nil, -1
-		}
-		if !helper.isPushDownSupported(scalar.FuncName.L) {
-			return nil, -1
-		}
-		return col, colIdx
-	}
-	return nil, -1
-}
-
-func (helper *extractHelper) extractColBinaryOpConsExpr(
-	ctx base.PlanContext,
-	extractCols map[int64]*types.FieldName,
-	expr *expression.ScalarFunction,
-) (string, []types.Datum, bool) {
+func (extractHelper) extractColBinaryOpConsExpr(extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
 	args := expr.GetArgs()
 	var col *expression.Column
 	var colIdx int
 	// c = 'rhs'
 	// 'lhs' = c
-	for i := range 2 {
+	for i := 0; i < 2; i++ {
 		var isCol bool
 		col, isCol = args[i].(*expression.Column)
 		if isCol {
@@ -197,43 +109,31 @@ func (helper *extractHelper) extractColBinaryOpConsExpr(
 			break
 		}
 	}
-
-	innerCol, innerColIdx := helper.tryToFindInnerColAndIdx(args)
-	if innerCol != nil {
-		col, colIdx = innerCol, innerColIdx
-	}
 	if col == nil {
-		return "", nil, false
+		return "", nil
 	}
 
 	name, found := extractCols[col.UniqueID]
 	if !found {
-		return "", nil, false
+		return "", nil
 	}
-
 	// The `lhs/rhs` of EQ expression must be a constant
 	// SELECT * FROM t1 WHERE c='rhs'
 	// SELECT * FROM t1 WHERE 'lhs'=c
 	constant, ok := args[1-colIdx].(*expression.Constant)
 	if !ok || constant.DeferredExpr != nil {
-		return "", nil, false
+		return "", nil
 	}
 	v := constant.Value
 	if constant.ParamMarker != nil {
-		var err error
-		v, err = constant.ParamMarker.GetUserVar(ctx.GetExprCtx().GetEvalCtx())
-		intest.AssertNoError(err, "fail to get param")
-		if err != nil {
-			logutil.BgLogger().Warn("fail to get param", zap.Error(err))
-			return "", nil, false
-		}
+		v = constant.ParamMarker.GetUserVar()
 	}
-	return name.ColName.L, []types.Datum{v}, colIdx == 0
+	return name.ColName.L, []types.Datum{v}
 }
 
 // extract the OR expression, e.g:
 // SELECT * FROM t1 WHERE c1='a' OR c1='b' OR c1='c'
-func (helper *extractHelper) extractColOrExpr(ctx base.PlanContext, extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
+func (helper extractHelper) extractColOrExpr(extractCols map[int64]*types.FieldName, expr *expression.ScalarFunction) (string, []types.Datum) {
 	args := expr.GetArgs()
 	lhs, ok := args[0].(*expression.ScalarFunction)
 	if !ok {
@@ -247,12 +147,11 @@ func (helper *extractHelper) extractColOrExpr(ctx base.PlanContext, extractCols 
 	var extract = func(extractCols map[int64]*types.FieldName, fn *expression.ScalarFunction) (string, []types.Datum) {
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
-			colName, datums, _ := helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
-			return colName, datums
+			return helper.extractColBinaryOpConsExpr(extractCols, fn)
 		case ast.LogicOr:
-			return helper.extractColOrExpr(ctx, extractCols, fn)
+			return helper.extractColOrExpr(extractCols, fn)
 		case ast.In:
-			return helper.extractColInConsExpr(ctx, extractCols, fn)
+			return helper.extractColInConsExpr(extractCols, fn)
 		default:
 			return "", nil
 		}
@@ -289,8 +188,7 @@ func (extractHelper) merge(lhs set.StringSet, datums []types.Datum, toLower bool
 	return tmpNodeTypes
 }
 
-func (helper *extractHelper) extractCol(
-	ctx base.PlanContext,
+func (helper extractHelper) extractCol(
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -319,16 +217,11 @@ func (helper *extractHelper) extractCol(
 		var datums []types.Datum // the memory of datums should not be reused, they will be put into result.
 		switch helper.getStringFunctionName(fn) {
 		case ast.EQ:
-			helper.enableScalarPushDown = true
-			colName, datums, _ = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
-			if colName == extractColName {
-				helper.setColumnPushedDownFn(colName, extractCols, fn)
-			}
-			helper.enableScalarPushDown = false
+			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 		case ast.In:
-			colName, datums = helper.extractColInConsExpr(ctx, extractCols, fn)
+			colName, datums = helper.extractColInConsExpr(extractCols, fn)
 		case ast.LogicOr:
-			colName, datums = helper.extractColOrExpr(ctx, extractCols, fn)
+			colName, datums = helper.extractColOrExpr(extractCols, fn)
 		}
 		if colName == extractColName {
 			result = helper.merge(result, datums, valueToLower)
@@ -342,11 +235,6 @@ func (helper *extractHelper) extractCol(
 			break
 		}
 	}
-
-	if helper.extractLowerString == nil {
-		helper.extractLowerString = make(map[string]bool)
-	}
-	helper.extractLowerString[extractColName] = valueToLower
 	return
 }
 
@@ -354,8 +242,7 @@ func (helper *extractHelper) extractCol(
 // SELECT * FROM t WHERE c LIKE '%a%'
 // SELECT * FROM t WHERE c LIKE '%a%' AND c REGEXP '.*xxx.*'
 // SELECT * FROM t WHERE c LIKE '%a%' OR c REGEXP '.*xxx.*'
-func (helper *extractHelper) extractLikePatternCol(
-	ctx base.PlanContext,
+func (helper extractHelper) extractLikePatternCol(
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -383,25 +270,22 @@ func (helper *extractHelper) extractLikePatternCol(
 			continue
 		}
 
-		var canBuildPattern, isPrefilter bool
+		var canBuildPattern bool
 		var pattern string
 		// We use '|' to combine DNF regular expression: .*a.*|.*b.*
 		// e.g:
 		// SELECT * FROM t WHERE c LIKE '%a%' OR c LIKE '%b%'
 		if fn.FuncName.L == ast.LogicOr && !toLower {
-			canBuildPattern, pattern, isPrefilter = helper.extractOrLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
+			canBuildPattern, pattern = helper.extractOrLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		} else {
-			canBuildPattern, pattern, isPrefilter = helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
+			canBuildPattern, pattern = helper.extractLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		}
 		if canBuildPattern && toLower {
 			pattern = strings.ToLower(pattern)
 		}
 		if canBuildPattern {
 			patterns = append(patterns, pattern)
-		}
-		// A prefilter narrows the scan but is not exactly equivalent to the
-		// predicate, so it is pushed down *and* kept for a scalar recheck.
-		if !canBuildPattern || isPrefilter {
+		} else {
 			remained = append(remained, expr)
 		}
 	}
@@ -409,120 +293,66 @@ func (helper *extractHelper) extractLikePatternCol(
 }
 
 func (helper extractHelper) extractOrLikePattern(
-	ctx base.PlanContext,
 	orFunc *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
-	toLower bool,
 ) (
 	ok bool,
 	pattern string,
-	isPrefilter bool,
 ) {
 	predicates := expression.SplitDNFItems(orFunc)
 	if len(predicates) == 0 {
-		return false, "", false
+		return false, ""
 	}
 
 	patternBuilder := make([]string, 0, len(predicates))
 	for _, predicate := range predicates {
 		fn, ok := predicate.(*expression.ScalarFunction)
 		if !ok {
-			return false, "", false
+			return false, ""
 		}
 
-		ok, partPattern, partIsPrefilter := helper.extractLikePattern(ctx, fn, extractColName, extractCols, needLike2Regexp, toLower)
+		ok, partPattern := helper.extractLikePattern(fn, extractColName, extractCols, needLike2Regexp)
 		if !ok {
-			return false, "", false
+			return false, ""
 		}
-		// One inexact branch makes the whole disjunction inexact.
-		isPrefilter = isPrefilter || partIsPrefilter
 		patternBuilder = append(patternBuilder, partPattern)
 	}
-	return true, strings.Join(patternBuilder, "|"), isPrefilter
+	return true, strings.Join(patternBuilder, "|")
 }
 
-// extractLikePattern builds the pushed-down pattern for a single predicate.
-// toLower reports whether the caller folds case on both the pattern and the
-// scanned value, which decides how a case-insensitive ILIKE is represented.
-// isPrefilter reports that the pattern only narrows the scan and is not exactly
-// equivalent to the predicate, so the caller must keep a scalar recheck.
 func (helper extractHelper) extractLikePattern(
-	ctx base.PlanContext,
 	fn *expression.ScalarFunction,
 	extractColName string,
 	extractCols map[int64]*types.FieldName,
 	needLike2Regexp bool,
-	toLower bool,
 ) (
 	ok bool,
 	pattern string,
-	isPrefilter bool,
 ) {
 	var colName string
 	var datums []types.Datum
 	switch fn.FuncName.L {
 	case ast.EQ, ast.Like, ast.Ilike, ast.Regexp, ast.RegexpLike:
-		colName, datums, _ = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+		colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 	}
 	if colName != extractColName {
-		return false, "", false
+		return false, ""
 	}
 	switch fn.FuncName.L {
 	case ast.EQ:
-		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$", false
+		return true, "^" + regexp.QuoteMeta(datums[0].GetString()) + "$"
 	case ast.Like, ast.Ilike:
-		// The pushed-down pattern must honour the LIKE ESCAPE so it does not
-		// diverge from the original predicate (issue #69653). The escape has to
-		// be resolvable at plan time: for a constant escape (including the
-		// default '\' and the empty escape of NO_BACKSLASH_ESCAPES) we compile
-		// the regexp with it; a non-constant/deferred escape can't be resolved
-		// here, so we skip extraction and let the scalar predicate be rechecked.
-		escape, ok := likeEscapeConst(fn)
-		if !ok {
-			return false, "", false
+		if needLike2Regexp {
+			return true, stringutil.CompileLike2Regexp(datums[0].GetString())
 		}
-		if !needLike2Regexp {
-			return true, datums[0].GetString(), false
-		}
-		pattern = stringutil.CompileLike2Regexp(datums[0].GetString(), escape)
-		// ILIKE matches case-insensitively while the pattern above is
-		// case-sensitive. Callers that fold case (toLower) lower both the pattern
-		// and the scanned value, so it stays equivalent there. Callers that do
-		// not -- the cluster log path sends the pattern verbatim in
-		// SearchLogRequest.Patterns -- get a case-insensitive group instead, so
-		// an "ERROR" line still matches `message ILIKE '%error%'`. The scoped
-		// (?i:...) form keeps the flag from leaking across a '|' when several
-		// patterns are combined into one disjunction. Case folding there is the
-		// regexp engine's rather than ILIKE's, so it is only a prefilter and the
-		// predicate is rechecked.
-		if fn.FuncName.L == ast.Ilike && !toLower {
-			return true, "(?i:" + pattern + ")", true
-		}
-		return true, pattern, false
+		return true, datums[0].GetString()
 	case ast.Regexp, ast.RegexpLike:
-		return true, datums[0].GetString(), false
+		return true, datums[0].GetString()
 	default:
-		return false, "", false
+		return false, ""
 	}
-}
-
-// likeEscapeConst returns the ESCAPE byte of a LIKE/ILIKE ScalarFunction when
-// it is a plan-time constant (ok=true). The escape must be constant so the
-// pushed-down pattern can be compiled to match the predicate exactly (issue
-// #69653); a non-constant, deferred, or parameterized escape returns ok=false,
-// telling the caller to skip pushdown and keep a scalar recheck.
-func likeEscapeConst(fn *expression.ScalarFunction) (byte, bool) {
-	args := fn.GetArgs()
-	if len(args) < 3 {
-		return 0, false
-	}
-	escape, ok := args[2].(*expression.Constant)
-	if !ok || escape.DeferredExpr != nil || escape.ParamMarker != nil {
-		return 0, false
-	}
-	return byte(escape.Value.GetInt64()), true
 }
 
 func (extractHelper) findColumn(schema *expression.Schema, names []*types.FieldName, colName string) map[int64]*types.FieldName {
@@ -581,7 +411,7 @@ func (extractHelper) getStringFunctionName(fn *expression.ScalarFunction) string
 // SELECT * FROM t WHERE time='2019-10-10 10:10:10'
 // SELECT * FROM t WHERE time>'2019-10-10 10:10:10' AND time<'2019-10-11 10:10:10'
 func (helper extractHelper) extractTimeRange(
-	ctx base.PlanContext,
+	ctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -589,7 +419,8 @@ func (helper extractHelper) extractTimeRange(
 	timezone *time.Location,
 ) (
 	remained []expression.Expression,
-	startTime int64, // unix timestamp in nanoseconds
+	// unix timestamp in nanoseconds
+	startTime int64,
 	endTime int64,
 ) {
 	remained = make([]expression.Expression, 0, len(predicates))
@@ -607,30 +438,16 @@ func (helper extractHelper) extractTimeRange(
 
 		var colName string
 		var datums []types.Datum
-		var colOnLeft bool
 		fnName := helper.getTimeFunctionName(fn)
 		switch fnName {
 		case ast.GT, ast.GE, ast.LT, ast.LE, ast.EQ:
-			colName, datums, colOnLeft = helper.extractColBinaryOpConsExpr(ctx, extractCols, fn)
+			colName, datums = helper.extractColBinaryOpConsExpr(extractCols, fn)
 		}
 
 		if colName == extractColName {
-			if !colOnLeft {
-				switch fnName {
-				case ast.GT:
-					fnName = ast.LT
-				case ast.GE:
-					fnName = ast.LE
-				case ast.LT:
-					fnName = ast.GT
-				case ast.LE:
-					fnName = ast.GE
-				}
-			}
-
 			timeType := types.NewFieldType(mysql.TypeDatetime)
 			timeType.SetDecimal(6)
-			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx.TypeCtx(), timeType)
+			timeDatum, err := datums[0].ConvertTo(ctx.GetSessionVars().StmtCtx, timeType)
 			if err != nil || timeDatum.Kind() == types.KindNull {
 				remained = append(remained, expr)
 				continue
@@ -649,28 +466,28 @@ func (helper extractHelper) extractTimeRange(
 
 			switch fnName {
 			case ast.EQ:
-				startTime = max(startTime, timestamp)
+				startTime = mathutil.Max(startTime, timestamp)
 				if endTime == 0 {
 					endTime = timestamp
 				} else {
-					endTime = min(endTime, timestamp)
+					endTime = mathutil.Min(endTime, timestamp)
 				}
 			case ast.GT:
 				// FixMe: add 1ms is not absolutely correct here, just because the log search precision is millisecond.
-				startTime = max(startTime, timestamp+int64(time.Millisecond))
+				startTime = mathutil.Max(startTime, timestamp+int64(time.Millisecond))
 			case ast.GE:
-				startTime = max(startTime, timestamp)
+				startTime = mathutil.Max(startTime, timestamp)
 			case ast.LT:
 				if endTime == 0 {
 					endTime = timestamp - int64(time.Millisecond)
 				} else {
-					endTime = min(endTime, timestamp-int64(time.Millisecond))
+					endTime = mathutil.Min(endTime, timestamp-int64(time.Millisecond))
 				}
 			case ast.LE:
 				if endTime == 0 {
 					endTime = timestamp
 				} else {
-					endTime = min(endTime, timestamp)
+					endTime = mathutil.Min(endTime, timestamp)
 				}
 			default:
 				remained = append(remained, expr)
@@ -711,7 +528,6 @@ func (extractHelper) parseUint64(uint64Set set.StringSet) []uint64 {
 }
 
 func (helper extractHelper) extractCols(
-	ctx base.PlanContext,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -726,7 +542,7 @@ func (helper extractHelper) extractCols(
 			continue
 		}
 		var values set.StringSet
-		remained, skipRequest, values = helper.extractCol(ctx, schema, names, remained, name.ColName.L, valueToLower)
+		remained, skipRequest, values = helper.extractCol(schema, names, remained, name.ColName.L, valueToLower)
 		if skipRequest {
 			return nil, true, nil
 		}
@@ -784,21 +600,20 @@ type ClusterTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ClusterTableExtractor) Extract(ctx base.PlanContext,
+func (e *ClusterTableExtractor) Extract(_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
-	remained, typeSkipRequest, nodeTypes := e.extractCol(ctx, schema, names, predicates, "type", true)
-	remained, addrSkipRequest, instances := e.extractCol(ctx, schema, names, remained, "instance", false)
+	remained, typeSkipRequest, nodeTypes := e.extractCol(schema, names, predicates, "type", true)
+	remained, addrSkipRequest, instances := e.extractCol(schema, names, remained, "instance", false)
 	e.SkipRequest = typeSkipRequest || addrSkipRequest
 	e.NodeTypes = nodeTypes
 	e.Instances = instances
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *ClusterTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+func (e *ClusterTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -851,15 +666,16 @@ type ClusterLogTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *ClusterLogTableExtractor) Extract(ctx base.PlanContext,
+func (e *ClusterLogTableExtractor) Extract(
+	ctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `type/instance` columns
-	remained, typeSkipRequest, nodeTypes := e.extractCol(ctx, schema, names, predicates, "type", true)
-	remained, addrSkipRequest, instances := e.extractCol(ctx, schema, names, remained, "instance", false)
-	remained, levlSkipRequest, logLevels := e.extractCol(ctx, schema, names, remained, "level", true)
+	remained, typeSkipRequest, nodeTypes := e.extractCol(schema, names, predicates, "type", true)
+	remained, addrSkipRequest, instances := e.extractCol(schema, names, remained, "instance", false)
+	remained, levlSkipRequest, logLevels := e.extractCol(schema, names, remained, "level", true)
 	e.SkipRequest = typeSkipRequest || addrSkipRequest || levlSkipRequest
 	e.NodeTypes = nodeTypes
 	e.Instances = instances
@@ -882,14 +698,12 @@ func (e *ClusterLogTableExtractor) Extract(ctx base.PlanContext,
 		return nil
 	}
 
-	remained, patterns := e.extractLikePatternCol(ctx, schema, names, remained, "message", false, true)
+	remained, patterns := e.extractLikePatternCol(schema, names, remained, "message", false, true)
 	e.Patterns = patterns
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *ClusterLogTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*physicalop.PhysicalMemTable)
+func (e *ClusterLogTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -897,11 +711,11 @@ func (e *ClusterLogTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	st, et := e.StartTime, e.EndTime
 	if st > 0 {
 		st := time.UnixMilli(st)
-		fmt.Fprintf(r, "start_time:%v, ", st.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(util.MetricTableTimeFormat))
+		fmt.Fprintf(r, "start_time:%v, ", st.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat))
 	}
 	if et > 0 {
 		et := time.UnixMilli(et)
-		fmt.Fprintf(r, "end_time:%v, ", et.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(util.MetricTableTimeFormat))
+		fmt.Fprintf(r, "end_time:%v, ", et.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat))
 	}
 	if len(e.NodeTypes) > 0 {
 		fmt.Fprintf(r, "node_types:[%s], ", extractStringFromStringSet(e.NodeTypes))
@@ -966,15 +780,16 @@ type HotRegionsHistoryTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *HotRegionsHistoryTableExtractor) Extract(ctx base.PlanContext,
+func (e *HotRegionsHistoryTableExtractor) Extract(
+	ctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `region_id/store_id/peer_id` columns
-	remained, regionIDSkipRequest, regionIDs := e.extractCol(ctx, schema, names, predicates, "region_id", false)
-	remained, storeIDSkipRequest, storeIDs := e.extractCol(ctx, schema, names, remained, "store_id", false)
-	remained, peerIDSkipRequest, peerIDs := e.extractCol(ctx, schema, names, remained, "peer_id", false)
+	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
+	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
+	remained, peerIDSkipRequest, peerIDs := e.extractCol(schema, names, remained, "peer_id", false)
 	e.RegionIDs, e.StoreIDs, e.PeerIDs = e.parseUint64(regionIDs), e.parseUint64(storeIDs), e.parseUint64(peerIDs)
 	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest || peerIDSkipRequest
 	if e.SkipRequest {
@@ -982,8 +797,8 @@ func (e *HotRegionsHistoryTableExtractor) Extract(ctx base.PlanContext,
 	}
 
 	// Extract the is_learner/is_leader columns
-	remained, isLearnerSkipRequest, isLearners := e.extractCol(ctx, schema, names, remained, "is_learner", false)
-	remained, isLeaderSkipRequest, isLeaders := e.extractCol(ctx, schema, names, remained, "is_leader", false)
+	remained, isLearnerSkipRequest, isLearners := e.extractCol(schema, names, remained, "is_learner", false)
+	remained, isLeaderSkipRequest, isLeaders := e.extractCol(schema, names, remained, "is_leader", false)
 	isLearnersUint64, isLeadersUint64 := e.parseUint64(isLearners), e.parseUint64(isLeaders)
 	e.SkipRequest = isLearnerSkipRequest || isLeaderSkipRequest
 	if e.SkipRequest {
@@ -994,7 +809,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(ctx base.PlanContext,
 	e.IsLeaders = e.convertToBoolSlice(isLeadersUint64)
 
 	// Extract the `type` column
-	remained, typeSkipRequest, types := e.extractCol(ctx, schema, names, remained, "type", false)
+	remained, typeSkipRequest, types := e.extractCol(schema, names, remained, "type", false)
 	e.HotRegionTypes = types
 	e.SkipRequest = typeSkipRequest
 	if e.SkipRequest {
@@ -1023,9 +838,7 @@ func (e *HotRegionsHistoryTableExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-// ExplainInfo implements the base.MemTablePredicateExtractor interface.
-func (e *HotRegionsHistoryTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*physicalop.PhysicalMemTable)
+func (e *HotRegionsHistoryTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1086,13 +899,14 @@ func newMetricTableExtractor() *MetricTableExtractor {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *MetricTableExtractor) Extract(ctx base.PlanContext,
+func (e *MetricTableExtractor) Extract(
+	ctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `quantile` columns
-	remained, skipRequest, quantileSet := e.extractCol(ctx, schema, names, predicates, "quantile", true)
+	remained, skipRequest, quantileSet := e.extractCol(schema, names, predicates, "quantile", true)
 	e.Quantiles = e.parseQuantiles(quantileSet)
 	e.SkipRequest = skipRequest
 	if e.SkipRequest {
@@ -1108,7 +922,7 @@ func (e *MetricTableExtractor) Extract(ctx base.PlanContext,
 	}
 
 	excludeCols := set.NewStringSet("quantile", "time", "value")
-	_, skipRequest, extractCols := e.extractCols(ctx, schema, names, remained, excludeCols, false)
+	_, skipRequest, extractCols := e.extractCols(schema, names, remained, excludeCols, false)
 	e.SkipRequest = skipRequest
 	if e.SkipRequest {
 		return nil
@@ -1118,8 +932,9 @@ func (e *MetricTableExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-func (e *MetricTableExtractor) getTimeRange(start, end int64) (startTime, endTime time.Time) {
+func (e *MetricTableExtractor) getTimeRange(start, end int64) (time.Time, time.Time) {
 	const defaultMetricQueryDuration = 10 * time.Minute
+	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		endTime = time.Now()
 		return endTime.Add(-defaultMetricQueryDuration), endTime
@@ -1139,9 +954,7 @@ func (e *MetricTableExtractor) getTimeRange(start, end int64) (startTime, endTim
 	return startTime, endTime
 }
 
-// ExplainInfo implements the base.MemTablePredicateExtractor interface.
-func (e *MetricTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*physicalop.PhysicalMemTable)
+func (e *MetricTableExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1150,14 +963,14 @@ func (e *MetricTableExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	step := time.Second * time.Duration(p.SCtx().GetSessionVars().MetricSchemaStep)
 	return fmt.Sprintf("PromQL:%v, start_time:%v, end_time:%v, step:%v",
 		promQL,
-		startTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(util.MetricTableTimeFormat),
-		endTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(util.MetricTableTimeFormat),
+		startTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat),
+		endTime.In(p.SCtx().GetSessionVars().StmtCtx.TimeZone()).Format(MetricTableTimeFormat),
 		step,
 	)
 }
 
 // GetMetricTablePromQL uses to get the promQL of metric table.
-func (e *MetricTableExtractor) GetMetricTablePromQL(sctx base.PlanContext, lowerTableName string) string {
+func (e *MetricTableExtractor) GetMetricTablePromQL(sctx sessionctx.Context, lowerTableName string) string {
 	quantiles := e.Quantiles
 	def, err := infoschema.GetMetricTableDef(lowerTableName)
 	if err != nil {
@@ -1168,7 +981,7 @@ func (e *MetricTableExtractor) GetMetricTablePromQL(sctx base.PlanContext, lower
 	}
 	var buf bytes.Buffer
 	for i, quantile := range quantiles {
-		promQL := def.GenPromQL(sctx.GetSessionVars().MetricSchemaRangeDuration, e.LabelConditions, quantile)
+		promQL := def.GenPromQL(sctx, e.LabelConditions, quantile)
 		if i > 0 {
 			buf.WriteByte(',')
 		}
@@ -1187,22 +1000,22 @@ type MetricSummaryTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *MetricSummaryTableExtractor) Extract(ctx base.PlanContext,
+func (e *MetricSummaryTableExtractor) Extract(
+	_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	//nolint: ineffassign
-	remained, quantileSkip, quantiles := e.extractCol(ctx, schema, names, predicates, "quantile", false)
-	remained, metricsNameSkip, metricsNames := e.extractCol(ctx, schema, names, predicates, "metrics_name", true)
+	remained, quantileSkip, quantiles := e.extractCol(schema, names, predicates, "quantile", false)
+	remained, metricsNameSkip, metricsNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	e.SkipRequest = quantileSkip || metricsNameSkip
 	e.Quantiles = e.parseQuantiles(quantiles)
 	e.MetricsNames = metricsNames
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (*MetricSummaryTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+func (*MetricSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	return ""
 }
 
@@ -1220,22 +1033,22 @@ type InspectionResultTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InspectionResultTableExtractor) Extract(ctx base.PlanContext,
+func (e *InspectionResultTableExtractor) Extract(
+	_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `rule/item` columns
-	remained, ruleSkip, rules := e.extractCol(ctx, schema, names, predicates, "rule", true)
-	remained, itemSkip, items := e.extractCol(ctx, schema, names, remained, "item", true)
+	remained, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
+	remained, itemSkip, items := e.extractCol(schema, names, remained, "item", true)
 	e.SkipInspection = ruleSkip || itemSkip
 	e.Rules = rules
 	e.Items = items
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *InspectionResultTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+func (e *InspectionResultTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipInspection {
 		return "skip_inspection:true"
 	}
@@ -1258,17 +1071,18 @@ type InspectionSummaryTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InspectionSummaryTableExtractor) Extract(ctx base.PlanContext,
+func (e *InspectionSummaryTableExtractor) Extract(
+	_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `rule` columns
-	_, ruleSkip, rules := e.extractCol(ctx, schema, names, predicates, "rule", true)
+	_, ruleSkip, rules := e.extractCol(schema, names, predicates, "rule", true)
 	// Extract the `metric_name` columns
-	_, metricNameSkip, metricNames := e.extractCol(ctx, schema, names, predicates, "metrics_name", true)
+	_, metricNameSkip, metricNames := e.extractCol(schema, names, predicates, "metrics_name", true)
 	// Extract the `quantile` columns
-	remained, quantileSkip, quantileSet := e.extractCol(ctx, schema, names, predicates, "quantile", false)
+	remained, quantileSkip, quantileSet := e.extractCol(schema, names, predicates, "quantile", false)
 	e.SkipInspection = ruleSkip || quantileSkip || metricNameSkip
 	e.Rules = rules
 	e.Quantiles = e.parseQuantiles(quantileSet)
@@ -1276,8 +1090,7 @@ func (e *InspectionSummaryTableExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *InspectionSummaryTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+func (e *InspectionSummaryTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipInspection {
 		return "skip_inspection: true"
 	}
@@ -1317,20 +1130,20 @@ type InspectionRuleTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *InspectionRuleTableExtractor) Extract(ctx base.PlanContext,
+func (e *InspectionRuleTableExtractor) Extract(
+	_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `type` columns
-	remained, tpSkip, tps := e.extractCol(ctx, schema, names, predicates, "type", true)
+	remained, tpSkip, tps := e.extractCol(schema, names, predicates, "type", true)
 	e.SkipRequest = tpSkip
 	e.Types = tps
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *InspectionRuleTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+func (e *InspectionRuleTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1353,10 +1166,6 @@ type SlowQueryExtractor struct {
 	// current slow-log file.
 	Enable bool
 	Desc   bool
-	// Limit is a hint for early-exit optimizations when scanning slow log files.
-	// It is usually derived from a pushed down LIMIT/TopN (offset+count).
-	// A value of 0 means "no limit hint".
-	Limit uint64
 }
 
 // TimeRange is used to check whether a given log should be extracted.
@@ -1365,23 +1174,9 @@ type TimeRange struct {
 	EndTime   time.Time
 }
 
-// SetRowLimitHint implements base.MemTableRowLimitHintSetter.
-func (e *SlowQueryExtractor) SetRowLimitHint(limit uint64) {
-	if limit == 0 {
-		return
-	}
-	if e.Limit == 0 || limit < e.Limit {
-		e.Limit = limit
-	}
-}
-
-// SetDesc implements base.MemTableDescHintSetter.
-func (e *SlowQueryExtractor) SetDesc(desc bool) {
-	e.Desc = desc
-}
-
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *SlowQueryExtractor) Extract(ctx base.PlanContext,
+func (e *SlowQueryExtractor) Extract(
+	ctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1396,19 +1191,22 @@ func (e *SlowQueryExtractor) Extract(ctx base.PlanContext,
 }
 
 func (e *SlowQueryExtractor) setTimeRange(start, end int64) {
+	const defaultSlowQueryDuration = 24 * time.Hour
+	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		return
 	}
-	var startTime, endTime time.Time
 	if start != 0 {
 		startTime = e.convertToTime(start)
-	} else {
-		startTime, _ = types.MinDatetime.GoTime(time.UTC)
 	}
 	if end != 0 {
 		endTime = e.convertToTime(end)
-	} else {
-		endTime, _ = types.MaxDatetime.GoTime(time.UTC)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultSlowQueryDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultSlowQueryDuration)
 	}
 	timeRange := &TimeRange{
 		StartTime: startTime,
@@ -1446,7 +1244,7 @@ func (e *SlowQueryExtractor) decodeBytesToTime(bs []byte) (int64, error) {
 
 func (*SlowQueryExtractor) decodeToTime(handle kv.Handle) (int64, error) {
 	tp := types.NewFieldType(mysql.TypeDatetime)
-	col := rowcodec.ColInfo{Ft: tp}
+	col := rowcodec.ColInfo{ID: 0, Ft: tp}
 	chk := chunk.NewChunkWithCapacity([]*types.FieldType{tp}, 1)
 	coder := codec.NewDecoder(chk, nil)
 	_, err := coder.DecodeOne(handle.EncodedCol(0), 0, col.Ft)
@@ -1481,15 +1279,16 @@ type TableStorageStatsExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface.
-func (e *TableStorageStatsExtractor) Extract(ctx base.PlanContext,
+func (e *TableStorageStatsExtractor) Extract(
+	_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `table_schema` columns.
-	remained, schemaSkip, tableSchema := e.extractCol(ctx, schema, names, predicates, "table_schema", true)
+	remained, schemaSkip, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
 	// Extract the `table_name` columns.
-	remained, tableSkip, tableName := e.extractCol(ctx, schema, names, remained, "table_name", true)
+	remained, tableSkip, tableName := e.extractCol(schema, names, remained, "table_name", true)
 	e.SkipRequest = schemaSkip || tableSkip
 	if e.SkipRequest {
 		return nil
@@ -1499,8 +1298,7 @@ func (e *TableStorageStatsExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *TableStorageStatsExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+func (e *TableStorageStatsExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1518,9 +1316,7 @@ func (e *TableStorageStatsExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	return r.String()
 }
 
-// ExplainInfo implements the base.MemTablePredicateExtractor interface.
-func (e *SlowQueryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*physicalop.PhysicalMemTable)
+func (e *SlowQueryExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1554,17 +1350,17 @@ type TiFlashSystemTableExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TiFlashSystemTableExtractor) Extract(ctx base.PlanContext,
+func (e *TiFlashSystemTableExtractor) Extract(_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `tiflash_instance` columns.
-	remained, instanceSkip, tiflashInstances := e.extractCol(ctx, schema, names, predicates, "tiflash_instance", false)
+	remained, instanceSkip, tiflashInstances := e.extractCol(schema, names, predicates, "tiflash_instance", false)
 	// Extract the `tidb_database` columns.
-	remained, databaseSkip, tidbDatabases := e.extractCol(ctx, schema, names, remained, "tidb_database", true)
+	remained, databaseSkip, tidbDatabases := e.extractCol(schema, names, remained, "tidb_database", true)
 	// Extract the `tidb_table` columns.
-	remained, tableSkip, tidbTables := e.extractCol(ctx, schema, names, remained, "tidb_table", true)
+	remained, tableSkip, tidbTables := e.extractCol(schema, names, remained, "tidb_table", true)
 	e.SkipRequest = instanceSkip || databaseSkip || tableSkip
 	if e.SkipRequest {
 		return nil
@@ -1575,8 +1371,7 @@ func (e *TiFlashSystemTableExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *TiFlashSystemTableExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+func (e *TiFlashSystemTableExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -1617,13 +1412,14 @@ type StatementsSummaryExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *StatementsSummaryExtractor) Extract(sctx base.PlanContext,
+func (e *StatementsSummaryExtractor) Extract(
+	sctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
 	// Extract the `digest` column
-	remained, skip, digests := e.extractCol(sctx, schema, names, predicates, "digest", false)
+	remained, skip, digests := e.extractCol(schema, names, predicates, "digest", false)
 	if skip {
 		e.SkipRequest = true
 		return nil
@@ -1645,9 +1441,7 @@ func (e *StatementsSummaryExtractor) Extract(sctx base.PlanContext,
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
-	p := pp.(*physicalop.PhysicalMemTable)
+func (e *StatementsSummaryExtractor) explainInfo(p *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request: true"
 	}
@@ -1657,8 +1451,10 @@ func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	}
 	if e.CoarseTimeRange != nil && p.SCtx().GetSessionVars() != nil && p.SCtx().GetSessionVars().StmtCtx != nil {
 		stmtCtx := p.SCtx().GetSessionVars().StmtCtx
-		startTimeStr := formatStatementsSummaryTime(e.CoarseTimeRange.StartTime, stmtCtx.TimeZone())
-		endTimeStr := formatStatementsSummaryTime(e.CoarseTimeRange.EndTime, stmtCtx.TimeZone())
+		startTime := e.CoarseTimeRange.StartTime.In(stmtCtx.TimeZone())
+		endTime := e.CoarseTimeRange.EndTime.In(stmtCtx.TimeZone())
+		startTimeStr := types.NewTime(types.FromGoTime(startTime), mysql.TypeDatetime, types.MaxFsp).String()
+		endTimeStr := types.NewTime(types.FromGoTime(endTime), mysql.TypeDatetime, types.MaxFsp).String()
 		fmt.Fprintf(buf, "start_time: %v, end_time: %v, ", startTimeStr, endTimeStr)
 	}
 	// remove the last ", " in the message info
@@ -1669,21 +1465,8 @@ func (e *StatementsSummaryExtractor) ExplainInfo(pp base.PhysicalPlan) string {
 	return s
 }
 
-func formatStatementsSummaryTime(t time.Time, timezone *time.Location) string {
-	minDatetime, _ := types.MinDatetime.GoTime(time.UTC)
-	if t.Equal(minDatetime) {
-		return types.NewTime(types.MinDatetime, mysql.TypeDatetime, types.MaxFsp).String()
-	}
-	maxDatetime, _ := types.MaxDatetime.GoTime(time.UTC)
-	if t.Equal(maxDatetime) {
-		return types.NewTime(types.MaxDatetime, mysql.TypeDatetime, types.MaxFsp).String()
-	}
-	t = t.In(timezone)
-	return types.NewTime(types.FromGoTime(t), mysql.TypeDatetime, types.MaxFsp).String()
-}
-
 func (e *StatementsSummaryExtractor) findCoarseTimeRange(
-	sctx base.PlanContext,
+	sctx sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
@@ -1695,19 +1478,22 @@ func (e *StatementsSummaryExtractor) findCoarseTimeRange(
 }
 
 func (e *StatementsSummaryExtractor) buildTimeRange(start, end int64) *TimeRange {
+	const defaultStatementsDuration = time.Hour
 	var startTime, endTime time.Time
 	if start == 0 && end == 0 {
 		return nil
 	}
 	if start != 0 {
 		startTime = e.convertToTime(start)
-	} else {
-		startTime, _ = types.MinDatetime.GoTime(time.UTC)
 	}
 	if end != 0 {
 		endTime = e.convertToTime(end)
-	} else {
-		endTime, _ = types.MaxDatetime.GoTime(time.UTC)
+	}
+	if start == 0 {
+		startTime = endTime.Add(-defaultStatementsDuration)
+	}
+	if end == 0 {
+		endTime = startTime.Add(defaultStatementsDuration)
 	}
 	return &TimeRange{StartTime: startTime, EndTime: endTime}
 }
@@ -1728,14 +1514,14 @@ type TikvRegionPeersExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TikvRegionPeersExtractor) Extract(ctx base.PlanContext,
+func (e *TikvRegionPeersExtractor) Extract(_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) []expression.Expression {
 	// Extract the `region_id/store_id` columns.
-	remained, regionIDSkipRequest, regionIDs := e.extractCol(ctx, schema, names, predicates, "region_id", false)
-	remained, storeIDSkipRequest, storeIDs := e.extractCol(ctx, schema, names, remained, "store_id", false)
+	remained, regionIDSkipRequest, regionIDs := e.extractCol(schema, names, predicates, "region_id", false)
+	remained, storeIDSkipRequest, storeIDs := e.extractCol(schema, names, remained, "store_id", false)
 	e.RegionIDs, e.StoreIDs = e.parseUint64(regionIDs), e.parseUint64(storeIDs)
 
 	e.SkipRequest = regionIDSkipRequest || storeIDSkipRequest
@@ -1746,8 +1532,7 @@ func (e *TikvRegionPeersExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *TikvRegionPeersExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+func (e *TikvRegionPeersExtractor) explainInfo(_ *PhysicalMemTable) string {
 	if e.SkipRequest {
 		return "skip_request:true"
 	}
@@ -1766,6 +1551,83 @@ func (e *TikvRegionPeersExtractor) ExplainInfo(_ base.PhysicalPlan) string {
 	return s
 }
 
+// ColumnsTableExtractor is used to extract some predicates of columns table.
+type ColumnsTableExtractor struct {
+	extractHelper
+
+	// SkipRequest means the where clause always false, we don't need to request any component
+	SkipRequest bool
+
+	TableSchema set.StringSet
+
+	TableName set.StringSet
+	// ColumnName represents all column name we should filter in memtable.
+	ColumnName set.StringSet
+
+	TableSchemaPatterns []string
+
+	TableNamePatterns []string
+
+	ColumnNamePatterns []string
+}
+
+// Extract implements the MemTablePredicateExtractor Extract interface
+func (e *ColumnsTableExtractor) Extract(_ sessionctx.Context,
+	schema *expression.Schema,
+	names []*types.FieldName,
+	predicates []expression.Expression,
+) (remained []expression.Expression) {
+	remained, tableSchemaSkipRequest, tableSchema := e.extractCol(schema, names, predicates, "table_schema", true)
+	remained, tableNameSkipRequest, tableName := e.extractCol(schema, names, remained, "table_name", true)
+	remained, columnNameSkipRequest, columnName := e.extractCol(schema, names, remained, "column_name", true)
+	e.SkipRequest = columnNameSkipRequest || tableSchemaSkipRequest || tableNameSkipRequest
+	if e.SkipRequest {
+		return
+	}
+	remained, tableSchemaPatterns := e.extractLikePatternCol(schema, names, remained, "table_schema", true, false)
+	remained, tableNamePatterns := e.extractLikePatternCol(schema, names, remained, "table_name", true, false)
+	remained, columnNamePatterns := e.extractLikePatternCol(schema, names, remained, "column_name", true, false)
+
+	e.ColumnName = columnName
+	e.TableName = tableName
+	e.TableSchema = tableSchema
+	e.TableSchemaPatterns = tableSchemaPatterns
+	e.TableNamePatterns = tableNamePatterns
+	e.ColumnNamePatterns = columnNamePatterns
+	return remained
+}
+
+func (e *ColumnsTableExtractor) explainInfo(_ *PhysicalMemTable) string {
+	if e.SkipRequest {
+		return "skip_request:true"
+	}
+	r := new(bytes.Buffer)
+	if len(e.TableSchema) > 0 {
+		fmt.Fprintf(r, "table_schema:[%s], ", extractStringFromStringSet(e.TableSchema))
+	}
+	if len(e.TableName) > 0 {
+		fmt.Fprintf(r, "table_name:[%s], ", extractStringFromStringSet(e.TableName))
+	}
+	if len(e.ColumnName) > 0 {
+		fmt.Fprintf(r, "column_name:[%s], ", extractStringFromStringSet(e.ColumnName))
+	}
+	if len(e.TableSchemaPatterns) > 0 {
+		fmt.Fprintf(r, "table_schema_pattern:[%s], ", extractStringFromStringSlice(e.TableSchemaPatterns))
+	}
+	if len(e.TableNamePatterns) > 0 {
+		fmt.Fprintf(r, "table_name_pattern:[%s], ", extractStringFromStringSlice(e.TableNamePatterns))
+	}
+	if len(e.ColumnNamePatterns) > 0 {
+		fmt.Fprintf(r, "column_name_pattern:[%s], ", extractStringFromStringSlice(e.ColumnNamePatterns))
+	}
+	// remove the last ", " in the message info
+	s := r.String()
+	if len(s) > 2 {
+		return s[:len(s)-2]
+	}
+	return s
+}
+
 // TiKVRegionStatusExtractor is used to extract single table region scan region from predictions
 type TiKVRegionStatusExtractor struct {
 	extractHelper
@@ -1773,12 +1635,12 @@ type TiKVRegionStatusExtractor struct {
 }
 
 // Extract implements the MemTablePredicateExtractor Extract interface
-func (e *TiKVRegionStatusExtractor) Extract(ctx base.PlanContext,
+func (e *TiKVRegionStatusExtractor) Extract(_ sessionctx.Context,
 	schema *expression.Schema,
 	names []*types.FieldName,
 	predicates []expression.Expression,
 ) (remained []expression.Expression) {
-	remained, _, tableIDSet := e.extractCol(ctx, schema, names, predicates, "table_id", true)
+	remained, _, tableIDSet := e.extractCol(schema, names, predicates, "table_id", true)
 	if tableIDSet.Count() < 1 {
 		return predicates
 	}
@@ -1796,8 +1658,7 @@ func (e *TiKVRegionStatusExtractor) Extract(ctx base.PlanContext,
 	return remained
 }
 
-// ExplainInfo implements base.MemTablePredicateExtractor interface.
-func (e *TiKVRegionStatusExtractor) ExplainInfo(_ base.PhysicalPlan) string {
+func (e *TiKVRegionStatusExtractor) explainInfo(_ *PhysicalMemTable) string {
 	r := new(bytes.Buffer)
 	if len(e.tablesID) > 0 {
 		r.WriteString("table_id in {")

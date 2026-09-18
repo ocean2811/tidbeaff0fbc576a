@@ -21,10 +21,8 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/clients/router"
-	"github.com/tikv/pd/client/opt"
 )
 
 type codecPDClient struct {
@@ -33,21 +31,13 @@ type codecPDClient struct {
 
 // GetRegion encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
-func (c *codecPDClient) GetRegion(
-	ctx context.Context,
-	key []byte,
-	opts ...opt.GetRegionOption,
-) (*router.Region, error) {
+func (c *codecPDClient) GetRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes(nil, key)
 	region, err := c.Client.GetRegion(ctx, encodedKey)
 	return processRegionResult(region, err)
 }
 
-func (c *codecPDClient) GetPrevRegion(
-	ctx context.Context,
-	key []byte,
-	opts ...opt.GetRegionOption,
-) (*router.Region, error) {
+func (c *codecPDClient) GetPrevRegion(ctx context.Context, key []byte, opts ...pd.GetRegionOption) (*pd.Region, error) {
 	encodedKey := codec.EncodeBytes(nil, key)
 	region, err := c.Client.GetPrevRegion(ctx, encodedKey)
 	return processRegionResult(region, err)
@@ -56,7 +46,7 @@ func (c *codecPDClient) GetPrevRegion(
 // GetRegionByID encodes the key before send requests to pd-server and decodes the
 // returned StartKey && EndKey from pd-server.
 func (c *codecPDClient) GetRegionByID(ctx context.Context,
-	regionID uint64, _ ...opt.GetRegionOption) (*router.Region, error) {
+	regionID uint64, _ ...pd.GetRegionOption) (*pd.Region, error) {
 	region, err := c.Client.GetRegionByID(ctx, regionID)
 	return processRegionResult(region, err)
 }
@@ -66,15 +56,13 @@ func (c *codecPDClient) ScanRegions(
 	startKey []byte,
 	endKey []byte,
 	limit int,
-	opts ...opt.GetRegionOption,
-) ([]*router.Region, error) {
+) ([]*pd.Region, error) {
 	startKey = codec.EncodeBytes(nil, startKey)
 	if len(endKey) > 0 {
 		endKey = codec.EncodeBytes(nil, endKey)
 	}
 
-	//nolint:staticcheck
-	regions, err := c.Client.ScanRegions(ctx, startKey, endKey, limit, opts...)
+	regions, err := c.Client.ScanRegions(ctx, startKey, endKey, limit)
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
@@ -89,11 +77,11 @@ func (c *codecPDClient) ScanRegions(
 	return regions, nil
 }
 
-func processRegionResult(region *router.Region, err error) (*router.Region, error) {
+func processRegionResult(region *pd.Region, err error) (*pd.Region, error) {
 	if err != nil {
 		return nil, errors.Trace(err)
 	}
-	if region == nil || region.Meta == nil {
+	if region == nil {
 		return nil, nil
 	}
 	err = decodeRegionMetaKey(region.Meta)

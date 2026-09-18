@@ -16,6 +16,8 @@ package mvmap
 
 import (
 	"bytes"
+
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
 )
 
 type entry struct {
@@ -55,7 +57,7 @@ const (
 func (ds *dataStore) put(key, value []byte) dataAddr {
 	dataLen := uint32(len(key) + len(value))
 	if ds.sliceLen != 0 && ds.sliceLen+dataLen > maxDataSliceLen {
-		ds.slices = append(ds.slices, make([]byte, 0, max(maxDataSliceLen, int(dataLen))))
+		ds.slices = append(ds.slices, make([]byte, 0, mathutil.Max(maxDataSliceLen, int(dataLen))))
 		ds.sliceLen = 0
 		ds.sliceIdx++
 	}
@@ -158,7 +160,7 @@ func (m *MVMap) Get(key []byte, values [][]byte) [][]byte {
 		values = append(values, val)
 	}
 	// Keep the order of input.
-	for i := range len(values) / 2 {
+	for i := 0; i < len(values)/2; i++ {
 		j := len(values) - 1 - i
 		values[i], values[j] = values[j], values[i]
 	}

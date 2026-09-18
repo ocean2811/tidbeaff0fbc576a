@@ -16,8 +16,8 @@ package breakpoint
 
 import (
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/stringutil"
 )
 
 // NotifyBreakPointFuncKey is the key where break point notify function located

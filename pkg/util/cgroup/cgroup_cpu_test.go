@@ -73,7 +73,7 @@ func TestGetCgroupCPU(t *testing.T) {
 	}
 	exit := make(chan struct{})
 	var wg sync.WaitGroup
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -89,7 +89,7 @@ func TestGetCgroupCPU(t *testing.T) {
 	}
 	cpu, err := GetCgroupCPU()
 	if err == errNoCPUControllerDetected {
-		// for more information, please refer https://github.com/pingcap/tidb/pull/41347
+		// for more information, please refer https://github.com/ocean2811/tidbeaff0fbc576a/pull/41347
 		if checkKernelVersionNewerThan(t, 4, 7) {
 			require.NoError(t, err, "linux version > v4.7 and err still happens")
 		} else {

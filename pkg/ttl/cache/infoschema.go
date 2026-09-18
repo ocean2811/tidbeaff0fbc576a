@@ -17,12 +17,10 @@ package cache
 import (
 	"time"
 
-	"github.com/pingcap/tidb/pkg/infoschema"
-	infoschemacontext "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/ttl/session"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -44,27 +42,26 @@ func NewInfoSchemaCache(updateInterval time.Duration) *InfoSchemaCache {
 
 // Update updates the info schema cache
 func (isc *InfoSchemaCache) Update(se session.Session) error {
-	is := se.GetLatestInfoSchema().(infoschema.InfoSchema)
+	is := se.GetDomainInfoSchema().(infoschema.InfoSchema)
 
 	if isc.schemaVer == is.SchemaMetaVersion() {
 		return nil
 	}
 
 	newTables := make(map[int64]*PhysicalTable, len(isc.Tables))
-
-	ch := is.ListTablesWithSpecialAttribute(infoschemacontext.TTLAttribute)
-	for _, v := range ch {
-		for _, tblInfo := range v.TableInfos {
+	for _, db := range is.AllSchemas() {
+		for _, tbl := range is.SchemaTables(db.Name) {
+			tblInfo := tbl.Meta()
 			if tblInfo.TTLInfo == nil || !tblInfo.TTLInfo.Enable || tblInfo.State != model.StatePublic {
 				continue
 			}
-			dbName := v.DBName
+
 			logger := logutil.BgLogger().
-				With(zap.String("schema", dbName.L),
+				With(zap.String("schema", db.Name.L),
 					zap.Int64("tableID", tblInfo.ID), zap.String("tableName", tblInfo.Name.L))
 
 			if tblInfo.Partition == nil {
-				ttlTable, err := isc.newTable(dbName, tblInfo, nil)
+				ttlTable, err := isc.newTable(db.Name, tblInfo, nil)
 				if err != nil {
 					logger.Warn("fail to build info schema cache", zap.Error(err))
 					continue
@@ -74,7 +71,8 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 			}
 
 			for _, par := range tblInfo.Partition.Definitions {
-				ttlTable, err := isc.newTable(dbName, tblInfo, &par)
+				par := par
+				ttlTable, err := isc.newTable(db.Name, tblInfo, &par)
 				if err != nil {
 					logger.Warn("fail to build info schema cache",
 						zap.Int64("partitionID", par.ID),
@@ -92,7 +90,7 @@ func (isc *InfoSchemaCache) Update(se session.Session) error {
 	return nil
 }
 
-func (isc *InfoSchemaCache) newTable(schema ast.CIStr, tblInfo *model.TableInfo,
+func (isc *InfoSchemaCache) newTable(schema model.CIStr, tblInfo *model.TableInfo,
 	par *model.PartitionDefinition) (*PhysicalTable, error) {
 	id := tblInfo.ID
 	if par != nil {
@@ -106,7 +104,7 @@ func (isc *InfoSchemaCache) newTable(schema ast.CIStr, tblInfo *model.TableInfo,
 		}
 	}
 
-	partitionName := ast.NewCIStr("")
+	partitionName := model.NewCIStr("")
 	if par != nil {
 		partitionName = par.Name
 	}

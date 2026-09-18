@@ -19,9 +19,7 @@ import (
 	"runtime"
 	"sync"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 )
 
 // RowContainerReader is a forward-only iterator for the row container. It provides an interface similar to other
@@ -122,19 +120,14 @@ func (reader *rowContainerReader) startWorker() {
 		defer close(reader.rowCh)
 		defer reader.wg.Done()
 
-		for chkIdx := range reader.rc.NumChunks() {
+		for chkIdx := 0; chkIdx < reader.rc.NumChunks(); chkIdx++ {
 			chk, err := reader.rc.GetChunk(chkIdx)
-			failpoint.Inject("get-chunk-error", func(val failpoint.Value) {
-				if val.(bool) {
-					err = errors.New("fail to get chunk for test")
-				}
-			})
 			if err != nil {
 				reader.err = err
 				return
 			}
 
-			for i := range chk.NumRows() {
+			for i := 0; i < chk.NumRows(); i++ {
 				select {
 				case reader.rowCh <- chk.GetRow(i):
 				case <-reader.ctx.Done():

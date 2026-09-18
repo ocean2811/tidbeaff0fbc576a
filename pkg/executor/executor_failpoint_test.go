@@ -17,10 +17,7 @@ package executor_test
 import (
 	"context"
 	"fmt"
-	"hash/fnv"
-	"math/rand"
 	"strconv"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -28,28 +25,17 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/executor/unionexec"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/store/copr"
-	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/deadlockhistory"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/helper"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror/exeerrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/deadlockhistory"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/oracle"
-	"go.uber.org/zap"
 )
 
 func TestTiDBLastTxnInfoCommitMode(t *testing.T) {
@@ -136,8 +122,8 @@ func TestPointGetRepeatableRead(t *testing.T) {
 	tk2.MustExec("use test")
 
 	var (
-		step1 = "github.com/pingcap/tidb/pkg/executor/pointGetRepeatableReadTest-step1"
-		step2 = "github.com/pingcap/tidb/pkg/executor/pointGetRepeatableReadTest-step2"
+		step1 = "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/pointGetRepeatableReadTest-step1"
+		step2 = "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/pointGetRepeatableReadTest-step2"
 	)
 
 	require.NoError(t, failpoint.Enable(step1, "return"))
@@ -172,8 +158,8 @@ func TestBatchPointGetRepeatableRead(t *testing.T) {
 	tk2.MustExec("use test")
 
 	var (
-		step1 = "github.com/pingcap/tidb/pkg/executor/batchPointGetRepeatableReadTest-step1"
-		step2 = "github.com/pingcap/tidb/pkg/executor/batchPointGetRepeatableReadTest-step2"
+		step1 = "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/batchPointGetRepeatableReadTest-step1"
+		step2 = "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/batchPointGetRepeatableReadTest-step2"
 	)
 
 	require.NoError(t, failpoint.Enable(step1, "return"))
@@ -223,7 +209,7 @@ func TestSplitRegionTimeout(t *testing.T) {
 
 	// Test pre-split with timeout.
 	tk.MustExec("drop table if exists t")
-	tk.MustExec("set @@session.tidb_scatter_region='table';")
+	tk.MustExec("set @@global.tidb_scatter_region=1;")
 	require.NoError(t, failpoint.Enable("tikvclient/mockScatterRegionTimeout", `return(true)`))
 	atomic.StoreUint32(&ddl.EnableSplitTableRegion, 1)
 	start := time.Now()
@@ -240,17 +226,17 @@ func TestTSOFail(t *testing.T) {
 	tk.MustExec(`drop table if exists t`)
 	tk.MustExec(`create table t(a int)`)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/session/mockGetTSFail", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockGetTSFail", "return"))
 	ctx := failpoint.WithHook(context.Background(), func(ctx context.Context, fpname string) bool {
-		return fpname == "github.com/pingcap/tidb/pkg/session/mockGetTSFail"
+		return fpname == "github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockGetTSFail"
 	})
 	_, err := tk.Session().Execute(ctx, `select * from t`)
 	require.Error(t, err)
-	require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/session/mockGetTSFail"))
+	require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/session/mockGetTSFail"))
 }
 
 func TestKillTableReader(t *testing.T) {
-	var retry = "tikvclient/mockRetrySendReqToRegion"
+	var retry = "github.com/tikv/client-go/v2/locate/mockRetrySendReqToRegion"
 	defer func() {
 		require.NoError(t, failpoint.Disable(retry))
 	}()
@@ -262,18 +248,18 @@ func TestKillTableReader(t *testing.T) {
 	tk.MustExec("create table t (a int)")
 	tk.MustExec("insert into t values (1),(2),(3)")
 	tk.MustExec("set @@tidb_distsql_scan_concurrency=1")
-	tk.Session().GetSessionVars().SQLKiller.Reset()
+	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 0)
 	require.NoError(t, failpoint.Enable(retry, `return(true)`))
 	wg := &sync.WaitGroup{}
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		time.Sleep(300 * time.Millisecond)
-		tk.Session().GetSessionVars().SQLKiller.SendKillSignal(sqlkiller.QueryInterrupted)
+		time.Sleep(1 * time.Second)
+		err := tk.QueryToErr("select * from t")
+		require.Error(t, err)
+		require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
 	}()
-	err := tk.QueryToErr("select * from t")
-	require.Error(t, err)
-	require.Equal(t, int(exeerrors.ErrQueryInterrupted.Code()), int(terror.ToSQLError(errors.Cause(err).(*terror.Error)).Code))
+	atomic.StoreUint32(&tk.Session().GetSessionVars().Killed, 1)
 	wg.Wait()
 }
 
@@ -289,12 +275,11 @@ func TestCollectCopRuntimeStats(t *testing.T) {
 	rows := tk.MustQuery("explain analyze select * from t1").Rows()
 	require.Len(t, rows, 2)
 	explain := fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*num_rpc:.*, .*regionMiss:.*", explain)
+	require.Regexp(t, ".*rpc_num: .*, .*regionMiss:.*", explain)
 	require.NoError(t, failpoint.Disable("tikvclient/tikvStoreRespResult"))
 }
 
 func TestCoprocessorOOMTiCase(t *testing.T) {
-	t.Skip("skip")
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
@@ -309,7 +294,7 @@ func TestCoprocessorOOMTiCase(t *testing.T) {
 	tk.MustQuery(`split table t6 between (0) and (10000) regions 10`).Check(testkit.Rows("10 1"))
 	tk.MustQuery("split table t6 INDEX id between (0) and (10000) regions 10;").Check(testkit.Rows("10 1"))
 	count := 10
-	for i := range count {
+	for i := 0; i < count; i++ {
 		tk.MustExec(fmt.Sprintf("insert into t5 (id) values (%v)", i))
 		tk.MustExec(fmt.Sprintf("insert into t6 (id) values (%v)", i))
 	}
@@ -340,7 +325,7 @@ func TestCoprocessorOOMTiCase(t *testing.T) {
 			tk.MustExec("use test")
 			tk.MustExec(fmt.Sprintf("set @@tidb_mem_quota_query=%v;", quota))
 			var expect []string
-			for i := range count {
+			for i := 0; i < count; i++ {
 				expect = append(expect, fmt.Sprintf("%v", i))
 			}
 			tk.MustQuery(testcase.sql).Sort().Check(testkit.Rows(expect...))
@@ -351,51 +336,29 @@ func TestCoprocessorOOMTiCase(t *testing.T) {
 	}
 
 	// ticase-4169, trigger oom action twice after workers consuming all the data
-	err := failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/ticase-4169", `return(true)`)
+	err := failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/ticase-4169", `return(true)`)
 	require.NoError(t, err)
 	f()
-	err = failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ticase-4169")
+	err = failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/ticase-4169")
 	require.NoError(t, err)
-	/*
-		// ticase-4170, trigger oom action twice after iterator receiving all the data.
-		err = failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/ticase-4170", `return(true)`)
-		require.NoError(t, err)
-		f()
-		err = failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ticase-4170")
-		require.NoError(t, err)
-		// ticase-4171, trigger oom before reading or consuming any data
-		err = failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/ticase-4171", `return(true)`)
-		require.NoError(t, err)
-		f()
-		err = failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/ticase-4171")
-		require.NoError(t, err)
-
-	*/
-}
-
-func TestCoprocessorBlockIssues56916(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/copr/issue56916", `return`))
-	defer func() { require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/copr/issue56916")) }()
-
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_cooldown")
-	tk.MustExec("create table t_cooldown (id int auto_increment, k int, unique index(id));")
-	tk.MustExec("insert into t_cooldown (k) values (1);")
-	tk.MustExec("insert into t_cooldown (k) select id from t_cooldown;")
-	tk.MustExec("insert into t_cooldown (k) select id from t_cooldown;")
-	tk.MustExec("insert into t_cooldown (k) select id from t_cooldown;")
-	tk.MustExec("insert into t_cooldown (k) select id from t_cooldown;")
-	tk.MustExec("split table t_cooldown by (1),(2),(3),(4),(5),(6),(7),(8),(9),(10);")
-	tk.MustQuery("select * from t_cooldown use index(id) where id > 0 and id < 10").CheckContain("1")
-	tk.MustQuery("select * from t_cooldown use index(id) where id between 1 and 10 or id between 124660 and 132790;").CheckContain("1")
+	// ticase-4170, trigger oom action twice after iterator receiving all the data.
+	err = failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/ticase-4170", `return(true)`)
+	require.NoError(t, err)
+	f()
+	err = failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/ticase-4170")
+	require.NoError(t, err)
+	// ticase-4171, trigger oom before reading or consuming any data
+	err = failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/ticase-4171", `return(true)`)
+	require.NoError(t, err)
+	f()
+	err = failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/copr/ticase-4171")
+	require.NoError(t, err)
 }
 
 func TestIssue21441(t *testing.T) {
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/union/issue21441", `return`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/issue21441", `return`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/union/issue21441"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/issue21441"))
 	}()
 
 	store := testkit.CreateMockStore(t)
@@ -431,167 +394,6 @@ select a from t`
 	tk.MustQuery("select a from (" + sql + ") t order by a limit 7, 4").Check(testkit.Rows("1", "2", "2", "2"))
 }
 
-type unionEmptyExec struct {
-	*exec.BaseExecutor
-}
-
-func (e *unionEmptyExec) Open(context.Context) error {
-	return nil
-}
-
-func (e *unionEmptyExec) Next(_ context.Context, req *chunk.Chunk) error {
-	req.Reset()
-	return nil
-}
-
-func (e *unionEmptyExec) Close() error {
-	return nil
-}
-
-type unionPanicExec struct {
-	*exec.BaseExecutor
-	nextEntered chan struct{}
-	panicCh     <-chan struct{}
-}
-
-func (e *unionPanicExec) Open(context.Context) error {
-	return nil
-}
-
-func (e *unionPanicExec) Next(_ context.Context, _ *chunk.Chunk) error {
-	close(e.nextEntered)
-	<-e.panicCh
-	panic("union exec panic during close")
-}
-
-func (e *unionPanicExec) Close() error {
-	return nil
-}
-
-func TestUnionExecCloseWaitsForWorkers(t *testing.T) {
-	fp := "github.com/pingcap/tidb/pkg/executor/unionexec/pauseUnionExecResultPuller"
-	require.NoError(t, failpoint.Enable(fp, "pause"))
-	fpEnabled := true
-	t.Cleanup(func() {
-		if fpEnabled {
-			require.NoError(t, failpoint.Disable(fp))
-		}
-	})
-
-	ctx := mock.NewContext()
-	schema := expression.NewSchema()
-	childBase := exec.NewBaseExecutor(ctx, schema, 0)
-	child := &unionEmptyExec{BaseExecutor: &childBase}
-	unionBase := exec.NewBaseExecutor(ctx, schema, 1, child)
-	union := &unionexec.UnionExec{
-		BaseExecutor: unionBase,
-		Concurrency:  1,
-	}
-
-	require.NoError(t, exec.Open(context.Background(), union))
-	chk := exec.NewFirstChunk(union)
-
-	nextDone := make(chan struct{})
-	go func() {
-		_ = union.Next(context.Background(), chk)
-		close(nextDone)
-	}()
-
-	select {
-	case <-nextDone:
-		t.Fatalf("union Next returned before workers paused")
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	closeDone := make(chan struct{})
-	go func() {
-		_ = union.Close()
-		close(closeDone)
-	}()
-
-	select {
-	case <-closeDone:
-		t.Fatalf("union Close returned while workers paused")
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	require.NoError(t, failpoint.Disable(fp))
-	fpEnabled = false
-
-	select {
-	case <-closeDone:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("union Close did not return after workers resumed")
-	}
-
-	select {
-	case <-nextDone:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("union Next did not return after Close")
-	}
-}
-
-func TestUnionExecCloseReturnsAfterWorkerPanicDuringShutdown(t *testing.T) {
-	ctx := mock.NewContext()
-	schema := expression.NewSchema()
-	panicCh := make(chan struct{})
-	nextEntered := make(chan struct{})
-	childBase := exec.NewBaseExecutor(ctx, schema, 0)
-	child := &unionPanicExec{
-		BaseExecutor: &childBase,
-		nextEntered:  nextEntered,
-		panicCh:      panicCh,
-	}
-	unionBase := exec.NewBaseExecutor(ctx, schema, 1, child)
-	union := &unionexec.UnionExec{
-		BaseExecutor: unionBase,
-		Concurrency:  1,
-	}
-
-	require.NoError(t, exec.Open(context.Background(), union))
-	chk := exec.NewFirstChunk(union)
-
-	nextDone := make(chan struct{})
-	go func() {
-		_ = union.Next(context.Background(), chk)
-		close(nextDone)
-	}()
-
-	select {
-	case <-nextEntered:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("union worker did not enter Next")
-	}
-
-	closeDone := make(chan struct{})
-	go func() {
-		_ = union.Close()
-		close(closeDone)
-	}()
-
-	// Close closes finished before waiting, so once it is blocked here the worker
-	// will hit the sendResult(false) path when it panics.
-	select {
-	case <-closeDone:
-		t.Fatalf("union Close returned before worker panic")
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	close(panicCh)
-
-	select {
-	case <-closeDone:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("union Close did not return after worker panic")
-	}
-
-	select {
-	case <-nextDone:
-	case <-time.After(2 * time.Second):
-		t.Fatalf("union Next did not return after worker panic")
-	}
-}
-
 func TestTxnWriteThroughputSLI(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 
@@ -601,9 +403,9 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("drop table if exists t")
 	tk.MustExec("create table t (a int key, b int)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/sli/CheckTxnWriteThroughput", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sli/CheckTxnWriteThroughput", "return(true)"))
 	defer func() {
-		err := failpoint.Disable("github.com/pingcap/tidb/pkg/util/sli/CheckTxnWriteThroughput")
+		err := failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sli/CheckTxnWriteThroughput")
 		require.NoError(t, err)
 	}()
 
@@ -629,17 +431,17 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	mustExec("insert into t select b, a from t")
 	require.True(t, writeSLI.IsInvalid())
 	require.True(t, writeSLI.IsSmallTxn())
-	require.Equal(t, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 2, writeKeys: 2, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: true, affectRow: 2, writeSize: 58, readKeys: 0, writeKeys: 2, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test for delete
 	mustExec("delete from t")
-	require.Equal(t, "invalid: false, affectRow: 4, writeSize: 76, readKeys: 4, writeKeys: 4, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
+	require.Equal(t, "invalid: false, affectRow: 4, writeSize: 76, readKeys: 0, writeKeys: 4, writeTime: 1s", tk.Session().GetTxnWriteThroughputSLI().String())
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test insert not in small txn
 	mustExec("begin")
-	for i := range 20 {
+	for i := 0; i < 20; i++ {
 		mustExec(fmt.Sprintf("insert into t values (%v,%v)", i, i))
 		require.True(t, writeSLI.IsSmallTxn())
 	}
@@ -665,14 +467,14 @@ func TestTxnWriteThroughputSLI(t *testing.T) {
 	tk.Session().GetTxnWriteThroughputSLI().Reset()
 
 	// Test clean last failed transaction information.
-	err := failpoint.Disable("github.com/pingcap/tidb/pkg/util/sli/CheckTxnWriteThroughput")
+	err := failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sli/CheckTxnWriteThroughput")
 	require.NoError(t, err)
 	mustExec("begin")
 	mustExec("insert into t values (1,3),(2,4)")
 	errExec("commit")
 	require.Equal(t, "invalid: false, affectRow: 0, writeSize: 0, readKeys: 0, writeKeys: 0, writeTime: 0s", tk.Session().GetTxnWriteThroughputSLI().String())
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/util/sli/CheckTxnWriteThroughput", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sli/CheckTxnWriteThroughput", "return(true)"))
 	mustExec("begin")
 	mustExec("insert into t values (5, 6)")
 	mustExec("commit")
@@ -738,9 +540,9 @@ func TestDeadlocksTable(t *testing.T) {
 	id1 := strconv.FormatUint(rec.ID, 10)
 	id2 := strconv.FormatUint(rec2.ID, 10)
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/sqlDigestRetrieverSkipRetrieveGlobal", "return"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/expression/sqlDigestRetrieverSkipRetrieveGlobal"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/sqlDigestRetrieverSkipRetrieveGlobal"))
 	}()
 
 	store := testkit.CreateMockStore(t)
@@ -764,30 +566,10 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	tk.MustExec("create table t (a int primary key, b int)")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCDeadlineExceeded", `return(true)`))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/unistoreRPCDeadlineExceeded", `return(true)`))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/unistoreRPCDeadlineExceeded"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/unistoreRPCDeadlineExceeded"))
 	}()
-
-	waitUntilReadTSSafe := func(tk *testkit.TestKit, readTime string) {
-		unixTime, err := strconv.ParseFloat(tk.MustQuery("select unix_timestamp(" + readTime + ")").Rows()[0][0].(string), 64)
-		require.NoError(t, err)
-		expectedPhysical := int64(unixTime*1000) + 1
-		expectedTS := oracle.ComposeTS(expectedPhysical, 0)
-		for {
-			tk.MustExec("begin")
-			currentTS, err := strconv.ParseUint(tk.MustQuery("select @@tidb_current_ts").Rows()[0][0].(string), 10, 64)
-			require.NoError(t, err)
-			tk.MustExec("rollback")
-
-			if currentTS >= expectedTS {
-				return
-			}
-
-			time.Sleep(5 * time.Millisecond)
-		}
-	}
-
 	// Test for point_get request
 	rows := tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t where a = 1").Rows()
 	require.Len(t, rows, 1)
@@ -804,18 +586,15 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
 
 	// Test for stale read.
-	if !kerneltype.IsNextGen() {
-		tk.MustExec("set @a=now(6);")
-		waitUntilReadTSSafe(tk, "@a")
-		tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-		rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@a) where b > 1").Rows()
-		require.Len(t, rows, 3)
-		explain = fmt.Sprintf("%v", rows[0])
-		require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
-	}
+	tk.MustExec("set @a=now(6);")
+	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
+	rows = tk.MustQuery("explain analyze select /*+ set_var(tikv_client_read_timeout=1) */ * from t as of timestamp(@a) where b > 1").Rows()
+	require.Len(t, rows, 3)
+	explain = fmt.Sprintf("%v", rows[0])
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
 
 	// Test for tikv_client_read_timeout session variable.
 	tk.MustExec("set @@tikv_client_read_timeout=1;")
@@ -835,18 +614,15 @@ func TestTiKVClientReadTimeout(t *testing.T) {
 	rows = tk.MustQuery("explain analyze select * from t where b > 1").Rows()
 	require.Len(t, rows, 3)
 	explain = fmt.Sprintf("%v", rows[0])
-	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
 
 	// Test for stale read.
-	if !kerneltype.IsNextGen() {
-		tk.MustExec("set @a=now(6);")
-		waitUntilReadTSSafe(tk, "@a")
-		tk.MustExec("set @@tidb_replica_read='closest-replicas';")
-		rows = tk.MustQuery("explain analyze select * from t as of timestamp(@a) where b > 1").Rows()
-		require.Len(t, rows, 3)
-		explain = fmt.Sprintf("%v", rows[0])
-		require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .*num_rpc:2.*", explain)
-	}
+	tk.MustExec("set @a=now(6);")
+	tk.MustExec("set @@tidb_replica_read='closest-replicas';")
+	rows = tk.MustQuery("explain analyze select * from t as of timestamp(@a) where b > 1").Rows()
+	require.Len(t, rows, 3)
+	explain = fmt.Sprintf("%v", rows[0])
+	require.Regexp(t, ".*TableReader.* root  time:.*, loops:.* cop_task: {num: 1, .* rpc_num: 2.*", explain)
 }
 
 func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
@@ -855,8 +631,8 @@ func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
 	h := helper.NewHelper(store.(helper.Storage))
 	txn, err := store.Begin()
 	require.NoError(t, err)
-	m := meta.NewMutator(txn)
-	schemaVersion := tk.Session().GetLatestInfoSchema().SchemaMetaVersion()
+	m := meta.NewMeta(txn)
+	schemaVersion := tk.Session().GetDomainInfoSchema().SchemaMetaVersion()
 	key := m.EncodeSchemaDiffKey(schemaVersion)
 
 	resp, err := h.GetMvccByEncodedKey(key)
@@ -866,9 +642,9 @@ func TestGetMvccByEncodedKeyRegionError(t *testing.T) {
 	require.Less(t, uint64(0), resp.Info.Writes[0].CommitTs)
 	commitTs := resp.Info.Writes[0].CommitTs
 
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/epochNotMatch", "2*return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/epochNotMatch", "2*return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/epochNotMatch"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/epochNotMatch"))
 	}()
 	resp, err = h.GetMvccByEncodedKey(key)
 	require.NoError(t, err)
@@ -884,355 +660,18 @@ func TestShuffleExit(t *testing.T) {
 	tk.MustExec("drop table if exists t1;")
 	tk.MustExec("create table t1(i int, j int, k int);")
 	tk.MustExec("insert into t1 VALUES (1,1,1),(2,2,2),(3,3,3),(4,4,4);")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/shuffleError", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/shuffleError", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/shuffleError"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/shuffleError"))
 	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/shuffleExecFetchDataAndSplit", "return(true)"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/shuffleExecFetchDataAndSplit", "return(true)"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/shuffleExecFetchDataAndSplit"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/shuffleExecFetchDataAndSplit"))
 	}()
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/shuffleWorkerRun", "panic(\"ShufflePanic\")"))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/shuffleWorkerRun", "panic(\"ShufflePanic\")"))
 	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/shuffleWorkerRun"))
+		require.NoError(t, failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/shuffleWorkerRun"))
 	}()
 	err := tk.QueryToErr("SELECT SUM(i) OVER W FROM t1 WINDOW w AS (PARTITION BY j ORDER BY i) ORDER BY 1+SUM(i) OVER w;")
 	require.ErrorContains(t, err, "ShuffleExec.Next error")
-}
-
-func TestHandleForeignKeyCascadePanic(t *testing.T) {
-	// Test no goroutine leak.
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("create table t1 (id int key, a int, index (a));")
-	tk.MustExec("create table t2 (id int key, a int, index (a), constraint fk_1 foreign key (a) references t1(a));")
-	tk.MustExec("alter table t2 drop foreign key fk_1;")
-	tk.MustExec("alter table t2 add constraint fk_1 foreign key (a) references t1(a) on delete set null;")
-	tk.MustExec("replace into t1 values (1, 1);")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/handleForeignKeyCascadeError", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/handleForeignKeyCascadeError"))
-	}()
-	err := tk.ExecToErr("replace into t1 values (1, 2);")
-	require.ErrorContains(t, err, "handleForeignKeyCascadeError")
-}
-
-func TestBuildProjectionForIndexJoinPanic(t *testing.T) {
-	// Test no goroutine leak.
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2;")
-	tk.MustExec("create table t1(a int, b varchar(8));")
-	tk.MustExec("insert into t1 values(1,'1');")
-	tk.MustExec("create table t2(a int , b varchar(8) GENERATED ALWAYS AS (c) VIRTUAL, c varchar(8), PRIMARY KEY (a));")
-	tk.MustExec("insert into t2(a) values(1);")
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/executor/buildProjectionForIndexJoinPanic", "return(true)"))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/executor/buildProjectionForIndexJoinPanic"))
-	}()
-	err := tk.QueryToErr("select /*+ tidb_inlj(t2) */ t2.b, t1.b from t1 join t2 ON t2.a=t1.a;")
-	require.ErrorContains(t, err, "buildProjectionForIndexJoinPanic")
-}
-
-type IndexLookUpPushDownRunVerifier struct {
-	*testing.T
-	tk          *testkit.TestKit
-	tableName   string
-	indexName   string
-	primaryRows []int
-	hitRate     any
-	msg         string
-}
-
-type RunSelectWithCheckResult struct {
-	SQL         string
-	Rows        [][]any
-	AnalyzeRows [][]any
-}
-
-func (t *IndexLookUpPushDownRunVerifier) RunSelectWithCheck(where string, skip, limit int) RunSelectWithCheckResult {
-	require.NotNil(t, t.tk)
-	require.NotEmpty(t, t.tableName)
-	require.NotEmpty(t, t.indexName)
-	require.NotEmpty(t, t.primaryRows)
-	require.GreaterOrEqual(t, skip, 0)
-	if skip > 0 {
-		require.GreaterOrEqual(t, limit, 0)
-	}
-
-	var hitRate int
-	if r, ok := t.hitRate.(*rand.Rand); ok {
-		hitRate = r.Intn(11)
-	} else {
-		hitRate, ok = t.hitRate.(int)
-		require.True(t, ok)
-	}
-
-	message := fmt.Sprintf("%s, hitRate: %d, where: %s, limit: %d", t.msg, hitRate, where, limit)
-	injectHandleFilter := func(h kv.Handle) bool {
-		if hitRate >= 10 {
-			return true
-		}
-		h64a := fnv.New64a()
-		_, err := h64a.Write(h.Encoded())
-		require.NoError(t, err)
-		return h64a.Sum64()%10 < uint64(hitRate)
-	}
-	var injectCalled atomic.Bool
-	require.NoError(t, failpoint.EnableCall("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter", func(f *func(kv.Handle) bool) {
-		*f = injectHandleFilter
-		injectCalled.Store(true)
-	}))
-	defer func() {
-		require.NoError(t, failpoint.Disable("github.com/pingcap/tidb/pkg/store/mockstore/unistore/cophandler/inject-index-lookup-handle-filter"))
-	}()
-	var sb strings.Builder
-	sb.WriteString(fmt.Sprintf("select /*+ index_lookup_pushdown(%s, %s)*/ * from %s where ", t.tableName, t.indexName, t.tableName))
-	sb.WriteString(where)
-	if skip > 0 {
-		sb.WriteString(fmt.Sprintf(" limit %d, %d", skip, limit))
-	} else if limit >= 0 {
-		sb.WriteString(fmt.Sprintf(" limit %d", limit))
-	}
-
-	// make sure the query uses index lookup
-	analyzeSQL := "explain analyze " + sb.String()
-	injectCalled.Store(false)
-	analyzeResult := t.tk.MustQuery(analyzeSQL)
-	require.True(t, injectCalled.Load(), message)
-	require.Contains(t, analyzeResult.String(), "LocalIndexLookUp", analyzeSQL+"\n"+analyzeResult.String())
-
-	// get actual result
-	injectCalled.Store(false)
-	rs := t.tk.MustQuery(sb.String())
-	actual := rs.Rows()
-	require.True(t, injectCalled.Load(), message)
-	idSets := make(map[string]struct{}, len(actual))
-	for _, row := range actual {
-		var primaryKey strings.Builder
-		require.Greater(t, len(t.primaryRows), 0)
-		for i, idx := range t.primaryRows {
-			if i > 0 {
-				primaryKey.WriteString("#")
-			}
-			primaryKey.WriteString(row[idx].(string))
-		}
-		id := primaryKey.String()
-		_, dup := idSets[id]
-		require.False(t, dup, "dupID: "+id+", "+message)
-		idSets[row[0].(string)] = struct{}{}
-	}
-
-	// use table scan
-	matchCondList := t.tk.MustQuery(fmt.Sprintf("select /*+ use_index(%s) */* from %s where "+where, t.tableName, t.tableName)).Rows()
-	if limit == 0 || skip >= len(matchCondList) {
-		require.Len(t, actual, 0, message)
-	} else if limit < 0 {
-		// no limit two results should have same members
-		require.ElementsMatch(t, matchCondList, actual, message)
-	} else {
-		expectRowCnt := limit
-		if skip+limit > len(matchCondList) {
-			expectRowCnt = len(matchCondList) - skip
-		}
-		require.Len(t, actual, expectRowCnt, message)
-		require.Subset(t, matchCondList, actual, message)
-	}
-
-	// check in analyze the index is lookup locally
-	message = fmt.Sprintf("%s\n%s\n%s", message, analyzeSQL, analyzeResult.String())
-	analyzeVerified := false
-	localIndexLookUpIndex := -1
-	totalIndexScanCnt := -1
-	localIndexLookUpRowCnt := -1
-	analyzeRows := analyzeResult.Rows()
-	metTableRowIDScan := false
-	for i, row := range analyzeRows {
-		if strings.Contains(row[0].(string), "LocalIndexLookUp") {
-			localIndexLookUpIndex = i
-			continue
-		}
-
-		if strings.Contains(row[0].(string), "TableRowIDScan") && strings.Contains(row[3].(string), "cop[tikv]") {
-			var err error
-			if !metTableRowIDScan {
-				localIndexLookUpRowCnt, err = strconv.Atoi(row[2].(string))
-				require.NoError(t, err, message)
-				require.GreaterOrEqual(t, localIndexLookUpRowCnt, 0)
-				if hitRate == 0 {
-					require.Zero(t, localIndexLookUpRowCnt, message)
-				}
-				// check actRows for LocalIndexLookUp
-				require.Equal(t, analyzeRows[localIndexLookUpIndex][2], row[2], message)
-				// get index scan row count
-				totalIndexScanCnt, err = strconv.Atoi(analyzeRows[localIndexLookUpIndex+1][2].(string))
-				require.NoError(t, err, message)
-				require.GreaterOrEqual(t, totalIndexScanCnt, localIndexLookUpRowCnt)
-				if hitRate >= 10 {
-					require.Equal(t, localIndexLookUpRowCnt, totalIndexScanCnt)
-				}
-				metTableRowIDScan = true
-				continue
-			}
-
-			tidbIndexLookUpRowCnt, err := strconv.Atoi(row[2].(string))
-			require.NoError(t, err, message)
-			if limit < 0 {
-				require.Equal(t, totalIndexScanCnt, localIndexLookUpRowCnt+tidbIndexLookUpRowCnt, message)
-			} else {
-				require.LessOrEqual(t, localIndexLookUpRowCnt+tidbIndexLookUpRowCnt, totalIndexScanCnt, message)
-			}
-			analyzeVerified = true
-			break
-		}
-	}
-	require.True(t, analyzeVerified, analyzeResult.String())
-	return RunSelectWithCheckResult{
-		SQL:         sb.String(),
-		Rows:        actual,
-		AnalyzeRows: analyzeRows,
-	}
-}
-
-func TestIndexLookUpPushDownExec(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t(id bigint primary key, a bigint, b bigint, index a(a))")
-	seed := time.Now().UnixNano()
-	logutil.BgLogger().Info("Run TestIndexLookUpPushDownExec with seed", zap.Int64("seed", seed))
-	r := rand.New(rand.NewSource(seed))
-	v := &IndexLookUpPushDownRunVerifier{
-		T:           t,
-		tk:          tk,
-		tableName:   "t",
-		indexName:   "a",
-		primaryRows: []int{0},
-		hitRate:     r,
-		msg:         fmt.Sprintf("seed: %d", seed),
-	}
-
-	batch := 100
-	total := batch * 20
-	indexValEnd := 100
-	randIndexVal := func() int {
-		return r.Intn(indexValEnd)
-	}
-	for i := 0; i < total; i += batch {
-		values := make([]string, 0, batch)
-		for j := 0; j < batch; j++ {
-			values = append(values, fmt.Sprintf("(%d, %d, %d)", i+j, randIndexVal(), r.Int63()))
-		}
-		tk.MustExec("insert into t values " + strings.Join(values, ","))
-	}
-
-	v.RunSelectWithCheck("1", 0, -1)
-	v.RunSelectWithCheck("1", 0, r.Intn(total*2))
-	v.RunSelectWithCheck("1", total/2, r.Intn(total))
-	v.RunSelectWithCheck("1", total-10, 20)
-	v.RunSelectWithCheck("1", total, 10)
-	v.RunSelectWithCheck("1", 10, 0)
-	v.RunSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, -1)
-	v.RunSelectWithCheck(fmt.Sprintf("a = %d", randIndexVal()), 0, 25)
-	v.RunSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, -1)
-	v.RunSelectWithCheck(fmt.Sprintf("a < %d", randIndexVal()), 0, r.Intn(100)+1)
-	v.RunSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, -1)
-	v.RunSelectWithCheck(fmt.Sprintf("a > %d", randIndexVal()), 0, r.Intn(100)+1)
-	start := randIndexVal()
-	v.RunSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, -1)
-	start = randIndexVal()
-	v.RunSelectWithCheck(fmt.Sprintf("a >= %d and a < %d", start, start+r.Intn(5)+1), 0, r.Intn(50)+1)
-	v.RunSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, -1)
-	v.RunSelectWithCheck(fmt.Sprintf("a > %d and b < %d", randIndexVal(), r.Int63()), 0, r.Intn(50)+1)
-}
-
-func TestIndexLookUpPushDownPartitionExec(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	// int handle
-	tk.MustExec("create table tp1 (\n" +
-		"    a varchar(32),\n" +
-		"    b int,\n" +
-		"    c int,\n" +
-		"    d int,\n" +
-		"    primary key(b) CLUSTERED,\n" +
-		"    index c(c)\n" +
-		")\n" +
-		"PARTITION BY RANGE (b) (\n" +
-		"    PARTITION p0 VALUES LESS THAN (100),\n" +
-		"    PARTITION p1 VALUES LESS THAN (200),\n" +
-		"    PARTITION p2 VALUES LESS THAN (300),\n" +
-		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
-		")")
-
-	// common handle
-	tk.MustExec("create table tp2 (\n" +
-		"    a varchar(32),\n" +
-		"    b int,\n" +
-		"    c int,\n" +
-		"    d int,\n" +
-		"    primary key(a, b) CLUSTERED,\n" +
-		"    index c(c)\n" +
-		")\n" +
-		"PARTITION BY RANGE COLUMNS (a) (\n" +
-		"    PARTITION p0 VALUES LESS THAN ('c'),\n" +
-		"    PARTITION p1 VALUES LESS THAN ('e'),\n" +
-		"    PARTITION p2 VALUES LESS THAN ('g'),\n" +
-		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
-		")")
-
-	// extra handle
-	tk.MustExec("create table tp3 (\n" +
-		"    a varchar(32),\n" +
-		"    b int,\n" +
-		"    c int,\n" +
-		"    d int,\n" +
-		"    primary key(a, b) NONCLUSTERED,\n" +
-		"    index c(c)\n" +
-		")\n" +
-		"PARTITION BY RANGE COLUMNS (a) (\n" +
-		"    PARTITION p0 VALUES LESS THAN ('c'),\n" +
-		"    PARTITION p1 VALUES LESS THAN ('e'),\n" +
-		"    PARTITION p2 VALUES LESS THAN ('g'),\n" +
-		"    PARTITION p3 VALUES LESS THAN MAXVALUE\n" +
-		")")
-
-	tableNames := []string{"tp1", "tp2", "tp3"}
-	// prepare data
-	for _, tableName := range tableNames {
-		tk.MustExec("insert into " + tableName + " values " +
-			"('a', 10, 1, 100), " +
-			"('b', 20, 2, 200), " +
-			"('c', 110, 3, 300), " +
-			"('d', 120, 4, 400), " +
-			"('e', 210, 5, 500), " +
-			"('f', 220, 6, 600), " +
-			"('g', 330, 5, 700), " +
-			"('h', 340, 5, 800), " +
-			"('i', 450, 5, 900), " +
-			"('j', 550, 6, 1000) ",
-		)
-
-		v := &IndexLookUpPushDownRunVerifier{
-			T:           t,
-			tk:          tk,
-			tableName:   tableName,
-			indexName:   "c",
-			primaryRows: []int{0, 1},
-			msg:         tableName,
-		}
-
-		if tableName == "tp1" {
-			v.primaryRows = []int{1}
-		}
-
-		for _, hitRate := range []int{0, 5, 10} {
-			v.hitRate = hitRate
-			v.RunSelectWithCheck("1", 0, -1)
-		}
-	}
 }

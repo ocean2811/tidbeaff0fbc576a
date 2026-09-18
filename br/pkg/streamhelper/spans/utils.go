@@ -8,7 +8,7 @@ import (
 	"math"
 	"sort"
 
-	"github.com/pingcap/tidb/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
 )
 
 // Overlaps checks whether two spans have overlapped part.
@@ -42,7 +42,7 @@ func Debug(full *ValueSortedFull) {
 // Collapse({[1, 3], [4, 7], [2, 3]}) == {[1, 3], [4, 7]}
 func Collapse(length int, getRange func(int) Span) []Span {
 	frs := make([]Span, 0, length)
-	for i := range length {
+	for i := 0; i < length; i++ {
 		frs = append(frs, getRange(i))
 	}
 

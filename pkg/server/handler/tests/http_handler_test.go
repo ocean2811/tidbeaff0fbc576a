@@ -16,14 +16,12 @@ package tests
 
 import (
 	"bytes"
-	"cmp"
 	"context"
 	"crypto/tls"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"database/sql"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,60 +29,46 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
-	"slices"
 	"sort"
-	"strconv"
-	"strings"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/gorilla/mux"
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/ddl"
-	ddlutil "github.com/pingcap/tidb/pkg/ddl/util"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/domain/serverinfo"
-	"github.com/pingcap/tidb/pkg/executor/mppcoordmanager"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/util/coretestsdk"
-	server2 "github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/server/handler"
-	"github.com/pingcap/tidb/pkg/server/handler/optimizor"
-	"github.com/pingcap/tidb/pkg/server/handler/tikvhandler"
-	"github.com/pingcap/tidb/pkg/server/internal/testserverclient"
-	"github.com/pingcap/tidb/pkg/server/internal/testutil"
-	"github.com/pingcap/tidb/pkg/server/internal/util"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/external"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	server2 "github.com/ocean2811/tidbeaff0fbc576a/pkg/server"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler/optimizor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/handler/tikvhandler"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/testserverclient"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/testutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/binloginfo"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/helper"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/external"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.etcd.io/etcd/tests/v3/integration"
 	"go.uber.org/zap"
-	"go.uber.org/zap/zaptest/observer"
 )
 
 type basicHTTPHandlerTestSuite struct {
@@ -120,7 +104,7 @@ func TestRegionIndexRange(t *testing.T) {
 		}
 		expectIndexValues = append(expectIndexValues, str)
 	}
-	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.Local).TimeZone(), nil, indexValues...)
+	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.Local), nil, indexValues...)
 	require.NoError(t, err)
 
 	startKey := tablecodec.EncodeIndexSeekKey(sTableID, sIndex, encodedValue)
@@ -187,7 +171,7 @@ func TestRegionCommonHandleRange(t *testing.T) {
 		}
 		expectIndexValues = append(expectIndexValues, str)
 	}
-	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.Local).TimeZone(), nil, indexValues...)
+	encodedValue, err := codec.EncodeKey(stmtctx.NewStmtCtxWithTimeZone(time.Local), nil, indexValues...)
 	require.NoError(t, err)
 
 	startKey := tablecodec.EncodeRowKey(sTableID, encodedValue)
@@ -398,16 +382,84 @@ func TestGetRegionByIDWithError(t *testing.T) {
 	defer func() { require.NoError(t, resp.Body.Close()) }()
 }
 
-func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T, storeOpts ...mockstore.MockTiKVStoreOption) {
+func TestBinlogRecover(t *testing.T) {
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	defer ts.stopServer(t)
+	binloginfo.EnableSkipBinlogFlag()
+	require.Equal(t, true, binloginfo.IsBinlogSkipped())
+	resp, err := ts.FetchStatus("/binlog/recover")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, false, binloginfo.IsBinlogSkipped())
+
+	// Invalid operation will use the default operation.
+	binloginfo.EnableSkipBinlogFlag()
+	require.Equal(t, true, binloginfo.IsBinlogSkipped())
+	resp, err = ts.FetchStatus("/binlog/recover?op=abc")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, false, binloginfo.IsBinlogSkipped())
+
+	binloginfo.EnableSkipBinlogFlag()
+	require.Equal(t, true, binloginfo.IsBinlogSkipped())
+	resp, err = ts.FetchStatus("/binlog/recover?op=abc&seconds=1")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, false, binloginfo.IsBinlogSkipped())
+
+	binloginfo.EnableSkipBinlogFlag()
+	require.Equal(t, true, binloginfo.IsBinlogSkipped())
+	binloginfo.AddOneSkippedCommitter()
+	resp, err = ts.FetchStatus("/binlog/recover?op=abc&seconds=1")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
+	require.Equal(t, false, binloginfo.IsBinlogSkipped())
+	binloginfo.RemoveOneSkippedCommitter()
+
+	binloginfo.AddOneSkippedCommitter()
+	require.Equal(t, int32(1), binloginfo.SkippedCommitterCount())
+	resp, err = ts.FetchStatus("/binlog/recover?op=reset")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, int32(0), binloginfo.SkippedCommitterCount())
+
+	binloginfo.EnableSkipBinlogFlag()
+	resp, err = ts.FetchStatus("/binlog/recover?op=nowait")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, false, binloginfo.IsBinlogSkipped())
+
+	// Only the first should work.
+	binloginfo.EnableSkipBinlogFlag()
+	resp, err = ts.FetchStatus("/binlog/recover?op=nowait&op=reset")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Equal(t, false, binloginfo.IsBinlogSkipped())
+
+	resp, err = ts.FetchStatus("/binlog/recover?op=status")
+	require.NoError(t, err)
+	defer func() { require.NoError(t, resp.Body.Close()) }()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+}
+
+func (ts *basicHTTPHandlerTestSuite) startServer(t *testing.T) {
 	var err error
-	ts.store, err = teststore.NewMockStoreWithoutBootstrap(storeOpts...)
+	ts.store, err = mockstore.NewMockStore()
 	require.NoError(t, err)
 	ts.domain, err = session.BootstrapSession(ts.store)
 	require.NoError(t, err)
 	ts.tidbdrv = server2.NewTiDBDriver(ts.store)
 
 	cfg := util.NewTestConfig()
-	cfg.Store = config.StoreTypeTiKV
+	cfg.Store = "tikv"
 	cfg.Port = 0
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
@@ -551,11 +603,6 @@ func TestGetTableMVCC(t *testing.T) {
 	}
 
 	hexKey := p2.Key
-	if kerneltype.IsNextGen() {
-		// EncodeKey(nil) returns the codec's key prefix. We use this to strip the prefix from the hex key.
-		keyPrefix := strings.ToUpper(hex.EncodeToString(ts.store.GetCodec().EncodeKey(nil)))
-		hexKey = strings.TrimPrefix(hexKey, keyPrefix)
-	}
 	resp, err = ts.FetchStatus("/mvcc/hex/" + hexKey)
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
@@ -568,7 +615,7 @@ func TestGetTableMVCC(t *testing.T) {
 	resp, err = ts.FetchStatus("/mvcc/key/tidb/test/1?decode=true")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
-	var data3 map[string]any
+	var data3 map[string]interface{}
 	err = decoder.Decode(&data3)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -580,7 +627,7 @@ func TestGetTableMVCC(t *testing.T) {
 	resp, err = ts.FetchStatus("/mvcc/key/tidb/pt(p0)/42?decode=true")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
-	var data4 map[string]any
+	var data4 map[string]interface{}
 	err = decoder.Decode(&data4)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -601,7 +648,7 @@ func TestGetTableMVCC(t *testing.T) {
 	resp, err = ts.FetchStatus("/mvcc/key/tidb/t?a=1.1&b=111&decode=1")
 	require.NoError(t, err)
 	decoder = json.NewDecoder(resp.Body)
-	var data5 map[string]any
+	var data5 map[string]interface{}
 	err = decoder.Decode(&data5)
 	require.NoError(t, err)
 	require.NotNil(t, data4["key"])
@@ -629,8 +676,10 @@ func TestGetMVCCNotFound(t *testing.T) {
 }
 
 func TestDecodeColumnValue(t *testing.T) {
-	router := mux.NewRouter()
-	router.Handle("/tables/{colID}/{colTp}/{colFlag}/{colLen}", tikvhandler.ValueHandler{})
+	ts := createBasicHTTPHandlerTestSuite()
+	ts.startServer(t)
+	ts.prepareData(t)
+	defer ts.stopServer(t)
 
 	// column is a structure used for test
 	type column struct {
@@ -656,24 +705,23 @@ func TestDecodeColumnValue(t *testing.T) {
 	}
 	rd := rowcodec.Encoder{Enable: true}
 	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-	bs, err := tablecodec.EncodeRow(sc.TimeZone(), row, colIDs, nil, nil, nil, &rd)
+	bs, err := tablecodec.EncodeRow(sc, row, colIDs, nil, nil, &rd)
 	require.NoError(t, err)
 	require.NotNil(t, bs)
 	bin := base64.StdEncoding.EncodeToString(bs)
 
 	unitTest := func(col *column) {
 		path := fmt.Sprintf("/tables/%d/%v/%d/%d?rowBin=%s", col.id, col.tp.GetType(), col.tp.GetFlag(), col.tp.GetFlen(), bin)
-		req := httptest.NewRequest(http.MethodGet, path, nil)
-		resp := httptest.NewRecorder()
-		router.ServeHTTP(resp, req)
-		require.Equalf(t, http.StatusOK, resp.Code, "url: %v", path)
+		resp, err := ts.FetchStatus(path)
+		require.NoErrorf(t, err, "url: %v", ts.StatusURL(path))
 		decoder := json.NewDecoder(resp.Body)
-		var data any
+		var data interface{}
 		err = decoder.Decode(&data)
-		require.NoErrorf(t, err, "url: %v\ndata: %v", path, data)
+		require.NoErrorf(t, err, "url: %v\ndata: %v", ts.StatusURL(path), data)
+		require.NoError(t, resp.Body.Close())
 		colVal, err := types.DatumsToString([]types.Datum{row[col.id-1]}, false)
 		require.NoError(t, err)
-		require.Equalf(t, colVal, data, "url: %v", path)
+		require.Equalf(t, colVal, data, "url: %v", ts.StatusURL(path))
 	}
 
 	for _, col := range cols {
@@ -771,108 +819,6 @@ func TestGetIndexMVCC(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
-func TestDeleteKeyHandler(t *testing.T) {
-	// on CI env, the store_cache might mark the uni-store as unreachable, and
-	// cause the test to fail, so we enable the failpoint to make it always reachable.
-	testfailpoint.Enable(t, "tikvclient/injectLiveness", `return("reachable")`)
-	ts := createBasicHTTPHandlerTestSuite()
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/server/enableTestAPI", "return")
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
-
-	ctx := context.Background()
-	store := ts.store
-
-	t.Run("index", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, ts.store)
-		tk.MustExec("use tidb")
-		tk.MustExec("drop table if exists delete_idx")
-		tk.MustExec("create table delete_idx (a int primary key, b int, key idx_ab(a, b))")
-		tk.MustExec("insert into delete_idx values (1, 2)")
-
-		tbl, err := ts.domain.InfoSchema().TableByName(ctx, ast.NewCIStr("tidb"), ast.NewCIStr("delete_idx"))
-		require.NoError(t, err)
-
-		var idx table.Index
-		for _, v := range tbl.Indices() {
-			if strings.EqualFold(v.Meta().Name.String(), "idx_ab") {
-				idx = v
-				break
-			}
-		}
-		require.NotNil(t, idx)
-
-		sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
-		idxRow := []types.Datum{
-			types.NewIntDatum(1),
-			types.NewIntDatum(2),
-		}
-		handle := kv.IntHandle(1)
-		encodedKey, _, err := idx.GenIndexKey(sc.ErrCtx(), sc.TimeZone(), idxRow, handle, nil)
-		require.NoError(t, err)
-
-		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
-			_, err := txn.Get(ctx, encodedKey)
-			return err
-		})
-		require.NoError(t, err)
-
-		resp, err := ts.PostStatus("/test/delete/indexkey/tidb/delete_idx/idx_ab?handle=1&a=1&b=2", "application/x-www-form-urlencoded", nil)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.NoError(t, resp.Body.Close())
-
-		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
-			_, err := txn.Get(ctx, encodedKey)
-			return err
-		})
-		require.True(t, kv.ErrNotExist.Equal(err))
-
-		err = tk.ExecToErr("admin check index tidb.delete_idx idx_ab")
-		require.Error(t, err)
-		require.ErrorContains(t, err, "data inconsistency")
-	})
-
-	t.Run("row", func(t *testing.T) {
-		tk := testkit.NewTestKit(t, ts.store)
-		tk.MustExec("use tidb")
-		tk.MustExec("drop table if exists delete_row")
-		tk.MustExec("create table delete_row (a int primary key, b int, key idx_b(b))")
-		tk.MustExec("insert into delete_row values (1, 2)")
-
-		tbl, err := ts.domain.InfoSchema().TableByName(ctx, ast.NewCIStr("tidb"), ast.NewCIStr("delete_row"))
-		require.NoError(t, err)
-
-		handle := kv.IntHandle(1)
-		encodedKey := tablecodec.EncodeRecordKey(tbl.RecordPrefix(), handle)
-		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
-			_, err := txn.Get(ctx, encodedKey)
-			return err
-		})
-		require.NoError(t, err)
-
-		resp, err := ts.PostStatus("/test/delete/rowkey/tidb/delete_row?handle=1", "application/x-www-form-urlencoded", nil)
-		require.NoError(t, err)
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		require.NoError(t, resp.Body.Close())
-
-		err = kv.RunInNewTxn(ctx, store, true, func(_ context.Context, txn kv.Transaction) error {
-			txn.SetOption(kv.ResourceGroupTagger, ddlutil.GetInternalResourceGroupTaggerForTopSQL())
-			_, err := txn.Get(ctx, encodedKey)
-			return err
-		})
-		require.True(t, kv.ErrNotExist.Equal(err))
-
-		err = tk.ExecToErr("admin check table tidb.delete_row")
-		require.Error(t, err)
-		require.ErrorContains(t, err, "data inconsistency")
-	})
-}
-
 func TestGetSettings(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
@@ -906,7 +852,7 @@ func TestGetSchema(t *testing.T) {
 	err = decoder.Decode(&dbs)
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "sys", "test", "tidb"}
+	expects := []string{"information_schema", "metrics_schema", "mysql", "performance_schema", "test", "tidb"}
 	names := make([]string, len(dbs))
 	for i, v := range dbs {
 		names[i] = v.Name.L
@@ -946,15 +892,6 @@ func TestGetSchema(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Greater(t, len(lt), 2)
-
-	resp, err = ts.FetchStatus("/schema/tidb?id_name_only=true")
-	require.NoError(t, err)
-	var lti []*model.TableNameInfo
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&lti)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Greater(t, len(lti), 2)
 
 	resp, err = ts.FetchStatus("/schema/abc")
 	require.NoError(t, err)
@@ -1001,64 +938,6 @@ func TestGetSchema(t *testing.T) {
 		PARTITION p1 VALUES LESS THAN (5),
 		PARTITION p2 VALUES LESS THAN (7),
 		PARTITION p3 VALUES LESS THAN (9))`)
-	dbt.MustExec(`CREATE TABLE t2 (c INT)`)
-
-	var simpleTableInfos []*model.TableNameInfo
-	resp, err = ts.FetchStatus("/schema/test?id_name_only=true")
-	require.NoError(t, err)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&simpleTableInfos)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	slices.SortFunc(simpleTableInfos, func(i, j *model.TableNameInfo) int {
-		return strings.Compare(i.Name.L, j.Name.L)
-	})
-	require.Len(t, simpleTableInfos, 2)
-	require.Equal(t, "t1", simpleTableInfos[0].Name.L)
-	require.Equal(t, "t2", simpleTableInfos[1].Name.L)
-	id1 := simpleTableInfos[0].ID
-	id2 := simpleTableInfos[1].ID
-	require.NotZero(t, id1)
-	require.NotZero(t, id2)
-
-	// check table_ids=... happy path
-	ids := strings.Join([]string{strconv.FormatInt(id1, 10), strconv.FormatInt(id2, 10)}, ",")
-	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
-	require.NoError(t, err)
-	var tis map[int]*model.TableInfo
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&tis)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 2, len(tis))
-	require.Equal(t, "t1", tis[int(id1)].Name.L)
-	require.Equal(t, "t2", tis[int(id2)].Name.L)
-
-	// check table_ids=... partial missing
-	ids = ids + ",99999"
-	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
-	require.NoError(t, err)
-	clear(tis)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&tis)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 2, len(tis))
-	require.Equal(t, "t1", tis[int(id1)].Name.L)
-	require.Equal(t, "t2", tis[int(id2)].Name.L)
-
-	// check wrong format in table_ids
-	ids = ids + ",abc"
-	resp, err = ts.FetchStatus(fmt.Sprintf("/schema?table_ids=%s", ids))
-	require.NoError(t, err)
-	clear(tis)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&tis)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, 2, len(tis))
-	require.Equal(t, "t1", tis[int(id1)].Name.L)
-	require.Equal(t, "t2", tis[int(id2)].Name.L)
 
 	resp, err = ts.FetchStatus("/schema/test/t1")
 	require.NoError(t, err)
@@ -1089,9 +968,6 @@ func TestGetSchema(t *testing.T) {
 }
 
 func TestAllHistory(t *testing.T) {
-	// TestGetSchema will set schema lease to -1, while this test needs a valid
-	// schema lease.
-	vardef.SetStatsLease(time.Second)
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	ts.prepareData(t)
@@ -1112,15 +988,10 @@ func TestAllHistory(t *testing.T) {
 	defer s.Close()
 	store := domain.GetDomain(s.(sessionctx.Context)).Store()
 	txn, _ := store.Begin()
-	txnMeta := meta.NewMutator(txn)
+	txnMeta := meta.NewMeta(txn)
 	data, err := ddl.GetAllHistoryDDLJobs(txnMeta)
 	require.NoError(t, err)
 	err = decoder.Decode(&jobs)
-	require.True(t, len(jobs) < ddl.DefNumGetDDLHistoryJobs)
-	// sort job.
-	slices.SortFunc(jobs, func(i, j *model.Job) int {
-		return cmp.Compare(i.ID, j.ID)
-	})
 
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
@@ -1153,49 +1024,6 @@ func TestAllHistory(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 }
 
-func TestDDLCheckHandler(t *testing.T) {
-	if !kerneltype.IsNextGen() {
-		t.Skip("DDL check handler is only available for next-gen kernel")
-	}
-
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t)
-	ts.prepareData(t)
-	defer ts.stopServer(t)
-
-	resp, err := ts.FetchStatus("/ddl/check/tidb/test/idx1")
-	require.NoError(t, err)
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	require.Contains(t, string(body), "only support POST")
-
-	resp, err = ts.PostStatus("/ddl/check/tidb/test/idx_not_exist", "application/json", nil)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	decoder := json.NewDecoder(resp.Body)
-	var result map[string]any
-	err = decoder.Decode(&result)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "failed", result["result"])
-	require.NotEmpty(t, result["error"])
-
-	resp, err = ts.PostStatus("/ddl/check/tidb/test/idx1", "application/json", nil)
-	require.NoError(t, err)
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	decoder = json.NewDecoder(resp.Body)
-	err = decoder.Decode(&result)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "tidb", result["db"])
-	require.Equal(t, "test", result["table"])
-	require.Equal(t, "idx1", result["index"])
-	require.Equal(t, "admin check index `tidb`.`test` `idx1`", result["check_sql"])
-	require.Equal(t, "success", result["result"])
-}
-
 func filterSpaces(bs []byte) []byte {
 	if len(bs) == 0 {
 		return nil
@@ -1217,7 +1045,7 @@ func TestPprof(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 	retryTime := 100
-	for range retryTime {
+	for retry := 0; retry < retryTime; retry++ {
 		resp, err := ts.FetchStatus("/debug/pprof/heap")
 		if err == nil {
 			_, err = io.ReadAll(resp.Body)
@@ -1245,13 +1073,6 @@ func TestDebugZip(t *testing.T) {
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
-	core, recorded := observer.New(zap.InfoLevel)
-	restore := log.ReplaceGlobals(zap.New(core), &log.ZapProperties{
-		Core:  core,
-		Level: zap.NewAtomicLevelAt(zap.InfoLevel),
-	})
-	defer restore()
-
 	resp, err := ts.FetchStatus("/debug/zip?seconds=1")
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -1259,14 +1080,6 @@ func TestDebugZip(t *testing.T) {
 	require.NoError(t, err)
 	require.Greater(t, len(b), 0)
 	require.NoError(t, resp.Body.Close())
-
-	profilingLogs := recorded.FilterMessage("profiling request received").
-		FilterField(zap.String("path", "/debug/zip")).
-		FilterField(zap.String("seconds", "1"))
-	require.Len(t, profilingLogs.All(), 1)
-	fields := profilingLogs.All()[0].ContextMap()
-	require.Equal(t, http.MethodGet, fields["method"])
-	require.NotEmpty(t, fields["remote-addr"])
 }
 
 func TestCheckCN(t *testing.T) {
@@ -1316,45 +1129,42 @@ func TestWriteDBTablesData(t *testing.T) {
 	// No table in a schema.
 	info := infoschema.MockInfoSchema([]*model.TableInfo{})
 	rc := httptest.NewRecorder()
-	tbs, err := info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
-	require.NoError(t, err)
+	tbs := info.SchemaTables(model.NewCIStr("test"))
 	require.Equal(t, 0, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	var ti []*model.TableInfo
 	decoder := json.NewDecoder(rc.Body)
-	err = decoder.Decode(&ti)
+	err := decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(ti))
 
 	// One table in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable()})
 	rc = httptest.NewRecorder()
-	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
-	require.NoError(t, err)
+	tbs = info.SchemaTables(model.NewCIStr("test"))
 	require.Equal(t, 1, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
 	err = decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 1, len(ti))
-	require.Equal(t, ti[0].ID, tbs[0].ID)
-	require.Equal(t, ti[0].Name.String(), tbs[0].Name.String())
+	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
 
 	// Two tables in a schema.
-	info = infoschema.MockInfoSchema([]*model.TableInfo{coretestsdk.MockSignedTable(), coretestsdk.MockUnsignedTable()})
+	info = infoschema.MockInfoSchema([]*model.TableInfo{core.MockSignedTable(), core.MockUnsignedTable()})
 	rc = httptest.NewRecorder()
-	tbs, err = info.SchemaTableInfos(context.Background(), ast.NewCIStr("test"))
-	require.NoError(t, err)
+	tbs = info.SchemaTables(model.NewCIStr("test"))
 	require.Equal(t, 2, len(tbs))
 	tikvhandler.WriteDBTablesData(rc, tbs)
 	decoder = json.NewDecoder(rc.Body)
 	err = decoder.Decode(&ti)
 	require.NoError(t, err)
 	require.Equal(t, 2, len(ti))
-	require.Equal(t, ti[0].ID, tbs[0].ID)
-	require.Equal(t, ti[1].ID, tbs[1].ID)
-	require.Equal(t, ti[0].Name.String(), tbs[0].Name.String())
-	require.Equal(t, ti[1].Name.String(), tbs[1].Name.String())
+	require.Equal(t, ti[0].ID, tbs[0].Meta().ID)
+	require.Equal(t, ti[1].ID, tbs[1].Meta().ID)
+	require.Equal(t, ti[0].Name.String(), tbs[0].Meta().Name.String())
+	require.Equal(t, ti[1].Name.String(), tbs[1].Meta().Name.String())
 }
 
 func TestSetLabels(t *testing.T) {
@@ -1403,13 +1213,12 @@ func TestSetLabelsWithEtcd(t *testing.T) {
 	ts.startServer(t)
 	defer ts.stopServer(t)
 
-	time.Sleep(time.Second)
 	integration.BeforeTestExternal(t)
 	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
 	defer cluster.Terminate(t)
 	client := cluster.RandClient()
 	infosync.SetEtcdClient(client)
-	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
+	ts.domain.InfoSyncer().Restart(ctx)
 
 	testUpdateLabels := func(labels, expected map[string]string) {
 		buffer := bytes.NewBuffer([]byte{})
@@ -1486,7 +1295,7 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 			}
 		}
 	}()
-	for range 100 {
+	for i := 0; i < 100; i++ {
 		testUpdateLabels()
 	}
 	close(done)
@@ -1498,10 +1307,6 @@ func TestSetLabelsConcurrentWithGetLabel(t *testing.T) {
 }
 
 func TestUpgrade(t *testing.T) {
-	if kerneltype.IsNextGen() {
-		t.Skip("Skip this case because there is no upgrade in the first release of next-gen kernel")
-	}
-
 	ts := createBasicHTTPHandlerTestSuite()
 	ts.startServer(t)
 	defer ts.stopServer(t)
@@ -1612,45 +1417,39 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	require.NoError(t, err)
 	ddlID := do.DDL().GetID()
 	// check the result for upgrade show
-	mockedAllServerInfos := map[string]*serverinfo.ServerInfo{
+	mockedAllServerInfos := map[string]*infosync.ServerInfo{
 		"s0": {
-			StaticInfo: serverinfo.StaticInfo{
-				ID:           ddlID,
-				IP:           "127.0.0.1",
-				Port:         4000,
-				JSONServerID: 0,
-				VersionInfo: serverinfo.VersionInfo{
-					Version: "ver",
-					GitHash: "hash",
-				},
+			ID:           ddlID,
+			IP:           "127.0.0.1",
+			Port:         4000,
+			JSONServerID: 0,
+			ServerVersionInfo: infosync.ServerVersionInfo{
+				Version: "ver",
+				GitHash: "hash",
 			},
 		},
 		"s2": {
-			StaticInfo: serverinfo.StaticInfo{
-				ID:           "ID2",
-				IP:           "127.0.0.1",
-				Port:         4002,
-				JSONServerID: 2,
-				VersionInfo: serverinfo.VersionInfo{
-					Version: "ver2",
-					GitHash: "hash2",
-				},
+			ID:           "ID2",
+			IP:           "127.0.0.1",
+			Port:         4002,
+			JSONServerID: 2,
+			ServerVersionInfo: infosync.ServerVersionInfo{
+				Version: "ver2",
+				GitHash: "hash2",
 			},
 		},
 		"s1": {
-			StaticInfo: serverinfo.StaticInfo{
-				ID:           "ID1",
-				IP:           "127.0.0.1",
-				Port:         4001,
-				JSONServerID: 1,
-				VersionInfo: serverinfo.VersionInfo{
-					Version: "ver",
-					GitHash: "hash",
-				},
+			ID:           "ID1",
+			IP:           "127.0.0.1",
+			Port:         4001,
+			JSONServerID: 1,
+			ServerVersionInfo: infosync.ServerVersionInfo{
+				Version: "ver",
+				GitHash: "hash",
 			},
 		},
 	}
-	makeFailpointRes := func(v any) string {
+	makeFailpointRes := func(v interface{}) string {
 		bytes, err := json.Marshal(v)
 		require.NoError(t, err)
 		return fmt.Sprintf("return(`%s`)", string(bytes))
@@ -1693,232 +1492,13 @@ func testUpgradeShow(t *testing.T, ts *basicHTTPHandlerTestSuite) {
 	// test upgrade show for 1 server
 	checkUpgradeShow(1, 100, 0)
 	// test upgrade show for 3 servers
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo")
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	defer failpoint.Disable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/mockGetAllServerInfo")
 	// test upgrade show again with 3 different version servers
 	checkUpgradeShow(3, 33, 3)
 	// test upgrade show again with 3 servers of the same version
 	mockedAllServerInfos["s2"].Version = mockedAllServerInfos["s0"].Version
 	mockedAllServerInfos["s2"].GitHash = mockedAllServerInfos["s0"].GitHash
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/domain/serverinfo/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
+	require.NoError(t, failpoint.Enable("github.com/ocean2811/tidbeaff0fbc576a/pkg/domain/infosync/mockGetAllServerInfo", makeFailpointRes(mockedAllServerInfos)))
 	checkUpgradeShow(3, 100, 0)
-}
-
-func TestIssue52608(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-
-	ts.startServer(t)
-	defer ts.stopServer(t)
-	on, addr := mppcoordmanager.InstanceMPPCoordinatorManager.GetServerAddr()
-	require.Equal(t, on, true)
-	require.Equal(t, addr[:10], "127.0.0.1:")
-}
-
-func TestSetLabelsConcurrentWithStoreTopology(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-
-	ts.startServer(t)
-	defer ts.stopServer(t)
-
-	time.Sleep(time.Second)
-	integration.BeforeTestExternal(t)
-	cluster := integration.NewClusterV3(t, &integration.ClusterConfig{Size: 1})
-	defer cluster.Terminate(t)
-	client := cluster.RandClient()
-	infosync.SetEtcdClient(client)
-
-	ts.domain.InfoSyncer().ServerInfoSyncer().Restart(ctx)
-	ts.domain.InfoSyncer().ServerInfoSyncer().RestartTopology(ctx)
-
-	testUpdateLabels := func() {
-		labels := map[string]string{}
-		labels["zone"] = fmt.Sprintf("z-%v", rand.Intn(100000))
-		buffer := bytes.NewBuffer([]byte{})
-		require.Nil(t, json.NewEncoder(buffer).Encode(labels))
-		resp, err := ts.PostStatus("/labels", "application/json", buffer)
-		require.NoError(t, err)
-		require.NotNil(t, resp)
-		defer func() {
-			require.NoError(t, resp.Body.Close())
-		}()
-		require.Equal(t, http.StatusOK, resp.StatusCode)
-		newLabels := config.GetGlobalConfig().Labels
-		require.Equal(t, newLabels, labels)
-	}
-	testStoreTopology := func() {
-		require.NoError(t, ts.domain.InfoSyncer().ServerInfoSyncer().StoreTopologyInfo(context.Background()))
-	}
-
-	done := make(chan struct{})
-	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				testStoreTopology()
-			}
-		}
-	}()
-	for range 100 {
-		testUpdateLabels()
-	}
-	close(done)
-	wg.Wait()
-
-	// reset the global variable
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.Labels = map[string]string{}
-	})
-}
-
-func fetchTiFlashReplicaSummary(t *testing.T, ts *basicHTTPHandlerTestSuite) tikvhandler.FlashReplicaSummary {
-	t.Helper()
-	return fetchTiFlashReplicaSummaryPath(t, ts, "/tiflash/replica")
-}
-
-func fetchTiFlashReplicaSummaryPath(t *testing.T, ts *basicHTTPHandlerTestSuite, path string) tikvhandler.FlashReplicaSummary {
-	t.Helper()
-	resp, err := ts.FetchStatus(path)
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, resp.Body.Close())
-	}()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(body, &raw))
-	_, hasTables := raw["tables"]
-	require.False(t, hasTables)
-	var summary tikvhandler.FlashReplicaSummary
-	require.NoError(t, json.Unmarshal(body, &summary))
-	return summary
-}
-
-func TestTiFlashReplicaSummary(t *testing.T) {
-	ts := createBasicHTTPHandlerTestSuite()
-	ts.startServer(t, mockstore.WithMockTiFlash(2))
-	defer ts.stopServer(t)
-
-	tk := testkit.NewTestKit(t, ts.store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t_rep (a int)")
-	tk.MustExec(`create table t_part (a int primary key)
-partition by range (a)
-(partition p0 values less than (256),
- partition p1 values less than (512))`)
-
-	summary := fetchTiFlashReplicaSummary(t, ts)
-	require.True(t, summary.CanDisable)
-	require.Equal(t, 0, summary.TableCount)
-	require.False(t, summary.Reloaded)
-	require.Equal(t, "ON", summary.TiDBColumnarStorageEnabled)
-	require.Equal(t, config.GetGlobalConfig().CSE.ColumnarStoreType, summary.ColumnarStoreType)
-	require.Equal(t, ts.store.GetKeyspace(), summary.Keyspace)
-	require.Equal(t, uint32(ts.store.GetCodec().GetKeyspaceID()), summary.KeyspaceID)
-
-	originStoreType := config.GetGlobalConfig().CSE.ColumnarStoreType
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.CSE.ColumnarStoreType = "columnar"
-	})
-	defer config.UpdateGlobal(func(conf *config.Config) {
-		conf.CSE.ColumnarStoreType = originStoreType
-	})
-	summary = fetchTiFlashReplicaSummary(t, ts)
-	require.Equal(t, "columnar", summary.ColumnarStoreType)
-	config.UpdateGlobal(func(conf *config.Config) {
-		conf.CSE.ColumnarStoreType = originStoreType
-	})
-
-	tk.MustExec("alter table t_rep set tiflash replica 1")
-	summary = fetchTiFlashReplicaSummary(t, ts)
-	require.False(t, summary.CanDisable)
-	require.Equal(t, 1, summary.TableCount)
-	require.False(t, summary.Reloaded)
-
-	summary = fetchTiFlashReplicaSummaryPath(t, ts, "/tiflash/replica?reload=true")
-	require.False(t, summary.CanDisable)
-	require.Equal(t, 1, summary.TableCount)
-	require.True(t, summary.Reloaded)
-
-	tk.MustExec("alter table t_part set tiflash replica 1")
-	summary = fetchTiFlashReplicaSummary(t, ts)
-	require.False(t, summary.CanDisable)
-	require.Equal(t, 2, summary.TableCount)
-
-	tk.MustExec("alter table t_rep set tiflash replica 0")
-	summary = fetchTiFlashReplicaSummary(t, ts)
-	require.False(t, summary.CanDisable)
-	require.Equal(t, 1, summary.TableCount)
-
-	tk.MustExec("alter table t_part set tiflash replica 0")
-	summary = fetchTiFlashReplicaSummary(t, ts)
-	require.True(t, summary.CanDisable)
-	require.Equal(t, 0, summary.TableCount)
-
-	defer func(originGC bool) {
-		if originGC {
-			ddlutil.EmulatorGCEnable()
-		} else {
-			ddlutil.EmulatorGCDisable()
-		}
-	}(ddlutil.IsEmulatorGCEnable())
-	ddlutil.EmulatorGCDisable()
-	gcTimeFormat := "20060102-15:04:05 -0700 MST"
-	timeBeforeDrop := time.Now().Add(0 - 48*60*60*time.Second).Format(gcTimeFormat)
-	tk.MustExec(fmt.Sprintf(`INSERT HIGH_PRIORITY INTO mysql.tidb VALUES ('tikv_gc_safe_point', '%[1]s', ''),('tikv_gc_enable','true','')
-			       ON DUPLICATE KEY UPDATE variable_value = '%[1]s'`, timeBeforeDrop))
-
-	tk.MustExec("alter table t_part set tiflash replica 1")
-	tk.MustExec("drop table t_part")
-	summary = fetchTiFlashReplicaSummary(t, ts)
-	require.True(t, summary.CanDisable)
-	require.Equal(t, 0, summary.TableCount)
-
-	resp, err := ts.FetchStatus("/tiflash/replica-deprecated")
-	require.NoError(t, err)
-	var leftover []tikvhandler.TableFlashReplicaInfo
-	require.NoError(t, json.NewDecoder(resp.Body).Decode(&leftover))
-	require.NoError(t, resp.Body.Close())
-	require.Greater(t, len(leftover), 0)
-
-	tk.MustExec("set global tidb_columnar_storage_enabled = 'OFF'")
-	summary = fetchTiFlashReplicaSummary(t, ts)
-	require.Equal(t, "OFF", summary.TiDBColumnarStorageEnabled)
-	tk.MustExec("set global tidb_columnar_storage_enabled = 'ON'")
-
-	resp, err = ts.PostStatus("/tiflash/replica", "application/json", bytes.NewBuffer([]byte(`{"id":1,"region_count":1,"flash_region_count":1}`)))
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, http.StatusMethodNotAllowed, resp.StatusCode)
-
-	resp, err = ts.FetchStatus("/tiflash/replica?reload=maybe")
-	require.NoError(t, err)
-	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
-	require.NoError(t, resp.Body.Close())
-
-	require.NoError(t, failpoint.Enable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed", `return(true)`))
-	defer failpoint.Disable("github.com/pingcap/tidb/pkg/infoschema/issyncer/ErrorMockReloadFailed")
-
-	summary = fetchTiFlashReplicaSummary(t, ts)
-	require.False(t, summary.Reloaded)
-	require.True(t, summary.CanDisable)
-
-	summary = fetchTiFlashReplicaSummaryPath(t, ts, "/tiflash/replica?reload=false")
-	require.False(t, summary.Reloaded)
-
-	resp, err = ts.FetchStatus("/tiflash/replica?reload=true")
-	require.NoError(t, err)
-	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.Equal(t, http.StatusInternalServerError, resp.StatusCode)
-	var failed tikvhandler.FlashReplicaSummary
-	require.Error(t, json.Unmarshal(body, &failed))
 }

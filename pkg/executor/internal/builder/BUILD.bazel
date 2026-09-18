@@ -3,15 +3,13 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "builder",
     srcs = ["builder_utils.go"],
-    importpath = "github.com/pingcap/tidb/pkg/executor/internal/builder",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/builder",
     visibility = ["//pkg/executor:__subpackages__"],
     deps = [
         "//pkg/distsql",
         "//pkg/kv",
-        "//pkg/planner/core/base",
-        "//pkg/planner/planctx",
+        "//pkg/planner/core",
         "//pkg/sessionctx",
-        "//pkg/sessionctx/vardef",
         "//pkg/util/timeutil",
         "@com_github_pingcap_tipb//go-tipb",
     ],

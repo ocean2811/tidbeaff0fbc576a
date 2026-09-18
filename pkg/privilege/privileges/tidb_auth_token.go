@@ -27,7 +27,7 @@ import (
 	jwsRepo "github.com/lestrrat-go/jwx/v2/jws"
 	jwtRepo "github.com/lestrrat-go/jwx/v2/jwt"
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/zap"
 )
 
@@ -80,7 +80,7 @@ func (jwks *JWKSImpl) LoadJWKS4AuthToken(ctx context.Context, wg *sync.WaitGroup
 }
 
 // checkSigWithRetry verifies the signature in the jwt, and returns the claims.
-func (jwks *JWKSImpl) checkSigWithRetry(tokenString string, retryTime int) (map[string]any, error) {
+func (jwks *JWKSImpl) checkSigWithRetry(tokenString string, retryTime int) (map[string]interface{}, error) {
 	var (
 		verifiedPayload []byte
 		err             error

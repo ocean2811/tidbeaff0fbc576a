@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "logutil",
     srcs = ["logutil.go"],
-    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/logutil",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/logutil",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/logutil",

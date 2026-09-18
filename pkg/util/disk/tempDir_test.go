@@ -19,7 +19,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +40,7 @@ func TestRemoveDir(t *testing.T) {
 	require.NoError(t, os.RemoveAll(config.GetGlobalConfig().TempStoragePath))
 	require.Equal(t, checkTempDirExist(), false)
 	wg := sync.WaitGroup{}
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func(t *testing.T) {
 			err := CheckAndInitTempDir()

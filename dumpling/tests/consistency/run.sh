@@ -8,12 +8,6 @@ cur=$(cd `dirname $0`; pwd)
 DB_NAME="mysql_consistency"
 TABLE_NAME="t"
 
-# get version info
-# MySQL:   VERSION(): 9.1.0
-# MariaDB: VERSION(): 11.4.2-MariaDB-ubu2404
-# TiDB:    VERSION(): 8.0.11-TiDB-v8.3.0
-versioninfo=`run_sql "SELECT VERSION();"`
-
 # drop database on mysql
 run_sql "drop database if exists \`$DB_NAME\`;"
 
@@ -26,23 +20,13 @@ run_sql "insert into $DB_NAME.$TABLE_NAME values $(seq -s, 100 | sed 's/,*$//g' 
 
 # dumping with consistency flush
 export DUMPLING_TEST_DATABASE=$DB_NAME
-export GO_FAILPOINTS="github.com/pingcap/tidb/dumpling/export/ConsistencyCheck=1*sleep(5000)"
+export GO_FAILPOINTS="github.com/ocean2811/tidbeaff0fbc576a/dumpling/export/ConsistencyCheck=1*sleep(5000)"
 run_dumpling &
 # wait dumpling process to start to sleep
 sleep 2
 
 # record metadata info
-if [[ $versioninfo =~ (Ti|Maria)DB ]]; then
-	metadata=`run_sql "show master status;"`
-else
-	if [[ $versioninfo =~ "VERSION(): "(8.4|9) ]]; then
-		# MySQL 8.4.0 and newer no longer support SHOW MASTER STATUS
-		# and only support SHOW BINARY LOG STATUS
-		metadata=`run_sql "show binary log status;"`
-	else
-		metadata=`run_sql "show master status;"`
-	fi
-fi
+metadata=`run_sql "show master status;"`
 metaLog=`echo $metadata | awk -F 'File:' '{print $2}' | awk '{print $1}'`
 metaPos=`echo $metadata | awk -F 'Position:' '{print $2}' | awk '{print $1}'`
 metaGTID=`echo $metadata | awk -F 'Executed_Gtid_Set:' '{print $2}' | awk '{print $1}'`

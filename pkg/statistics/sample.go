@@ -21,17 +21,17 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/fastrand"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/fastrand"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"github.com/pingcap/tipb/go-tipb"
 	"github.com/twmb/murmur3"
 )
@@ -51,17 +51,30 @@ type SampleItem struct {
 // EmptySampleItemSize is the size of empty SampleItem, 96 = 72 (datum) + 8 (int) + 16.
 const EmptySampleItemSize = int64(unsafe.Sizeof(SampleItem{}))
 
-func sortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) error {
+// CopySampleItems returns a deep copy of SampleItem slice.
+func CopySampleItems(items []*SampleItem) []*SampleItem {
+	n := make([]*SampleItem, len(items))
+	for i, item := range items {
+		ni := *item
+		n[i] = &ni
+	}
+	return n
+}
+
+// SortSampleItems shallow copies and sorts a slice of SampleItem.
+func SortSampleItems(sc *stmtctx.StatementContext, items []*SampleItem) ([]*SampleItem, error) {
+	sortedItems := make([]*SampleItem, len(items))
+	copy(sortedItems, items)
 	var err error
-	slices.SortStableFunc(items, func(i, j *SampleItem) int {
+	slices.SortStableFunc(sortedItems, func(i, j *SampleItem) int {
 		var cmp int
-		cmp, err = i.Value.Compare(sc.TypeCtx(), &j.Value, collate.GetBinaryCollator())
+		cmp, err = i.Value.Compare(sc, &j.Value, collate.GetBinaryCollator())
 		if err != nil {
 			return -1
 		}
 		return cmp
 	})
-	return err
+	return sortedItems, err
 }
 
 // SampleCollector will collect Samples and calculate the count and ndv of an attribute.
@@ -77,21 +90,6 @@ type SampleCollector struct {
 	TotalSize     int64 // TotalSize is the total size of column.
 	MemSize       int64 // major memory size of this sample collector.
 	IsMerger      bool
-}
-
-// Destroy releases references held by the sample collector so the sampled data can be reclaimed eagerly.
-func (c *SampleCollector) Destroy() {
-	c.FMSketch = nil
-	c.CMSketch = nil
-	c.TopN = nil
-	c.Samples = nil
-	c.seenValues = 0
-	c.NullCount = 0
-	c.Count = 0
-	c.MaxSampleSize = 0
-	c.TotalSize = 0
-	c.MemSize = 0
-	c.IsMerger = false
 }
 
 // MergeSampleCollector merges two sample collectors.
@@ -182,7 +180,7 @@ func (c *SampleCollector) collect(sc *stmtctx.StatementContext, d types.Datum) e
 			newItem := &SampleItem{}
 			d.Copy(&newItem.Value)
 			// To keep the order of the elements, we use delete and append, not direct replacement.
-			c.Samples = slices.Delete(c.Samples, idx, idx+1)
+			c.Samples = append(c.Samples[:idx], c.Samples[idx+1:]...)
 			c.Samples = append(c.Samples, newItem)
 		}
 	}
@@ -261,8 +259,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 						return nil, nil, err
 					}
 					decodedVal.SetBytesAsString(s.Collators[i].Key(decodedVal.GetString()), decodedVal.Collation(), uint32(decodedVal.Length()))
-					encodedKey, err := tablecodec.EncodeValue(s.Sc.TimeZone(), nil, decodedVal)
-					err = s.Sc.HandleError(err)
+					encodedKey, err := tablecodec.EncodeValue(s.Sc, nil, decodedVal)
 					if err != nil {
 						return nil, nil, err
 					}
@@ -278,7 +275,7 @@ func (s SampleBuilder) CollectColumnStats() ([]*SampleCollector, *SortedBuilder,
 }
 
 // RowToDatums converts row to datum slice.
-func RowToDatums(row chunk.Row, fields []*resolve.ResultField) []types.Datum {
+func RowToDatums(row chunk.Row, fields []*ast.ResultField) []types.Datum {
 	datums := make([]types.Datum, len(fields))
 	for i, f := range fields {
 		datums[i] = row.GetDatum(i, &f.Column.FieldType)
@@ -300,7 +297,7 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 	c.TopN = NewTopN(int(helper.actualNumTop))
 	// Process them decreasingly so we can handle most frequent values first and reduce the probability of hash collision
 	// by small values.
-	for i := range helper.actualNumTop {
+	for i := uint32(0); i < helper.actualNumTop; i++ {
 		h1, h2 := murmur3.Sum128(helper.sorted[i].data)
 		realCnt := cms.queryHashValue(nil, h1, h2)
 		// Because the encode of topn is the new encode type. But analyze proto returns the old encode type for a sample datum,
@@ -309,8 +306,7 @@ func (c *SampleCollector) ExtractTopN(numTop uint32, sc *stmtctx.StatementContex
 		if err != nil {
 			return err
 		}
-		data, err := tablecodec.EncodeValue(sc.TimeZone(), nil, d)
-		err = sc.HandleError(err)
+		data, err := tablecodec.EncodeValue(sc, nil, d)
 		if err != nil {
 			return err
 		}

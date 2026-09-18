@@ -18,12 +18,11 @@ import (
 	"fmt"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/util"
-	parserutil "github.com/pingcap/tidb/pkg/util/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
 )
 
 // nameResolver is the visitor to resolve table name and column name.
@@ -33,25 +32,29 @@ type nameResolver struct {
 	err       error
 }
 
-// Enter implements ast.InPlaceVisitor interface.
-func (*nameResolver) Enter(ast.Node) bool {
-	return false
+// Enter implements ast.Visitor interface.
+func (*nameResolver) Enter(inNode ast.Node) (ast.Node, bool) {
+	return inNode, false
 }
 
-// Leave implements ast.InPlaceVisitor interface.
-func (nr *nameResolver) Leave(inNode ast.Node) bool {
+// Leave implements ast.Visitor interface.
+func (nr *nameResolver) Leave(inNode ast.Node) (node ast.Node, ok bool) {
 	//nolint: revive,all_revive
 	switch v := inNode.(type) {
 	case *ast.ColumnNameExpr:
 		for _, col := range nr.tableInfo.Columns {
 			if col.Name.L == v.Name.Name.L {
-				return true
+				v.Refer = &ast.ResultField{
+					Column: col,
+					Table:  nr.tableInfo,
+				}
+				return inNode, true
 			}
 		}
 		nr.err = errors.Errorf("can't find column %s in %s", v.Name.Name.O, nr.tableInfo.Name.O)
-		return false
+		return inNode, false
 	}
-	return true
+	return inNode, true
 }
 
 // ParseExpression parses an ExprNode from a string.
@@ -61,11 +64,7 @@ func (nr *nameResolver) Leave(inNode ast.Node) bool {
 func ParseExpression(expr string) (node ast.ExprNode, err error) {
 	expr = fmt.Sprintf("select %s", expr)
 	charset, collation := charset.GetDefaultCharsetAndCollate()
-	parse := parserutil.GetParser()
-	defer func() {
-		parserutil.DestroyParser(parse)
-	}()
-	stmts, _, err := parse.ParseSQL(expr,
+	stmts, _, err := parser.New().ParseSQL(expr,
 		parser.CharsetConnection(charset),
 		parser.CollationConnection(collation))
 	if err == nil {
@@ -77,7 +76,7 @@ func ParseExpression(expr string) (node ast.ExprNode, err error) {
 // SimpleResolveName resolves all column names in the expression node.
 func SimpleResolveName(node ast.ExprNode, tblInfo *model.TableInfo) (ast.ExprNode, error) {
 	nr := nameResolver{tblInfo, nil}
-	if !ast.Walk(node, &nr) {
+	if _, ok := node.Accept(&nr); !ok {
 		return nil, errors.Trace(nr.err)
 	}
 	return node, nil

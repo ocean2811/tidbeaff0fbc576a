@@ -20,16 +20,16 @@ import (
 	"math"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 )
 
 type gener struct {
 	defaultGener
 }
 
-func (g gener) gen() any {
+func (g gener) gen() interface{} {
 	result := g.defaultGener.gen()
 	if _, ok := result.(string); ok {
 		dg := newDefaultGener(0, types.ETDuration)

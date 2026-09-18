@@ -21,17 +21,16 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/pingcap/failpoint"
 	"github.com/pingcap/kvproto/pkg/diagnosticspb"
 	"github.com/pingcap/sysutil"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 )
@@ -179,8 +178,8 @@ func TestInspectionResult(t *testing.T) {
 	}
 }
 
-func parseTime(t *testing.T, se sessionapi.Session, str string) types.Time {
-	time, err := types.ParseTime(se.GetSessionVars().StmtCtx.TypeCtx(), str, mysql.TypeDatetime, types.MaxFsp)
+func parseTime(t *testing.T, se session.Session, str string) types.Time {
+	time, err := types.ParseTime(se.GetSessionVars().StmtCtx, str, mysql.TypeDatetime, types.MaxFsp, nil)
 	require.NoError(t, err)
 	return time
 }
@@ -205,16 +204,14 @@ func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, 
 			},
 		}
 		// mock cluster information
-		timeNow := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 		configurations[infoschema.TableClusterInfo] = variable.TableSnapshot{
 			Rows: [][]types.Datum{
-				// Columns: TYPE, INSTANCE, STATUS_ADDRESS, VERSION, GIT_HASH, START_TIME, UPTIME
-				types.MakeDatums("pd", "pd-0", "pd-0", "4.0", "a234c", timeNow, ""),
-				types.MakeDatums("tidb", "tidb-0", "tidb-0s", "4.0", "a234c", timeNow, ""),
-				types.MakeDatums("tidb", "tidb-1", "tidb-1s", "4.0", "a234c", timeNow, ""),
-				types.MakeDatums("tikv", "tikv-0", "tikv-0s", "4.0", "a234c", timeNow, ""),
-				types.MakeDatums("tikv", "tikv-1", "tikv-1s", "4.0", "a234c", timeNow, ""),
-				types.MakeDatums("tikv", "tikv-2", "tikv-2s", "4.0", "a234c", timeNow, ""),
+				types.MakeDatums("pd", "pd-0", "pd-0", "4.0", "a234c", "", ""),
+				types.MakeDatums("tidb", "tidb-0", "tidb-0s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tidb", "tidb-1", "tidb-1s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tikv", "tikv-0", "tikv-0s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tikv", "tikv-1", "tikv-1s", "4.0", "a234c", "", ""),
+				types.MakeDatums("tikv", "tikv-2", "tikv-2s", "4.0", "a234c", "", ""),
 			},
 		}
 		// mock cluster system information
@@ -226,11 +223,11 @@ func createInspectionContext(t *testing.T, mockData map[string][][]types.Datum, 
 			},
 		}
 	}
-	fpName0 := "github.com/pingcap/tidb/pkg/executor/mockMergeMockInspectionTables"
+	fpName0 := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/mockMergeMockInspectionTables"
 	require.NoError(t, failpoint.Enable(fpName0, "return"))
 
 	// Mock for metric table data.
-	fpName1 := "github.com/pingcap/tidb/pkg/executor/mockMetricsTableData"
+	fpName1 := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/mockMetricsTableData"
 	require.NoError(t, failpoint.Enable(fpName1, "return"))
 
 	ctx := context.WithValue(context.Background(), "__mockInspectionTables", configurations)
@@ -341,7 +338,7 @@ func TestThresholdCheckInspection2(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx.TypeCtx(), s, mysql.TypeDatetime, types.MaxFsp)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		return time
 	}
@@ -424,7 +421,7 @@ func TestThresholdCheckInspection3(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx.TypeCtx(), s, mysql.TypeDatetime, types.MaxFsp)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		return time
 	}
@@ -480,7 +477,7 @@ func createClusterGRPCServer(t testing.TB) map[string]*testServer {
 	testServers := map[string]*testServer{}
 
 	// create gRPC servers
-	for _, typ := range []string{"tidb", "tikv", "ticdc", "tiproxy", "pd"} {
+	for _, typ := range []string{"tidb", "tikv", "pd"} {
 		tmpDir := t.TempDir()
 
 		server := grpc.NewServer()
@@ -521,7 +518,7 @@ func TestCriticalErrorInspection(t *testing.T) {
 	for _, s := range testServers {
 		servers = append(servers, strings.Join([]string{s.typ, s.address, s.address}, ","))
 	}
-	fpName2 := "github.com/pingcap/tidb/pkg/executor/mockClusterLogServerInfo"
+	fpName2 := "github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/mockClusterLogServerInfo"
 	fpExpr := strings.Join(servers, ";")
 	require.NoError(t, failpoint.Enable(fpName2, fmt.Sprintf(`return("%s")`, fpExpr)))
 	defer func() { require.NoError(t, failpoint.Disable(fpName2)) }()
@@ -631,7 +628,7 @@ func TestNodeLoadInspection(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx.TypeCtx(), s, mysql.TypeDatetime, types.MaxFsp)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		return time
 	}
@@ -707,7 +704,7 @@ func TestConfigCheckOfStorageBlockCacheSize(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
 	datetime := func(s string) types.Time {
-		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx.TypeCtx(), s, mysql.TypeDatetime, types.MaxFsp)
+		time, err := types.ParseTime(tk.Session().GetSessionVars().StmtCtx, s, mysql.TypeDatetime, types.MaxFsp, nil)
 		require.NoError(t, err)
 		return time
 	}

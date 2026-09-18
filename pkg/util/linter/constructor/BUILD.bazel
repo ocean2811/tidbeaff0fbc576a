@@ -3,6 +3,6 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "constructor",
     srcs = ["constructorflag.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/linter/constructor",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/linter/constructor",
     visibility = ["//visibility:public"],
 )

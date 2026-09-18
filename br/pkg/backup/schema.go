@@ -5,30 +5,23 @@ package backup
 import (
 	"context"
 	"encoding/json"
-	"maps"
-	"slices"
 	"time"
 
 	"github.com/opentracing/opentracing-go"
 	"github.com/pingcap/errors"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/checksum"
-	berrors "github.com/pingcap/tidb/br/pkg/errors"
-	"github.com/pingcap/tidb/br/pkg/glue"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/metautil"
-	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/ddl/label"
-	"github.com/pingcap/tidb/pkg/domain/infosync"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/statistics/handle"
-	"github.com/pingcap/tidb/pkg/statistics/util"
-	tidbutil "github.com/pingcap/tidb/pkg/util"
-	"github.com/tikv/client-go/v2/tikv"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/checkpoint"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/checksum"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/glue"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/metautil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/summary"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/util"
 	kvutil "github.com/tikv/client-go/v2/util"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -41,15 +34,12 @@ const (
 )
 
 type schemaInfo struct {
-	tableInfo                   *model.TableInfo
-	dbInfo                      *model.DBInfo
-	crc64xor                    uint64
-	totalKvs                    uint64
-	totalBytes                  uint64
-	stats                       *util.JSONTable
-	statsIndex                  []*backuppb.StatsFileIndex
-	isMergeOptionAllowed        bool
-	partitionMergeOptionAllowed map[string]bool
+	tableInfo  *model.TableInfo
+	dbInfo     *model.DBInfo
+	crc64xor   uint64
+	totalKvs   uint64
+	totalBytes uint64
+	stats      *util.JSONTable
 }
 
 type iterFuncTp func(kv.Storage, func(*model.DBInfo, *model.TableInfo)) error
@@ -84,7 +74,6 @@ func (ss *Schemas) BackupSchemas(
 	store kv.Storage,
 	statsHandle *handle.Handle,
 	backupTS uint64,
-	checksumMap map[int64]*metautil.ChecksumStats,
 	concurrency uint,
 	copConcurrency uint,
 	skipChecksum bool,
@@ -96,7 +85,7 @@ func (ss *Schemas) BackupSchemas(
 		ctx = opentracing.ContextWithSpan(ctx, span1)
 	}
 
-	workerPool := tidbutil.NewWorkerPool(concurrency, "Schemas")
+	workerPool := utils.NewWorkerPool(concurrency, "Schemas")
 	errg, ectx := errgroup.WithContext(ctx)
 	startAll := time.Now()
 	op := metautil.AppendSchema
@@ -115,7 +104,7 @@ func (ss *Schemas) BackupSchemas(
 		}
 
 		var checksum *checkpoint.ChecksumItem
-		var exists = false
+		var exists bool = false
 		if ss.checkpointChecksum != nil && schema.tableInfo != nil {
 			checksum, exists = ss.checkpointChecksum[schema.tableInfo.ID]
 		}
@@ -154,28 +143,13 @@ func (ss *Schemas) BackupSchemas(
 							zap.Uint64("Crc64Xor", schema.crc64xor),
 							zap.Uint64("TotalKvs", schema.totalKvs),
 							zap.Uint64("TotalBytes", schema.totalBytes),
-							zap.Duration("TimeTaken", calculateCost))
-					}
-					if checksumMap != nil {
-						if err := schema.matchChecksum(checksumMap); err != nil {
-							return errors.Trace(err)
-						}
+							zap.Duration("calculate-take", calculateCost))
 					}
 				}
 				if statsHandle != nil {
-					statsWriter := metaWriter.NewStatsWriter()
-					if err := schema.dumpStatsToJSON(ctx, statsWriter, statsHandle, backupTS); err != nil {
+					if err := schema.dumpStatsToJSON(statsHandle, backupTS); err != nil {
 						logger.Error("dump table stats failed", logutil.ShortError(err))
-						return errors.Trace(err)
 					}
-				}
-				// Check merge option allowed (network I/O)
-				isMergeOptionAllowed, partitionMergeOptionAllowed, err := schema.checkMergeOptionAllowed(ectx, store.GetCodec())
-				if err != nil {
-					logger.Warn("failed to check merge_option for table", logutil.ShortError(err))
-				} else {
-					schema.isMergeOptionAllowed = isMergeOptionAllowed
-					schema.partitionMergeOptionAllowed = partitionMergeOptionAllowed
 				}
 			}
 			// Send schema to metawriter
@@ -235,55 +209,15 @@ func (s *schemaInfo) calculateChecksum(
 	return nil
 }
 
-// Check if checksum from files matches checksum from coprocessor.
-func (s *schemaInfo) matchChecksum(checksumMap map[int64]*metautil.ChecksumStats) error {
-	var crc, kvs, bytes uint64
-	ckm := checksumMap[s.tableInfo.ID]
-	if ckm != nil {
-		crc = ckm.Crc64Xor
-		kvs = ckm.TotalKvs
-		bytes = ckm.TotalBytes
-	}
-	if s.tableInfo.Partition != nil {
-		for _, def := range s.tableInfo.Partition.Definitions {
-			ckm := checksumMap[def.ID]
-			if ckm != nil {
-				crc ^= ckm.Crc64Xor
-				kvs += ckm.TotalKvs
-				bytes += ckm.TotalBytes
-			}
-		}
-	}
-	if s.crc64xor != crc || s.totalKvs != kvs || s.totalBytes != bytes {
-		log.Error("checksum mismatch",
-			zap.Stringer("db", s.dbInfo.Name),
-			zap.Stringer("table", s.tableInfo.Name),
-			zap.Uint64("origin tidb crc64", s.crc64xor),
-			zap.Uint64("calculated crc64", crc),
-			zap.Uint64("origin tidb total kvs", s.totalKvs),
-			zap.Uint64("calculated total kvs", kvs),
-			zap.Uint64("origin tidb total bytes", s.totalBytes),
-			zap.Uint64("calculated total bytes", bytes))
-		return errors.Trace(berrors.ErrBackupChecksumMismatch)
-	}
-	log.Info("checksum success",
-		zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
-	return nil
-}
-
-func (s *schemaInfo) dumpStatsToJSON(ctx context.Context, statsWriter *metautil.StatsWriter, statsHandle *handle.Handle, backupTS uint64) error {
+func (s *schemaInfo) dumpStatsToJSON(statsHandle *handle.Handle, backupTS uint64) error {
 	log.Info("dump stats to json", zap.Stringer("db", s.dbInfo.Name), zap.Stringer("table", s.tableInfo.Name))
-	if err := statsHandle.PersistStatsBySnapshot(
-		ctx, s.dbInfo.Name.String(), s.tableInfo, backupTS, statsWriter.BackupStats,
-	); err != nil {
-		return errors.Trace(err)
-	}
-
-	statsFileIndexes, err := statsWriter.BackupStatsDone(ctx)
+	jsonTable, err := statsHandle.DumpStatsToJSONBySnapshot(
+		s.dbInfo.Name.String(), s.tableInfo, backupTS, true)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	s.statsIndex = statsFileIndexes
+
+	s.stats = jsonTable
 	return nil
 }
 
@@ -309,79 +243,11 @@ func (s *schemaInfo) encodeToSchema() (*backuppb.Schema, error) {
 	}
 
 	return &backuppb.Schema{
-		Db:                          dbBytes,
-		Table:                       tableBytes,
-		Crc64Xor:                    s.crc64xor,
-		TotalKvs:                    s.totalKvs,
-		TotalBytes:                  s.totalBytes,
-		Stats:                       statsBytes,
-		StatsIndex:                  s.statsIndex,
-		IsMergeOptionAllowed:        s.isMergeOptionAllowed,
-		PartitionMergeOptionAllowed: s.partitionMergeOptionAllowed,
+		Db:         dbBytes,
+		Table:      tableBytes,
+		Crc64Xor:   s.crc64xor,
+		TotalKvs:   s.totalKvs,
+		TotalBytes: s.totalBytes,
+		Stats:      statsBytes,
 	}, nil
-}
-
-// checkMergeOptionAllowed checks if merge_option=allow is set for this table and its partitions.
-// Returns:
-//   - tableMergeOptionAllowed: whether merge_option=allow is set for the table itself
-//   - partitionMergeOptionAllowed: a map from partition name to whether merge_option=allow is set for that partition
-func (s *schemaInfo) checkMergeOptionAllowed(ctx context.Context, codec tikv.Codec) (bool, map[string]bool, error) {
-	partitionMergeOptionAllowed := make(map[string]bool)
-
-	// Construct the rule ID for this table using the same format as ddl/label
-	// Use .L (lowercase) to match DDL behavior for case-insensitive matching
-	dbName := s.dbInfo.Name.L
-	tableName := s.tableInfo.Name.L
-	ruleID := label.NewRuleID(codec, dbName, tableName, "")
-
-	// Collect all rule IDs to check (table + partitions if any)
-	ruleIDs := []string{ruleID}
-	if s.tableInfo.Partition != nil && len(s.tableInfo.Partition.Definitions) > 0 {
-		for _, def := range s.tableInfo.Partition.Definitions {
-			partitionRuleID := label.NewRuleID(codec, dbName, tableName, def.Name.L)
-			ruleIDs = append(ruleIDs, partitionRuleID)
-		}
-	}
-
-	// Get the specific label rules for this table and its partitions in batches
-	// to avoid overwhelming PD with too many requests at once
-	rules := make(map[string]*label.Rule)
-	for batch := range slices.Chunk(ruleIDs, utils.LabelRuleBatchSize) {
-		batchRules, err := infosync.GetLabelRules(ctx, batch)
-		if err != nil {
-			return false, nil, errors.Trace(err)
-		}
-
-		// Merge batch results into the main rules map
-		maps.Copy(rules, batchRules)
-	}
-
-	// Check if the table rule exists and has merge_option=allow
-	tableMergeOptionAllowed := false
-	if rule, exists := rules[ruleID]; exists {
-		for _, label := range rule.Labels {
-			if label.Key == "merge_option" && label.Value == "allow" {
-				tableMergeOptionAllowed = true
-				break
-			}
-		}
-	}
-
-	// Check partition rules if this is a partitioned table
-	if s.tableInfo.Partition != nil && len(s.tableInfo.Partition.Definitions) > 0 {
-		for _, def := range s.tableInfo.Partition.Definitions {
-			partitionRuleID := label.NewRuleID(codec, dbName, tableName, def.Name.L)
-			if rule, exists := rules[partitionRuleID]; exists {
-				for _, label := range rule.Labels {
-					if label.Key == "merge_option" && label.Value == "allow" {
-						// Use .O (original) for the map key to preserve case, but .L for rule ID matching
-						partitionMergeOptionAllowed[def.Name.O] = true
-						break
-					}
-				}
-			}
-		}
-	}
-
-	return tableMergeOptionAllowed, partitionMergeOptionAllowed, nil
 }

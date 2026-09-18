@@ -14,18 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# disable global ENCRYPTION_ARGS and ENABLE_ENCRYPTION_CHECK for this script
-ENCRYPTION_ARGS=""
-ENABLE_ENCRYPTION_CHECK=false
-export ENCRYPTION_ARGS
-export ENABLE_ENCRYPTION_CHECK
-
 set -eux
 
-res_file="$TEST_DIR/sql_res.$TEST_NAME.txt"
-
 # restart service without tiflash
-source $UTILS_DIR/run_services
+source $( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )/../_utils/run_services
 start_services --no-tiflash
 
 BACKUP_DIR=$TEST_DIR/"txn_backup"
@@ -53,8 +45,8 @@ clean() {
 }
 
 test_full_txnkv_encryption() {
-    check_range_start="xhello"
-    check_range_end="xworld"
+    check_range_start="hello"
+    check_range_end="world"
 
     rm -rf $BACKUP_FULL
 
@@ -87,54 +79,28 @@ run_test() {
     fi
 
     rm -rf $BACKUP_DIR
-    clean "xhello" "xworld" 
+    clean "hello" "world" 
 
     # generate txn kv randomly in range[start-key, end-key) in 10s
     bin/txnkv --pd $PD_ADDR \
         --ca "$TEST_DIR/certs/ca.pem" \
         --cert "$TEST_DIR/certs/br.pem" \
         --key "$TEST_DIR/certs/br.key" \
-        --mode rand-gen --start-key "xhello" --end-key "xworld" --duration 10
+        --mode rand-gen --start-key "hello" --end-key "world" --duration 10
 
-    checksum_ori=$(checksum "xhello" "xworld")
+    checksum_ori=$(checksum "hello" "world")
 
     # backup txnkv
     echo "backup start..."
     run_br --pd $PD_ADDR backup txn -s "local://$BACKUP_DIR" 
 
     # delete data in range[start-key, end-key)
-    clean "xhello" "xworld" 
+    clean "hello" "world" 
     # Ensure the data is deleted
-    retry_cnt=0
-    while true; do
-        checksum_new=$(checksum "xhello" "xworld")
+    checksum_new=$(checksum "hello" "world")
 
-        if [ "$checksum_new" != "$checksum_empty" ]; then
-            echo "failed to delete data in range after backup; retry_cnt = $retry_cnt"
-            retry_cnt=$((retry_cnt+1))
-            if [ "$retry_cnt" -gt 50 ]; then
-                fail_and_exit
-            fi
-            sleep 1
-            continue
-        fi
-
-        break
-    done
-
-    # failed on restore full
-    echo "restore full start..."
-    restore_fail=0
-    run_br --pd $PD_ADDR restore full -s "local://$BACKUP_DIR" > $res_file 2>&1 || restore_fail=1
-    if [ $restore_fail -ne 1 ]; then
-        echo 'full restore from txn backup data success'
-        exit 1
-    fi
-    check_contains "restore mode mismatch"
-
-    checksum_new=$(checksum "xhello" "xworld")
-    if [ "$checksum_new" != "$checksum_empty" ]; then
-        echo "not empty after restore failed"
+    if [ "$checksum_new" != "$checksum_empty" ];then
+        echo "failed to delete data in range after backup"
         fail_and_exit
     fi
 
@@ -142,7 +108,7 @@ run_test() {
     echo "restore start..."
     run_br --pd $PD_ADDR restore txn -s "local://$BACKUP_DIR" 
 
-    checksum_new=$(checksum "xhello" "xworld")
+    checksum_new=$(checksum "hello" "world")
 
     if [ "$checksum_new" != "$checksum_ori" ];then
         echo "checksum failed after restore"
@@ -152,9 +118,9 @@ run_test() {
     test_full_txnkv_encryption
 
     # delete data in range[start-key, end-key)
-    clean "xhello" "xworld"
+    clean "hello" "world"
     # Ensure the data is deleted
-    checksum_new=$(checksum "xhello" "xworld")
+    checksum_new=$(checksum "hello" "world")
 
     if [ "$checksum_new" != "$checksum_empty" ];then
         echo "failed to delete data in range"
@@ -165,6 +131,6 @@ run_test() {
 }
 
 # delete data in range[start-key, end-key)
-clean "xhello" "xworld" 
-checksum_empty=$(checksum "xhello" "xworld")
+clean "hello" "world" 
+checksum_empty=$(checksum "hello" "world")
 run_test ""

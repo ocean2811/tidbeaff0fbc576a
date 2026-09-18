@@ -17,11 +17,10 @@ package checksum
 import (
 	"bytes"
 	"io"
-	"slices"
 	"strings"
 	"testing"
 
-	encrypt2 "github.com/pingcap/tidb/pkg/util/encrypt"
+	encrypt2 "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/encrypt"
 	"github.com/stretchr/testify/require"
 )
 
@@ -111,7 +110,7 @@ func testDeleteOneByte(t *testing.T, encrypt bool) {
 	fc := func(b []byte, offset int) []byte {
 		if offset < deletePos && offset+len(b) >= deletePos {
 			pos := deletePos - offset
-			b = slices.Delete(b, pos-1, pos)
+			b = append(b[:pos-1], b[pos:]...)
 		}
 		return b
 	}
@@ -197,7 +196,7 @@ func testReadEmptyFile(t *testing.T, encrypt bool) {
 		}
 	}
 
-	for i := range 11 {
+	for i := 0; i <= 10; i++ {
 		var underlying io.ReaderAt = f
 		if encrypt {
 			underlying = encrypt2.NewReader(underlying, ctrCipher)
@@ -417,7 +416,7 @@ func TestChecksumWriterAutoFlush(t *testing.T) {
 func newTestBuff(str string, n int) *bytes.Buffer {
 	buf := bytes.NewBuffer(nil)
 	testData := str
-	for range n {
+	for i := 0; i < n; i++ {
 		buf.WriteString(testData)
 	}
 	return buf

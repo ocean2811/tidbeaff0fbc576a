@@ -2,7 +2,7 @@
 
 Background:
 
-Issue: https://github.com/pingcap/tidb/issues/18566
+Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/18566
 
 Our database may store some sensitive information, such as customer ID number, credit card number, etc. This sensitive information sometimes exists in the error message in some manners like a form of key-value, and this information will be printed in the log along with the error.
 
@@ -16,7 +16,7 @@ Query OK, 0 rows affected (0.00 sec)
 
 mysql> insert into t values (1),(1);
 ERROR 1062 (23000): Duplicate entry '1' for key 'a'
-mysql> set @@global.tidb_redact_log=1;
+mysql> set @@session.tidb_redact_log=1;
 Query OK, 0 rows affected (0.00 sec)
 
 mysql> insert into t values (1),(1);

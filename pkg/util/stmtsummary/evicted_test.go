@@ -19,13 +19,12 @@ import (
 	"container/list"
 	"fmt"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"github.com/stretchr/testify/require"
 )
 
@@ -41,19 +40,18 @@ func newInduceSsbd(beginTime int64, endTime int64) *stmtSummaryByDigest {
 // fake a stmtSummaryByDigestElement
 func newInduceSsbde(beginTime int64, endTime int64) *stmtSummaryByDigestElement {
 	newSsbde := &stmtSummaryByDigestElement{
-		beginTime: beginTime,
-		endTime:   endTime,
-		stmtSummaryStats: stmtSummaryStats{
-			minLatency: time.Duration.Round(1<<63-1, time.Nanosecond),
-		},
+		beginTime:  beginTime,
+		endTime:    endTime,
+		minLatency: time.Duration.Round(1<<63-1, time.Nanosecond),
 	}
 	return newSsbde
 }
 
-// generate new StmtDigestKey and stmtSummaryByDigest
-func generateStmtSummaryByDigestKeyValue(schema string, beginTime int64, endTime int64) (*StmtDigestKey, *stmtSummaryByDigest) {
-	key := &StmtDigestKey{}
-	key.Init(schema, "", "", "", "", "")
+// generate new stmtSummaryByDigestKey and stmtSummaryByDigest
+func generateStmtSummaryByDigestKeyValue(schema string, beginTime int64, endTime int64) (*stmtSummaryByDigestKey, *stmtSummaryByDigest) {
+	key := &stmtSummaryByDigestKey{
+		schemaName: schema,
+	}
 	value := newInduceSsbd(beginTime, endTime)
 	return key, value
 }
@@ -82,7 +80,7 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 	sei1.SchemaName = "sorry, it's mine now. =)"
 	ssMap.AddStatement(sei1)
 
-	expectedEvictedCount := []any{
+	expectedEvictedCount := []interface{}{
 		types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		types.NewTime(types.FromGoTime(time.Unix(n+interval, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		int64(1),
@@ -104,7 +102,7 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 
 	ssMap.beginTimeForCurInterval = now + interval
 	// insert one statement per interval.
-	for range 50 {
+	for i := 0; i < 50; i++ {
 		ssMap.AddStatement(generateAnyExecInfo())
 		ssMap.beginTimeForCurInterval += interval * 2
 	}
@@ -134,7 +132,7 @@ func TestMapToEvictedCountDatum(t *testing.T) {
 	require.Equal(t, 25, len(evictedCountDatums))
 	n = ssMap.beginTimeForCurInterval
 	newlyEvicted := evictedCountDatums[0]
-	expectedEvictedCount = []any{
+	expectedEvictedCount = []interface{}{
 		types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		types.NewTime(types.FromGoTime(time.Unix(n+interval, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		int64(1),
@@ -168,19 +166,19 @@ func TestSimpleStmtSummaryByDigestEvicted(t *testing.T) {
 	require.Equal(t, "{begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
 	// test insert same *kind* of digest
 	ssbde.AddEvicted(evictedKey, evictedValue, 1)
-	require.Equal(t, "{begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
+	require.Equal(t, "{begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
 
 	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("b", 1, 2)
 	ssbde.AddEvicted(evictedKey, evictedValue, 1)
-	require.Equal(t, "{begin: 1, end: 2, count: 3}", getAllEvicted(ssbde))
+	require.Equal(t, "{begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
 
 	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("b", 5, 6)
 	ssbde.AddEvicted(evictedKey, evictedValue, 2)
-	require.Equal(t, "{begin: 5, end: 6, count: 1}, {begin: 1, end: 2, count: 3}", getAllEvicted(ssbde))
+	require.Equal(t, "{begin: 5, end: 6, count: 1}, {begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
 
 	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("b", 3, 4)
 	ssbde.AddEvicted(evictedKey, evictedValue, 3)
-	require.Equal(t, "{begin: 5, end: 6, count: 1}, {begin: 3, end: 4, count: 1}, {begin: 1, end: 2, count: 3}", getAllEvicted(ssbde))
+	require.Equal(t, "{begin: 5, end: 6, count: 1}, {begin: 3, end: 4, count: 1}, {begin: 1, end: 2, count: 2}", getAllEvicted(ssbde))
 
 	// test evicted element with multi-time range value.
 	ssbde = newStmtSummaryByDigestEvicted()
@@ -191,8 +189,7 @@ func TestSimpleStmtSummaryByDigestEvicted(t *testing.T) {
 	ssbde.AddEvicted(evictedKey, evictedValue, 3)
 	require.Equal(t, "{begin: 8, end: 9, count: 1}, {begin: 5, end: 6, count: 1}, {begin: 2, end: 3, count: 1}", getAllEvicted(ssbde))
 
-	evictedKey = &StmtDigestKey{}
-	evictedKey.Init("b", "", "", "", "", "")
+	evictedKey = &stmtSummaryByDigestKey{schemaName: "b"}
 	ssbde.AddEvicted(evictedKey, evictedValue, 4)
 	require.Equal(t, "{begin: 8, end: 9, count: 2}, {begin: 5, end: 6, count: 2}, {begin: 2, end: 3, count: 2}, {begin: 1, end: 2, count: 1}", getAllEvicted(ssbde))
 
@@ -238,13 +235,13 @@ func TestStmtSummaryByDigestEvictedElement(t *testing.T) {
 
 	// test add same *kind* of values.
 	record.addEvicted(evictedKey, digestValue)
-	require.Equal(t, "{begin: 0, end: 1, count: 2}", getEvicted(record))
+	require.Equal(t, "{begin: 0, end: 1, count: 1}", getEvicted(record))
 
 	// test add different *kind* of values.
 	evictedKey, evictedValue = generateStmtSummaryByDigestKeyValue("bravo", 0, 1)
 	digestValue = evictedValue.history.Back().Value.(*stmtSummaryByDigestElement)
 	record.addEvicted(evictedKey, digestValue)
-	require.Equal(t, "{begin: 0, end: 1, count: 3}", getEvicted(record))
+	require.Equal(t, "{begin: 0, end: 1, count: 2}", getEvicted(record))
 }
 
 // test stmtSummaryByDigestEvicted.addEvicted
@@ -264,7 +261,7 @@ func TestEvictedCountDetailed(t *testing.T) {
 	require.NoError(t, err)
 
 	// test stmtSummaryByDigest's history length
-	for i := range 100 {
+	for i := 0; i < 100; i++ {
 		if i == 0 {
 			require.Equal(t, 0, ssMap.summaryMap.Size())
 		} else {
@@ -285,7 +282,7 @@ func TestEvictedCountDetailed(t *testing.T) {
 	evictedCountDatums := ssMap.ToEvictedCountDatum()
 	n := ssMap.beginTimeForCurInterval
 	for _, evictedCountDatum := range evictedCountDatums {
-		expectedDatum := []any{
+		expectedDatum := []interface{}{
 			types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 			types.NewTime(types.FromGoTime(time.Unix(n+60, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 			int64(1),
@@ -297,7 +294,7 @@ func TestEvictedCountDetailed(t *testing.T) {
 	// test more than one eviction in single interval
 	banditSei.SchemaName = "Yet another kicker"
 	n = ssMap.beginTimeForCurInterval
-	expectedDatum := []any{
+	expectedDatum := []interface{}{
 		types.NewTime(types.FromGoTime(time.Unix(n, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		types.NewTime(types.FromGoTime(time.Unix(n+60, 0)), mysql.TypeTimestamp, types.DefaultFsp),
 		int64(2),
@@ -308,7 +305,7 @@ func TestEvictedCountDetailed(t *testing.T) {
 	ssMap.Clear()
 	other := ssMap.other
 	// test poisoning with empty-history digestValue
-	other.AddEvicted(new(StmtDigestKey), new(stmtSummaryByDigest), 100)
+	other.AddEvicted(new(stmtSummaryByDigestKey), new(stmtSummaryByDigest), 100)
 	require.Equal(t, 0, other.history.Len())
 }
 
@@ -318,7 +315,7 @@ func TestNewStmtSummaryByDigestEvictedElement(t *testing.T) {
 	stmtEvictedElement := newStmtSummaryByDigestEvictedElement(now, end)
 	require.Equal(t, now, stmtEvictedElement.beginTime)
 	require.Equal(t, end, stmtEvictedElement.endTime)
-	require.Equal(t, int64(0), stmtEvictedElement.count)
+	require.Equal(t, 0, len(stmtEvictedElement.digestKeyMap))
 }
 
 func TestStmtSummaryByDigestEvicted(t *testing.T) {
@@ -326,221 +323,195 @@ func TestStmtSummaryByDigestEvicted(t *testing.T) {
 	require.Equal(t, 0, stmtEvicted.history.Len())
 }
 
-func TestEvictedHistoryCollectionKeepsLatestIntervals(t *testing.T) {
-	stmtEvicted := newStmtSummaryByDigestEvicted()
-	stmtEvicted.history.PushBack(newStmtSummaryByDigestEvictedElement(1, 2))
-	stmtEvicted.history.PushBack(newStmtSummaryByDigestEvictedElement(2, 3))
-	stmtEvicted.history.PushBack(newStmtSummaryByDigestEvictedElement(3, 4))
-
-	elements := stmtEvicted.collectHistorySummaries(2)
-	require.Len(t, elements, 2)
-	require.Equal(t, int64(2), elements[0].beginTime)
-	require.Equal(t, int64(3), elements[1].beginTime)
-}
-
 // test addInfo function
 func TestAddInfo(t *testing.T) {
 	now := time.Now().Unix()
 	addTo := stmtSummaryByDigestElement{
-		stmtSummaryStats: stmtSummaryStats{
-			// user
-			authUsers: map[string]struct{}{"a": {}},
+		// user
+		authUsers: map[string]struct{}{"a": {}},
 
-			// execCount and sumWarnings
-			execCount:   3,
-			sumWarnings: 8,
+		// execCount and sumWarnings
+		execCount:   3,
+		sumWarnings: 8,
 
-			// latency
-			sumLatency:        8,
-			maxLatency:        5,
-			minLatency:        1,
-			sumParseLatency:   3,
-			maxParseLatency:   2,
-			sumCompileLatency: 3,
-			maxCompileLatency: 2,
+		// latency
+		sumLatency:        8,
+		maxLatency:        5,
+		minLatency:        1,
+		sumParseLatency:   3,
+		maxParseLatency:   2,
+		sumCompileLatency: 3,
+		maxCompileLatency: 2,
 
-			// coprocessor
-			sumNumCopTasks:       4,
-			maxCopProcessTime:    4,
-			maxCopProcessAddress: "19.19.8.10",
-			maxCopWaitTime:       4,
-			maxCopWaitAddress:    "19.19.8.10",
+		// coprocessor
+		sumNumCopTasks:       4,
+		maxCopProcessTime:    4,
+		maxCopProcessAddress: "19.19.8.10",
+		maxCopWaitTime:       4,
+		maxCopWaitAddress:    "19.19.8.10",
 
-			// TiKV
-			sumProcessTime: 1,
-			maxProcessTime: 1,
-			sumWaitTime:    2,
-			maxWaitTime:    1,
-			sumBackoffTime: 2,
-			maxBackoffTime: 2,
+		// TiKV
+		sumProcessTime: 1,
+		maxProcessTime: 1,
+		sumWaitTime:    2,
+		maxWaitTime:    1,
+		sumBackoffTime: 2,
+		maxBackoffTime: 2,
 
-			sumTotalKeys:                 3,
-			maxTotalKeys:                 2,
-			sumProcessedKeys:             8,
-			maxProcessedKeys:             4,
-			sumRocksdbDeleteSkippedCount: 8,
-			maxRocksdbDeleteSkippedCount: 2,
+		sumTotalKeys:                 3,
+		maxTotalKeys:                 2,
+		sumProcessedKeys:             8,
+		maxProcessedKeys:             4,
+		sumRocksdbDeleteSkippedCount: 8,
+		maxRocksdbDeleteSkippedCount: 2,
 
-			sumRocksdbKeySkippedCount:    8,
-			maxRocksdbKeySkippedCount:    3,
-			sumRocksdbBlockCacheHitCount: 8,
-			maxRocksdbBlockCacheHitCount: 3,
-			sumRocksdbBlockReadCount:     3,
-			maxRocksdbBlockReadCount:     3,
-			sumRocksdbBlockReadByte:      4,
-			maxRocksdbBlockReadByte:      4,
-			iaExecCount:                  2,
-			sumIARemoteReadSegmentCount:  8,
-			maxIARemoteReadSegmentCount:  3,
+		sumRocksdbKeySkippedCount:    8,
+		maxRocksdbKeySkippedCount:    3,
+		sumRocksdbBlockCacheHitCount: 8,
+		maxRocksdbBlockCacheHitCount: 3,
+		sumRocksdbBlockReadCount:     3,
+		maxRocksdbBlockReadCount:     3,
+		sumRocksdbBlockReadByte:      4,
+		maxRocksdbBlockReadByte:      4,
 
-			// txn
-			commitCount:          8,
-			sumPrewriteTime:      3,
-			maxPrewriteTime:      3,
-			sumCommitTime:        8,
-			maxCommitTime:        5,
-			sumGetCommitTsTime:   8,
-			maxGetCommitTsTime:   8,
-			sumCommitBackoffTime: 8,
-			maxCommitBackoffTime: 8,
+		// txn
+		commitCount:          8,
+		sumPrewriteTime:      3,
+		maxPrewriteTime:      3,
+		sumCommitTime:        8,
+		maxCommitTime:        5,
+		sumGetCommitTsTime:   8,
+		maxGetCommitTsTime:   8,
+		sumCommitBackoffTime: 8,
+		maxCommitBackoffTime: 8,
 
-			sumResolveLockTime:   8,
-			maxResolveLockTime:   8,
-			sumLocalLatchTime:    8,
-			maxLocalLatchTime:    8,
-			sumWriteKeys:         8,
-			maxWriteKeys:         8,
-			sumWriteSize:         8,
-			maxWriteSize:         8,
-			sumPrewriteRegionNum: 8,
-			maxPrewriteRegionNum: 8,
-			sumTxnRetry:          8,
-			maxTxnRetry:          8,
-			sumBackoffTimes:      8,
-			backoffTypes:         map[string]int{},
+		sumResolveLockTime:   8,
+		maxResolveLockTime:   8,
+		sumLocalLatchTime:    8,
+		maxLocalLatchTime:    8,
+		sumWriteKeys:         8,
+		maxWriteKeys:         8,
+		sumWriteSize:         8,
+		maxWriteSize:         8,
+		sumPrewriteRegionNum: 8,
+		maxPrewriteRegionNum: 8,
+		sumTxnRetry:          8,
+		maxTxnRetry:          8,
+		sumBackoffTimes:      8,
+		backoffTypes:         map[string]int{},
 
-			// plan cache
-			planCacheHits: 8,
+		// plan cache
+		planCacheHits: 8,
 
-			// other
-			sumAffectedRows:      8,
-			sumMem:               8,
-			maxMem:               8,
-			sumMemArbitration:    11,
-			maxMemArbitration:    11,
-			sumDisk:              8,
-			maxDisk:              8,
-			firstSeen:            time.Unix(now-10, 0),
-			lastSeen:             time.Unix(now-8, 0),
-			execRetryCount:       8,
-			execRetryTime:        8,
-			sumKVTotal:           2,
-			sumPDTotal:           2,
-			sumBackoffTotal:      2,
-			sumWriteSQLRespTotal: 100,
-			sumErrors:            8,
-		},
+		// other
+		sumAffectedRows:      8,
+		sumMem:               8,
+		maxMem:               8,
+		sumDisk:              8,
+		maxDisk:              8,
+		firstSeen:            time.Unix(now-10, 0),
+		lastSeen:             time.Unix(now-8, 0),
+		execRetryCount:       8,
+		execRetryTime:        8,
+		sumKVTotal:           2,
+		sumPDTotal:           2,
+		sumBackoffTotal:      2,
+		sumWriteSQLRespTotal: 100,
+		sumErrors:            8,
 	}
 
 	addWith := stmtSummaryByDigestElement{
-		stmtSummaryStats: stmtSummaryStats{
-			// user
-			authUsers: map[string]struct{}{"a": {}},
+		// user
+		authUsers: map[string]struct{}{"a": {}},
 
-			// execCount and sumWarnings
-			execCount:   3,
-			sumWarnings: 8,
+		// execCount and sumWarnings
+		execCount:   3,
+		sumWarnings: 8,
 
-			// latency
-			sumLatency:        8,
-			maxLatency:        5,
-			minLatency:        1,
-			sumParseLatency:   3,
-			maxParseLatency:   2,
-			sumCompileLatency: 3,
-			maxCompileLatency: 2,
+		// latency
+		sumLatency:        8,
+		maxLatency:        5,
+		minLatency:        1,
+		sumParseLatency:   3,
+		maxParseLatency:   2,
+		sumCompileLatency: 3,
+		maxCompileLatency: 2,
 
-			// coprocessor
-			sumNumCopTasks:       4,
-			maxCopProcessTime:    4,
-			maxCopProcessAddress: "19.19.8.10",
-			maxCopWaitTime:       4,
-			maxCopWaitAddress:    "19.19.8.10",
+		// coprocessor
+		sumNumCopTasks:       4,
+		maxCopProcessTime:    4,
+		maxCopProcessAddress: "19.19.8.10",
+		maxCopWaitTime:       4,
+		maxCopWaitAddress:    "19.19.8.10",
 
-			// TiKV
-			sumProcessTime: 1,
-			maxProcessTime: 1,
-			sumWaitTime:    2,
-			maxWaitTime:    1,
-			sumBackoffTime: 2,
-			maxBackoffTime: 2,
+		// TiKV
+		sumProcessTime: 1,
+		maxProcessTime: 1,
+		sumWaitTime:    2,
+		maxWaitTime:    1,
+		sumBackoffTime: 2,
+		maxBackoffTime: 2,
 
-			sumTotalKeys:                 3,
-			maxTotalKeys:                 2,
-			sumProcessedKeys:             8,
-			maxProcessedKeys:             4,
-			sumRocksdbDeleteSkippedCount: 8,
-			maxRocksdbDeleteSkippedCount: 2,
+		sumTotalKeys:                 3,
+		maxTotalKeys:                 2,
+		sumProcessedKeys:             8,
+		maxProcessedKeys:             4,
+		sumRocksdbDeleteSkippedCount: 8,
+		maxRocksdbDeleteSkippedCount: 2,
 
-			sumRocksdbKeySkippedCount:    8,
-			maxRocksdbKeySkippedCount:    3,
-			sumRocksdbBlockCacheHitCount: 8,
-			maxRocksdbBlockCacheHitCount: 3,
-			sumRocksdbBlockReadCount:     3,
-			maxRocksdbBlockReadCount:     3,
-			sumRocksdbBlockReadByte:      4,
-			maxRocksdbBlockReadByte:      4,
-			iaExecCount:                  3,
-			sumIARemoteReadSegmentCount:  8,
-			maxIARemoteReadSegmentCount:  5,
+		sumRocksdbKeySkippedCount:    8,
+		maxRocksdbKeySkippedCount:    3,
+		sumRocksdbBlockCacheHitCount: 8,
+		maxRocksdbBlockCacheHitCount: 3,
+		sumRocksdbBlockReadCount:     3,
+		maxRocksdbBlockReadCount:     3,
+		sumRocksdbBlockReadByte:      4,
+		maxRocksdbBlockReadByte:      4,
 
-			// txn
-			commitCount:          8,
-			sumPrewriteTime:      3,
-			maxPrewriteTime:      3,
-			sumCommitTime:        8,
-			maxCommitTime:        5,
-			sumGetCommitTsTime:   8,
-			maxGetCommitTsTime:   8,
-			sumCommitBackoffTime: 8,
-			maxCommitBackoffTime: 8,
+		// txn
+		commitCount:          8,
+		sumPrewriteTime:      3,
+		maxPrewriteTime:      3,
+		sumCommitTime:        8,
+		maxCommitTime:        5,
+		sumGetCommitTsTime:   8,
+		maxGetCommitTsTime:   8,
+		sumCommitBackoffTime: 8,
+		maxCommitBackoffTime: 8,
 
-			sumResolveLockTime:   8,
-			maxResolveLockTime:   8,
-			sumLocalLatchTime:    8,
-			maxLocalLatchTime:    8,
-			sumWriteKeys:         8,
-			maxWriteKeys:         8,
-			sumWriteSize:         8,
-			maxWriteSize:         8,
-			sumPrewriteRegionNum: 8,
-			maxPrewriteRegionNum: 8,
-			sumTxnRetry:          8,
-			maxTxnRetry:          8,
-			sumBackoffTimes:      8,
-			backoffTypes:         map[string]int{},
+		sumResolveLockTime:   8,
+		maxResolveLockTime:   8,
+		sumLocalLatchTime:    8,
+		maxLocalLatchTime:    8,
+		sumWriteKeys:         8,
+		maxWriteKeys:         8,
+		sumWriteSize:         8,
+		maxWriteSize:         8,
+		sumPrewriteRegionNum: 8,
+		maxPrewriteRegionNum: 8,
+		sumTxnRetry:          8,
+		maxTxnRetry:          8,
+		sumBackoffTimes:      8,
+		backoffTypes:         map[string]int{},
 
-			// plan cache
-			planCacheHits: 8,
+		// plan cache
+		planCacheHits: 8,
 
-			// other
-			sumAffectedRows:      8,
-			sumMem:               8,
-			maxMem:               8,
-			sumDisk:              8,
-			maxDisk:              8,
-			sumMemArbitration:    13,
-			maxMemArbitration:    17,
-			firstSeen:            time.Unix(now-10, 0),
-			lastSeen:             time.Unix(now-8, 0),
-			execRetryCount:       8,
-			execRetryTime:        8,
-			sumKVTotal:           2,
-			sumPDTotal:           2,
-			sumBackoffTotal:      2,
-			sumWriteSQLRespTotal: 100,
-			sumErrors:            8,
-		},
+		// other
+		sumAffectedRows:      8,
+		sumMem:               8,
+		maxMem:               8,
+		sumDisk:              8,
+		maxDisk:              8,
+		firstSeen:            time.Unix(now-10, 0),
+		lastSeen:             time.Unix(now-8, 0),
+		execRetryCount:       8,
+		execRetryTime:        8,
+		sumKVTotal:           2,
+		sumPDTotal:           2,
+		sumBackoffTotal:      2,
+		sumWriteSQLRespTotal: 100,
+		sumErrors:            8,
 	}
 	addWith.authUsers["b"] = struct{}{}
 	addWith.maxCopProcessTime = 15
@@ -551,104 +522,97 @@ func TestAddInfo(t *testing.T) {
 	addInfo(&addTo, &addWith)
 
 	expectedSum := stmtSummaryByDigestElement{
-		stmtSummaryStats: stmtSummaryStats{
-			// user
-			authUsers: map[string]struct{}{"a": {}, "b": {}},
+		// user
+		authUsers: map[string]struct{}{"a": {}, "b": {}},
 
-			// execCount and sumWarnings
-			execCount:   6,
-			sumWarnings: 16,
+		// execCount and sumWarnings
+		execCount:   6,
+		sumWarnings: 16,
 
-			// latency
-			sumLatency:        16,
-			maxLatency:        5,
-			minLatency:        1,
-			sumParseLatency:   6,
-			maxParseLatency:   2,
-			sumCompileLatency: 6,
-			maxCompileLatency: 2,
+		// latency
+		sumLatency:        16,
+		maxLatency:        5,
+		minLatency:        1,
+		sumParseLatency:   6,
+		maxParseLatency:   2,
+		sumCompileLatency: 6,
+		maxCompileLatency: 2,
 
-			// coprocessor
-			sumNumCopTasks:       8,
-			maxCopProcessTime:    15,
-			maxCopProcessAddress: "1.14.5.14",
-			maxCopWaitTime:       4,
-			maxCopWaitAddress:    "19.19.8.10",
+		// coprocessor
+		sumNumCopTasks:       8,
+		maxCopProcessTime:    15,
+		maxCopProcessAddress: "1.14.5.14",
+		maxCopWaitTime:       4,
+		maxCopWaitAddress:    "19.19.8.10",
 
-			// TiKV
-			sumProcessTime: 2,
-			maxProcessTime: 1,
-			sumWaitTime:    4,
-			maxWaitTime:    1,
-			sumBackoffTime: 4,
-			maxBackoffTime: 2,
+		// TiKV
+		sumProcessTime: 2,
+		maxProcessTime: 1,
+		sumWaitTime:    4,
+		maxWaitTime:    1,
+		sumBackoffTime: 4,
+		maxBackoffTime: 2,
 
-			sumTotalKeys:                 6,
-			maxTotalKeys:                 2,
-			sumProcessedKeys:             16,
-			maxProcessedKeys:             4,
-			sumRocksdbDeleteSkippedCount: 16,
-			maxRocksdbDeleteSkippedCount: 2,
+		sumTotalKeys:                 6,
+		maxTotalKeys:                 2,
+		sumProcessedKeys:             16,
+		maxProcessedKeys:             4,
+		sumRocksdbDeleteSkippedCount: 16,
+		maxRocksdbDeleteSkippedCount: 2,
 
-			sumRocksdbKeySkippedCount:    16,
-			maxRocksdbKeySkippedCount:    3,
-			sumRocksdbBlockCacheHitCount: 16,
-			maxRocksdbBlockCacheHitCount: 3,
-			sumRocksdbBlockReadCount:     6,
-			maxRocksdbBlockReadCount:     3,
-			sumRocksdbBlockReadByte:      8,
-			maxRocksdbBlockReadByte:      4,
-			iaExecCount:                  5,
-			sumIARemoteReadSegmentCount:  16,
-			maxIARemoteReadSegmentCount:  5,
+		sumRocksdbKeySkippedCount:    16,
+		maxRocksdbKeySkippedCount:    3,
+		sumRocksdbBlockCacheHitCount: 16,
+		maxRocksdbBlockCacheHitCount: 3,
+		sumRocksdbBlockReadCount:     6,
+		maxRocksdbBlockReadCount:     3,
+		sumRocksdbBlockReadByte:      8,
+		maxRocksdbBlockReadByte:      4,
 
-			// txn
-			commitCount:          16,
-			sumPrewriteTime:      6,
-			maxPrewriteTime:      3,
-			sumCommitTime:        16,
-			maxCommitTime:        5,
-			sumGetCommitTsTime:   16,
-			maxGetCommitTsTime:   8,
-			sumCommitBackoffTime: 16,
-			maxCommitBackoffTime: 8,
+		// txn
+		commitCount:          16,
+		sumPrewriteTime:      6,
+		maxPrewriteTime:      3,
+		sumCommitTime:        16,
+		maxCommitTime:        5,
+		sumGetCommitTsTime:   16,
+		maxGetCommitTsTime:   8,
+		sumCommitBackoffTime: 16,
+		maxCommitBackoffTime: 8,
 
-			sumResolveLockTime:   16,
-			maxResolveLockTime:   8,
-			sumLocalLatchTime:    16,
-			maxLocalLatchTime:    8,
-			sumWriteKeys:         16,
-			maxWriteKeys:         8,
-			sumWriteSize:         16,
-			maxWriteSize:         8,
-			sumPrewriteRegionNum: 16,
-			maxPrewriteRegionNum: 8,
-			sumTxnRetry:          16,
-			maxTxnRetry:          8,
-			sumBackoffTimes:      16,
-			backoffTypes:         map[string]int{},
+		sumResolveLockTime:   16,
+		maxResolveLockTime:   8,
+		sumLocalLatchTime:    16,
+		maxLocalLatchTime:    8,
+		sumWriteKeys:         16,
+		maxWriteKeys:         8,
+		sumWriteSize:         16,
+		maxWriteSize:         8,
+		sumPrewriteRegionNum: 16,
+		maxPrewriteRegionNum: 8,
+		sumTxnRetry:          16,
+		maxTxnRetry:          8,
+		sumBackoffTimes:      16,
+		backoffTypes:         map[string]int{},
 
-			// plan cache
-			planCacheHits: 16,
+		// plan cache
+		planCacheHits: 16,
 
-			// other
-			sumAffectedRows:      16,
-			sumMem:               16,
-			maxMem:               8,
-			sumDisk:              16,
-			maxDisk:              8,
-			sumMemArbitration:    24,
-			maxMemArbitration:    17,
-			firstSeen:            time.Unix(now-20, 0),
-			lastSeen:             time.Unix(now, 0),
-			execRetryCount:       16,
-			execRetryTime:        16,
-			sumKVTotal:           4,
-			sumPDTotal:           4,
-			sumBackoffTotal:      4,
-			sumWriteSQLRespTotal: 200,
-			sumErrors:            16,
-		},
+		// other
+		sumAffectedRows:      16,
+		sumMem:               16,
+		maxMem:               8,
+		sumDisk:              16,
+		maxDisk:              8,
+		firstSeen:            time.Unix(now-20, 0),
+		lastSeen:             time.Unix(now, 0),
+		execRetryCount:       16,
+		execRetryTime:        16,
+		sumKVTotal:           4,
+		sumPDTotal:           4,
+		sumBackoffTotal:      4,
+		sumWriteSQLRespTotal: 200,
+		sumErrors:            16,
 	}
 	require.Equal(t, true, reflect.DeepEqual(&addTo, &expectedSum))
 }
@@ -660,49 +624,13 @@ func getAllEvicted(ssdbe *stmtSummaryByDigestEvicted) string {
 			buf.WriteString(", ")
 		}
 		val := e.Value.(*stmtSummaryByDigestEvictedElement)
-		buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", val.beginTime, val.endTime, val.count))
+		buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", val.beginTime, val.endTime, len(val.digestKeyMap)))
 	}
 	return buf.String()
 }
 
 func getEvicted(ssbdee *stmtSummaryByDigestEvictedElement) string {
 	buf := bytes.NewBuffer(nil)
-	buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", ssbdee.beginTime, ssbdee.endTime, ssbdee.count))
+	buf.WriteString(fmt.Sprintf("{begin: %v, end: %v, count: %v}", ssbdee.beginTime, ssbdee.endTime, len(ssbdee.digestKeyMap)))
 	return buf.String()
-}
-
-// TestToEvictedCountDatumConcurrent verifies that ToEvictedCountDatum is safe
-// to call concurrently with AddEvicted (V1-11 data race fix).
-func TestToEvictedCountDatumConcurrent(t *testing.T) {
-	ssMap := newStmtSummaryByDigestMap()
-	ssMap.Clear()
-	now := time.Now().Unix()
-	interval := ssMap.refreshInterval()
-	ssMap.beginTimeForCurInterval = now + interval
-
-	err := ssMap.summaryMap.SetCapacity(1)
-	require.NoError(t, err)
-	ssMap.Clear()
-
-	var wg sync.WaitGroup
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 200; i++ {
-			sei := generateAnyExecInfo()
-			sei.SchemaName = fmt.Sprintf("schema_%d", i)
-			ssMap.AddStatement(sei)
-		}
-	}()
-
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		for i := 0; i < 200; i++ {
-			_ = ssMap.ToEvictedCountDatum()
-		}
-	}()
-
-	wg.Wait()
 }

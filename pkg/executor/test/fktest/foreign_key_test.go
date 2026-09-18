@@ -24,21 +24,23 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/executor"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testfailpoint"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/tests/realtikvtest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror/exeerrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/tests/realtikvtest"
 	"github.com/stretchr/testify/require"
 )
 
@@ -134,19 +136,19 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 			tk.MustExec("insert into t2 (id, a, b) values (3, 1, null)")
 			tk.MustExec("insert into t2 (id, a, b) values (4, null, null)")
 		}
-		tk.MustGetDBError("insert into t2 (id, a, b) values (5, 1, 0);", plannererrors.ErrNoReferencedRow2)
-		tk.MustGetDBError("insert into t2 (id, a, b) values (6, 0, 1);", plannererrors.ErrNoReferencedRow2)
-		tk.MustGetDBError("insert into t2 (id, a, b) values (7, 2, 2);", plannererrors.ErrNoReferencedRow2)
+		tk.MustGetDBError("insert into t2 (id, a, b) values (5, 1, 0);", plannercore.ErrNoReferencedRow2)
+		tk.MustGetDBError("insert into t2 (id, a, b) values (6, 0, 1);", plannercore.ErrNoReferencedRow2)
+		tk.MustGetDBError("insert into t2 (id, a, b) values (7, 2, 2);", plannercore.ErrNoReferencedRow2)
 		// Test insert from select.
 		tk.MustExec("delete from t2")
 		tk.MustExec("insert into t2 (id, a, b) select id, a, b from t_data where t_data.id=1")
-		tk.MustGetDBError("insert into t2 (id, a, b) select id, a, b from t_data where t_data.id=2", plannererrors.ErrNoReferencedRow2)
+		tk.MustGetDBError("insert into t2 (id, a, b) select id, a, b from t_data where t_data.id=2", plannercore.ErrNoReferencedRow2)
 
 		// Test in txn
 		tk.MustExec("delete from t2")
 		tk.MustExec("begin")
 		tk.MustExec("delete from t1 where a=1")
-		tk.MustGetDBError("insert into t2 (id, a, b) values (1, 1, 1)", plannererrors.ErrNoReferencedRow2)
+		tk.MustGetDBError("insert into t2 (id, a, b) values (1, 1, 1)", plannercore.ErrNoReferencedRow2)
 		tk.MustExec("insert into t1 (id, a, b) values (2, 2, 2)")
 		tk.MustExec("insert into t2 (id, a, b) values (2, 2, 2)")
 		tk.MustExec("rollback")
@@ -164,15 +166,15 @@ func TestForeignKeyOnInsertChildTable(t *testing.T) {
 	tk.MustExec("create table t2 (id int key,a int not null default 0, index (a), foreign key fk(a) references t1(id));")
 	tk.MustExec("insert into t1 values (1, 1);")
 	tk.MustExec("insert into t2 values (1, 1);")
-	tk.MustGetDBError("insert into t2 (id) values (10);", plannererrors.ErrNoReferencedRow2)
-	tk.MustGetDBError("insert into t2 values (3, 2);", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id) values (10);", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 values (3, 2);", plannercore.ErrNoReferencedRow2)
 
 	// Case-11: test primary key is handle and contain foreign key column, and foreign key column doesn't have default value.
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (id int key,a int, index (a), foreign key fk(a) references t1(id));")
 	tk.MustExec("insert into t2 values (1, 1);")
 	tk.MustExec("insert into t2 (id) values (10);")
-	tk.MustGetDBError("insert into t2 values (3, 2);", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 values (3, 2);", plannercore.ErrNoReferencedRow2)
 }
 
 func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
@@ -198,7 +200,7 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 			"insert into t2 (id, a, b, name) values (1, 14, 24, 'd') on duplicate key update a = 12, b = 23",
 		}
 		for _, sqlStr := range sqls {
-			tk.MustGetDBError(sqlStr, plannererrors.ErrNoReferencedRow2)
+			tk.MustGetDBError(sqlStr, plannercore.ErrNoReferencedRow2)
 		}
 		tk.MustExec("insert into t2 (id, a, b, name) values (1, 14, 26, 'b') on duplicate key update a = 12, b = 22, name = 'x'")
 		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 12 22 x"))
@@ -224,12 +226,12 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 
 		tk.MustExec("begin")
 		tk.MustExec("delete from t1 where id=3")
-		tk.MustGetDBError("insert into t2 (id, a, b, name) values (2, 13, 23, 'y') on duplicate key update a = 13, b = 23, name = 'y'", plannererrors.ErrNoReferencedRow2)
+		tk.MustGetDBError("insert into t2 (id, a, b, name) values (2, 13, 23, 'y') on duplicate key update a = 13, b = 23, name = 'y'", plannercore.ErrNoReferencedRow2)
 		tk.MustExec("insert into t2 (id, a, b, name) values (2, 14, 24, 'z') on duplicate key update a = 14, b = 24, name = 'z'")
 		tk.MustExec("insert into t1 (id, a, b) values (5, 15, 25)")
 		tk.MustExec("insert into t2 (id, a, b, name) values (2, 15, 25, 'o') on duplicate key update a = 15, b = 25, name = 'o'")
 		tk.MustExec("delete from t1 where id=1")
-		tk.MustGetDBError("insert into t2 (id, a, b, name) values (2, 11, 21, 'y') on duplicate key update a = 11, b = 21, name = 'p'", plannererrors.ErrNoReferencedRow2)
+		tk.MustGetDBError("insert into t2 (id, a, b, name) values (2, 11, 21, 'y') on duplicate key update a = 11, b = 21, name = 'p'", plannercore.ErrNoReferencedRow2)
 		tk.MustExec("commit")
 		tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("2 15 25 o"))
 	}
@@ -250,7 +252,7 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 3 31 d"))
 	tk.MustExec("insert into t2 (id, a, name) values (11, 3, 'b') on duplicate key update id = 1, name = 'f'")
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 3 31 f"))
-	tk.MustGetDBError("insert into t2 (id, a, name) values (1, 3, 'b') on duplicate key update a = 10", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, a, name) values (1, 3, 'b') on duplicate key update a = 10", plannercore.ErrNoReferencedRow2)
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 3 31 f"))
 
 	// Test In txn.
@@ -264,14 +266,14 @@ func TestForeignKeyOnInsertDuplicateUpdateChildTable(t *testing.T) {
 
 	tk.MustExec("begin")
 	tk.MustExec("delete from t1 where id=2")
-	tk.MustGetDBError("insert into t2 (id, a) values (1, 1) on duplicate key update a = 2, name = 'b'", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, a) values (1, 1) on duplicate key update a = 2, name = 'b'", plannercore.ErrNoReferencedRow2)
 	tk.MustExec("insert into t2 (id, a) values (1, 1) on duplicate key update a = 3, name = 'c'")
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 3 21 c"))
 	tk.MustExec("insert into t1 (id, a, b) values (5, 15, 25)")
 	tk.MustExec("insert into t2 (id, a) values (3, 3) on duplicate key update a = 5, name = 'd'")
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 5 21 d"))
 	tk.MustExec("delete from t1 where id=1")
-	tk.MustGetDBError("insert into t2 (id, a) values (1, 5) on duplicate key update a = 1, name = 'e'", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("insert into t2 (id, a) values (1, 5) on duplicate key update a = 1, name = 'e'", plannercore.ErrNoReferencedRow2)
 	tk.MustExec("commit")
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 5 21 d"))
 }
@@ -489,7 +491,7 @@ func TestForeignKeyCheckAndLock(t *testing.T) {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				tk2.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+				tk2.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 			}()
 			time.Sleep(time.Millisecond * 50)
 			tk.MustExec("commit")
@@ -521,7 +523,7 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
 
-			tk.MustGetDBError("insert into t1 (id, a) values (1, 11) on duplicate key update a=a+10, b=b+20", plannererrors.ErrRowIsReferenced2)
+			tk.MustGetDBError("insert into t1 (id, a) values (1, 11) on duplicate key update a=a+10, b=b+20", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
 		} else {
@@ -534,7 +536,7 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 
 			tk.MustExec("insert into t1 (id, a, b) values (1, 11, 21) on duplicate key update id=11")
-			tk.MustGetDBError("insert into t1 (id, a, b) values (11, 11, 21) on duplicate key update a=a+10, b=b+20", plannererrors.ErrRowIsReferenced2)
+			tk.MustGetDBError("insert into t1 (id, a, b) values (11, 11, 21) on duplicate key update a=a+10, b=b+20", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("2 1112 2222", "3 1013 2023", "4 14 24", "11 11 21"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 		}
@@ -553,11 +555,11 @@ func TestForeignKeyOnInsertOnDuplicateParentTableCheck(t *testing.T) {
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
 
 	tk.MustExec("insert into t1 (id, a, b) values (1, 0, 0) on duplicate key update a=a+100")
-	tk.MustGetDBError("insert into t1 (id, a, b) values (1, 0, 0) on duplicate key update id=100+id", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("insert into t1 (id, a, b) values (1, 0, 0) on duplicate key update id=100+id", plannercore.ErrRowIsReferenced2)
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 111 21", "4 14 24", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
 
-	// Case-10: Test insert into parent table failed cause by foreign key check, see https://github.com/pingcap/tidb/issues/39200.
+	// Case-10: Test insert into parent table failed cause by foreign key check, see https://github.com/ocean2811/tidbeaff0fbc576a/issues/39200.
 	tk.MustExec("drop table if exists t1,t2;")
 	tk.MustExec("create table t1 (id int key);")
 	tk.MustExec("create table t2 (id int, foreign key fk(id) references t1(id));")
@@ -577,7 +579,7 @@ func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
 	tk.MustExec("create table t2 (id int, a int, index(a),  foreign key fk(a) references t1(id));")
 	tk.MustExec("insert into  t1 (id, a) values (1, 11),(2, 12), (3, 13), (4, 14)")
 	var wg sync.WaitGroup
-	for range 10 {
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
@@ -585,7 +587,7 @@ func TestForeignKeyConcurrentInsertChildTable(t *testing.T) {
 			tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 			tk.MustExec("set @@foreign_key_checks=1")
 			tk.MustExec("use test")
-			for cnt := range 20 {
+			for cnt := 0; cnt < 20; cnt++ {
 				id := cnt%4 + 1
 				sql := fmt.Sprintf("insert into t2 (id, a) values (%v, %v)", cnt, id)
 				tk.MustExec(sql)
@@ -618,7 +620,7 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 			"update t2 set a=12, b = 23 where id = 1",
 		}
 		for _, sqlStr := range sqls {
-			tk.MustGetDBError(sqlStr, plannererrors.ErrNoReferencedRow2)
+			tk.MustGetDBError(sqlStr, plannercore.ErrNoReferencedRow2)
 		}
 		tk.MustExec("update t2 set a=12, b = 22 where id = 1")
 		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 12 22 a"))
@@ -641,12 +643,12 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 
 		tk.MustExec("begin")
 		tk.MustExec("delete from t1 where id=2")
-		tk.MustGetDBError("update t2 set a=12, b=22 where id=1", plannererrors.ErrNoReferencedRow2)
+		tk.MustGetDBError("update t2 set a=12, b=22 where id=1", plannercore.ErrNoReferencedRow2)
 		tk.MustExec("update t2 set a=13, b=23 where id=1")
 		tk.MustExec("insert into t1 (id, a, b) values (5, 15, 25)")
 		tk.MustExec("update t2 set a=15, b=25 where id=1")
 		tk.MustExec("delete from t1 where id=1")
-		tk.MustGetDBError("update t2 set a=11, b=21 where id=1", plannererrors.ErrNoReferencedRow2)
+		tk.MustGetDBError("update t2 set a=11, b=21 where id=1", plannercore.ErrNoReferencedRow2)
 		tk.MustExec("commit")
 		tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 15 25 a"))
 	}
@@ -667,7 +669,7 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 	tk.MustQuery("select id, a, b , name from t2 order by id").Check(testkit.Rows("11 3 22 a"))
 	tk.MustExec("update t2 set id = 1 where id = 11")
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 3 22 a"))
-	tk.MustGetDBError("update t2 set a = 10 where id = 1", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("update t2 set a = 10 where id = 1", plannercore.ErrNoReferencedRow2)
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 3 22 a"))
 
 	// Test In txn.
@@ -681,12 +683,12 @@ func TestForeignKeyOnUpdateChildTable(t *testing.T) {
 
 	tk.MustExec("begin")
 	tk.MustExec("delete from t1 where id=2")
-	tk.MustGetDBError("update t2 set a=2, b=22 where id=1", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("update t2 set a=2, b=22 where id=1", plannercore.ErrNoReferencedRow2)
 	tk.MustExec("update t2 set a=3, b=23 where id=1")
 	tk.MustExec("insert into t1 (id, a, b) values (5, 15, 25)")
 	tk.MustExec("update t2 set a=5, b=25 where id=1")
 	tk.MustExec("delete from t1 where id=1")
-	tk.MustGetDBError("update t2 set a=1, b=21 where id=1", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("update t2 set a=1, b=21 where id=1", plannercore.ErrNoReferencedRow2)
 	tk.MustExec("commit")
 	tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 5 25 a"))
 }
@@ -712,7 +714,7 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 			tk.MustExec("update t1 set a=a+10000, b = b+20000 where id = 5 or a is null or b is null")
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
-			tk.MustGetDBError("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24", plannererrors.ErrRowIsReferenced2)
+			tk.MustGetDBError("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24", "5 10015 <nil>", "6 <nil> 20026", "7 <nil> <nil>"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a", "5 15 <nil> e", "6 <nil> 26 f", "7 <nil> <nil> g"))
 		} else {
@@ -722,7 +724,7 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 			tk.MustExec("update t1 set a=a+1000, b = b+2000 where a = 13 or b=222")
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
-			tk.MustGetDBError("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24", plannererrors.ErrRowIsReferenced2)
+			tk.MustGetDBError("update t1 set a=a+10, b = b+20 where id = 1 or a = 1112 or b = 24", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "2 1112 2222", "3 1013 2023", "4 14 24"))
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 11 21 a"))
 		}
@@ -737,7 +739,7 @@ func TestForeignKeyOnUpdateParentTableCheck(t *testing.T) {
 	tk.MustExec("insert into t2 (id, a, b, name) values (11, 1, 21, 'a')")
 	tk.MustExec("update t1 set id = id + 100 where id =2 or a = 13")
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
-	tk.MustGetDBError("update t1 set id = id+10 where id = 1 or b = 24", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("update t1 set id = id+10 where id = 1 or b = 24", plannercore.ErrRowIsReferenced2)
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 11 21", "4 14 24", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 1 21 a"))
 }
@@ -762,7 +764,7 @@ func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
 			tk.MustExec("delete from t1 where id = 2")
 			tk.MustExec("delete from t1 where a = 3 or b = 4")
 			tk.MustExec("delete from t1 where a = 5 or b = 6 or a is null or b is null;")
-			tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+			tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
 		} else {
 			tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1), (2, 2, 2), (3, 3, 3), (4, 4, 4);")
@@ -770,7 +772,7 @@ func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
 
 			tk.MustExec("delete from t1 where id = 2")
 			tk.MustExec("delete from t1 where a = 3 or b = 4")
-			tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+			tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 			tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
 		}
 		models := []string{"pessimistic", "optimistic"}
@@ -781,7 +783,7 @@ func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
 			tk.MustExec("begin " + model)
 			tk.MustExec("insert into t1 (id, a, b) values (1, 1, 1), (2, 2, 2);")
 			tk.MustExec("insert into t2 (id, a, b) values (1, 1, 1);")
-			tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+			tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 			tk.MustExec("delete from t1 where id = 2")
 			tk.MustExec("delete from t2 where id = 1")
 			tk.MustExec("delete from t1 where id = 1")
@@ -800,7 +802,7 @@ func TestForeignKeyOnDeleteParentTableCheck(t *testing.T) {
 	tk.MustExec("insert into t2 values (1, 1);")
 	tk.MustExec("delete from t1 where id = 2;")
 	tk.MustExec("delete from t1 where a = 3 or a = 4;")
-	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 	tk.MustQuery("select id, a from t1 order by id").Check(testkit.Rows("1 1"))
 }
 
@@ -877,7 +879,7 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("2 2 2 b"))
 		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
 		require.Error(t, err)
-		require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), err.Error())
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
 		tk.MustExec("insert into t1 values (1, 1, 1);")
 		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'c')")
 		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1", "2 2 2"))
@@ -898,7 +900,7 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 			tk.MustQuery("select * from t2").Check(testkit.Rows())
 			err := tk.ExecToErr("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
 			require.Error(t, err)
-			require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), err.Error())
+			require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
 			tk.MustExec("insert into t1 values (3, 1, 1);")
 			tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
 			tk.MustExec("commit")
@@ -993,7 +995,7 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("2 2 2 b"))
 		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
 		require.Error(t, err)
-		require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), err.Error())
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
 		tk.MustExec("insert into t1 values (1, 1, 1);")
 		tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'c')")
 		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1", "2 2 2"))
@@ -1003,15 +1005,6 @@ func TestForeignKeyOnDeleteCascade(t *testing.T) {
 		tk.MustQuery("select * from t1").Check(testkit.Rows())
 		tk.MustQuery("select * from t2").Check(testkit.Rows())
 	}
-
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (id int key);")
-	tk.MustExec("create table t2 (id int key, pid int, index safe_pid(pid) where pid is not null, foreign key fk_pid(pid) references t1(id) on delete cascade);")
-	tk.MustExec("insert into t1 values (1),(2);")
-	tk.MustExec("insert into t2 values (1, 1),(2, 2),(3, null);")
-	tk.MustExec("delete from t1 where id = 1;")
-	tk.MustQuery("select id, pid from t2 order by id").Check(testkit.Rows("2 2", "3 <nil>"))
 }
 
 func TestForeignKeyOnDeleteCascade2(t *testing.T) {
@@ -1076,7 +1069,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("insert into t2 values (1)")
 	tk.MustExec("insert into t3 values (1)")
 	// test in autocommit transaction
-	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1"))
@@ -1086,7 +1079,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("insert into t1 values (2),(3),(4)")
 	tk.MustExec("insert into t2 values (2),(3)")
 	tk.MustExec("insert into t3 values (3)")
-	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustExec("delete from t1 where id = 2")
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
@@ -1102,7 +1095,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("insert into t1 values (5), (6)")
 	tk.MustExec("insert into t2 values (4), (5), (6)")
 	tk.MustExec("insert into t3 values (5)")
-	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustExec("delete from t1 where id = 4")
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
@@ -1123,7 +1116,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("insert into t1 values (1), (2)")
 	tk.MustExec("insert into t2 values (1), (2)")
 	tk.MustExec("insert into t3 values (1)")
-	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustExec("delete from t1 where id = 2")
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
@@ -1165,8 +1158,8 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustQuery("select * from t3 order by id1").Check(testkit.Rows("2 1", "2 2"))
 	tk.MustExec("create table t4 (id3 int key, constraint fk_id3 foreign key (id3) references t3 (id2))")
 	tk.MustExec("insert into t4 values (2)")
-	tk.MustGetDBError("delete from t1 where id = 2", plannererrors.ErrRowIsReferenced2)
-	tk.MustGetDBError("delete from t2 where id = 2", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where id = 2", plannercore.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t2 where id = 2", plannercore.ErrRowIsReferenced2)
 	tk.MustExec("delete from t2 where id=1")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("2", "3"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("2", "3"))
@@ -1181,7 +1174,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 		tk.MustExec(fmt.Sprintf("alter table t1 add index idx_%v (c%v) ", i, i))
 		tk.MustExec(fmt.Sprintf("alter table t1 add foreign key (c%v) references t1 (c%v) on delete cascade", i, i-1))
 	}
-	for i := range cnt {
+	for i := 0; i < cnt; i++ {
 		vals := strings.Repeat(strconv.Itoa(i)+",", 20)
 		tk.MustExec(fmt.Sprintf("insert into t1 values (%v)", vals[:len(vals)-1]))
 	}
@@ -1211,7 +1204,7 @@ func TestForeignKeyOnDeleteCascade2(t *testing.T) {
 	tk.MustExec("create table t1 (id int auto_increment key, b int);")
 	tk.MustExec("create table t2 (id int, b int, foreign key fk(id) references t1(id) on delete cascade)")
 	tk.MustExec("insert into t1 (b) values (1),(1),(1),(1),(1),(1),(1),(1);")
-	for range 12 {
+	for i := 0; i < 12; i++ {
 		tk.MustExec("insert into t1 (b) select b from t1")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
@@ -1230,8 +1223,8 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 		{types.NewDatum(2), types.NewDatum("b")},
 	}
 	cols := []*model.ColumnInfo{
-		{ID: 1, Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
-		{ID: 2, Name: ast.NewCIStr("name"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
+		{ID: 1, Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)},
+		{ID: 2, Name: model.NewCIStr("name"), FieldType: *types.NewFieldType(mysql.TypeVarchar)},
 	}
 	restoreFn := func(stmt ast.StmtNode) string {
 		var sb strings.Builder
@@ -1241,35 +1234,36 @@ func TestForeignKeyGenerateCascadeAST(t *testing.T) {
 		return sb.String()
 	}
 	checkStmtFn := func(stmt ast.StmtNode, sql string) {
-		exec := tk.Session().GetRestrictedSQLExecutor()
+		exec, ok := tk.Session().(sqlexec.RestrictedSQLExecutor)
+		require.True(t, ok)
 		expectedStmt, err := exec.ParseWithParams(context.Background(), sql)
 		require.NoError(t, err)
 		require.Equal(t, restoreFn(expectedStmt), restoreFn(stmt))
 	}
 	var stmt ast.StmtNode
-	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 use index(idx) where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeSetNullAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, fkValues)
+	stmt = executor.GenCascadeSetNullAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "update test.t2 set a = null, name = null where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeSetNullAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeSetNullAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "update test.t2 use index(idx) set a = null, name = null where (a,name) in ((1,'a'), (2,'b'))")
 	newValue1 := []types.Datum{types.NewDatum(10), types.NewDatum("aa")}
 	couple := &executor.UpdatedValuesCouple{
 		NewValues:     newValue1,
 		OldValuesList: fkValues,
 	}
-	stmt = executor.GenCascadeUpdateAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, couple)
+	stmt = executor.GenCascadeUpdateAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, couple)
 	checkStmtFn(stmt, "update test.t2 set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
-	stmt = executor.GenCascadeUpdateAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, couple)
+	stmt = executor.GenCascadeUpdateAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, couple)
 	checkStmtFn(stmt, "update test.t2 use index(idx) set a = 10, name = 'aa' where (a,name) in ((1,'a'), (2,'b'))")
 	// Test for 1 fk column.
 	fkValues = [][]types.Datum{{types.NewDatum(1)}, {types.NewDatum(2)}}
-	cols = []*model.ColumnInfo{{ID: 1, Name: ast.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)}}
-	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr(""), cols, fkValues)
+	cols = []*model.ColumnInfo{{ID: 1, Name: model.NewCIStr("a"), FieldType: *types.NewFieldType(mysql.TypeLonglong)}}
+	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr(""), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 where a in (1,2)")
-	stmt = executor.GenCascadeDeleteAST(ast.NewCIStr("test"), ast.NewCIStr("t2"), ast.NewCIStr("idx"), cols, fkValues)
+	stmt = executor.GenCascadeDeleteAST(model.NewCIStr("test"), model.NewCIStr("t2"), model.NewCIStr("idx"), cols, fkValues)
 	checkStmtFn(stmt, "delete from test.t2 use index(idx) where a in (1,2)")
 }
 
@@ -1346,7 +1340,7 @@ func TestForeignKeyOnDeleteSetNull(t *testing.T) {
 		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 <nil> <nil> a", "2 2 2 b"))
 		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (11, 1, 1, 'c')")
 		require.Error(t, err)
-		require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), err.Error())
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
 		tk.MustExec("insert into t1 values (1, 1, 1);")
 		tk.MustExec("insert into t2 (id, a, b, name) values (11, 1, 1, 'c')")
 		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1", "2 2 2"))
@@ -1368,7 +1362,7 @@ func TestForeignKeyOnDeleteSetNull(t *testing.T) {
 			tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 <nil> <nil> a"))
 			err := tk.ExecToErr("insert into t2 (id, a, b, name) values (2, 1, 1, 'b')")
 			require.Error(t, err)
-			require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), err.Error())
+			require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
 			tk.MustExec("insert into t1 values (3, 1, 1);")
 			tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
 			tk.MustExec("commit")
@@ -1386,15 +1380,6 @@ func TestForeignKeyOnDeleteSetNull(t *testing.T) {
 			tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 <nil> <nil> a", "2 <nil> <nil> b"))
 		}
 	}
-
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (id int key);")
-	tk.MustExec("create table t2 (id int key, pid int, marker int, index unsafe_pid(pid) where marker is not null, foreign key fk_pid(pid) references t1(id) on delete set null);")
-	tk.MustExec("insert into t1 values (1),(2);")
-	tk.MustExec("insert into t2 values (1, 1, null),(2, 2, 1),(3, null, null);")
-	tk.MustExec("delete from t1 where id = 1;")
-	tk.MustQuery("select id, pid, marker from t2 order by id").Check(testkit.Rows("1 <nil> <nil>", "2 2 1", "3 <nil> <nil>"))
 }
 
 func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
@@ -1423,12 +1408,6 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("insert into t1 values (1, 'boss', null), (10, 'l1_a', 1), (11, 'l1_b', 1), (12, 'l1_c', 1)")
 	tk.MustExec("explain analyze delete from t1 where id=1")
 	tk.MustQuery("select id, name, leader from t1 order by id").Check(testkit.Rows("10 l1_a <nil>", "11 l1_b <nil>", "12 l1_c <nil>"))
-
-	// Test explain analyze issue #https://github.com/pingcap/tidb/issues/63276
-	tk.MustExec("delete from t1")
-	tk.MustExec("insert into t1 values (1, 'boss', null), (10, 'l1_a', 1)")
-	tk.MustExec("explain analyze delete from t1")
-	tk.MustQuery("select * from t1").Check(testkit.Rows())
 
 	// Test string type foreign key.
 	tk.MustExec("drop table t1")
@@ -1461,7 +1440,7 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("insert into t2 values (1)")
 	tk.MustExec("insert into t3 values (1)")
 	// test in autocommit transaction
-	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
 	tk.MustQuery("select * from t2").Check(testkit.Rows("1"))
@@ -1471,7 +1450,7 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("insert into t1 values (2),(3),(4)")
 	tk.MustExec("insert into t2 values (2),(3)")
 	tk.MustExec("insert into t3 values (3)")
-	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustExec("delete from t1 where id = 2")
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
@@ -1487,7 +1466,7 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("insert into t1 values (5), (6)")
 	tk.MustExec("insert into t2 values (4), (5), (6)")
 	tk.MustExec("insert into t3 values (5)")
-	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustExec("delete from t1 where id = 4")
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
@@ -1509,7 +1488,7 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("insert into t1 values (1), (2)")
 	tk.MustExec("insert into t2 values (1), (2)")
 	tk.MustExec("insert into t3 values (1)")
-	tk.MustGetDBError("delete from t1 where id = 1", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t1 where id = 1", plannercore.ErrRowIsReferenced2)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustExec("delete from t1 where id = 2")
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
@@ -1550,7 +1529,7 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("create table t4 (id3 int key, constraint fk_id3 foreign key (id3) references t3 (id2))")
 	tk.MustExec("insert into t4 values (2)")
 	tk.MustExec("delete from t1 where id=2")
-	tk.MustGetDBError("delete from t2 where id = 2", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("delete from t2 where id = 2", plannercore.ErrRowIsReferenced2)
 	tk.MustQuery("select * from t1").Check(testkit.Rows("3"))
 	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("1", "2", "3"))
 	tk.MustQuery("select * from t3 order by id1, id2").Check(testkit.Rows("<nil> 1", "<nil> 1", "<nil> 2", "<nil> 2", "<nil> 3"))
@@ -1592,7 +1571,7 @@ func TestForeignKeyOnDeleteSetNull2(t *testing.T) {
 	tk.MustExec("create table t1 (id int auto_increment key, b int);")
 	tk.MustExec("create table t2 (id int, b int, foreign key fk(id) references t1(id) on delete set null)")
 	tk.MustExec("insert into t1 (b) values (1),(1),(1),(1),(1),(1),(1),(1);")
-	for range 12 {
+	for i := 0; i < 12; i++ {
 		tk.MustExec("insert into t1 (b) select b from t1")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
@@ -1685,7 +1664,7 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 101 1 a", "2 2 2 b"))
 		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (3, 1, 1, 'c')")
 		require.Error(t, err)
-		require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), err.Error())
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
 		tk.MustExec("insert into t1 values (3, 1, 1);")
 		tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'c')")
 		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 101 1", "2 2 2", "3 1 1"))
@@ -1704,11 +1683,11 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 			tk.MustExec("update t1 set a=101 where id = 1")
 			tk.MustExec("insert into t2 (id, a, b, name) values (1, 1, 1, 'a')")
 			tk.MustExec("update t1 set b=102 where id = 2")
-			tk.MustQuery("select * from t1").Sort().Check(testkit.Rows("1 101 1", "2 1 102"))
+			tk.MustQuery("select * from t1").Check(testkit.Rows("1 101 1", "2 1 102"))
 			tk.MustQuery("select id, a, b, name from t2").Check(testkit.Rows("1 1 102 a"))
 			err := tk.ExecToErr("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
 			require.Error(t, err)
-			require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), err.Error())
+			require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
 			tk.MustExec("insert into t1 values (3, 1, 1);")
 			tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
 			tk.MustExec("commit")
@@ -1806,7 +1785,7 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 		tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("1 101 201 a", "2 2 2 b"))
 		err := tk.ExecToErr("insert into t2 (id, a, b, name) values (3, 1, 1, 'e')")
 		require.Error(t, err)
-		require.True(t, plannererrors.ErrNoReferencedRow2.Equal(err), err.Error())
+		require.True(t, plannercore.ErrNoReferencedRow2.Equal(err), err.Error())
 		tk.MustExec("insert into t1 values (3, 1, 1);")
 		tk.MustExec("insert into t2 (id, a, b, name) values (3, 1, 1, 'c')")
 		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 101 201", "2 2 2", "3 1 1"))
@@ -1828,15 +1807,6 @@ func TestForeignKeyOnUpdateCascade(t *testing.T) {
 	tk.MustExec("update t1 set id = id + 100 where id in (1, 2, 3)")
 	tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("4 14 24", "101 11 21", "102 12 22", "103 13 23"))
 	tk.MustQuery("select id, a, b, name from t2 order by id").Check(testkit.Rows("11 101 21 a", "12 102 22 b", "13 103 23 c", "14 4 24 d"))
-
-	tk.MustExec("drop table if exists t2;")
-	tk.MustExec("drop table if exists t1;")
-	tk.MustExec("create table t1 (id int key);")
-	tk.MustExec("create table t2 (id int key, pid int, marker int, index unsafe_pid(pid) where marker is not null, foreign key fk_pid(pid) references t1(id) on update cascade);")
-	tk.MustExec("insert into t1 values (1),(2);")
-	tk.MustExec("insert into t2 values (1, 1, null),(2, 2, 1),(3, null, null);")
-	tk.MustExec("update t1 set id = 10 where id = 1;")
-	tk.MustQuery("select id, pid, marker from t2 order by id").Check(testkit.Rows("1 10 <nil>", "2 2 1", "3 <nil> <nil>"))
 }
 
 func TestForeignKeyOnUpdateCascade2(t *testing.T) {
@@ -1906,7 +1876,7 @@ func TestForeignKeyOnUpdateCascade2(t *testing.T) {
 	tk.MustExec("create table t1 (id int auto_increment key, b int, index(b));")
 	tk.MustExec("create table t2 (id int, b int, foreign key fk(b) references t1(b) on update cascade)")
 	tk.MustExec("insert into t1 (b) values (1),(2),(3),(4),(5),(6),(7),(8);")
-	for range 12 {
+	for i := 0; i < 12; i++ {
 		tk.MustExec("insert into t1 (b) select id from t1")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("32768"))
@@ -1983,7 +1953,7 @@ func TestForeignKeyOnInsertOnDuplicateUpdate(t *testing.T) {
 	tk.MustExec("insert into t1 values (1)")
 	tk.MustExec("insert into t2 values (1)")
 	tk.MustExec("insert into t3 values (1)")
-	tk.MustGetDBError("insert into t1 values (1) on duplicate key update id = 2", plannererrors.ErrRowIsReferenced2)
+	tk.MustGetDBError("insert into t1 values (1) on duplicate key update id = 2", plannercore.ErrRowIsReferenced2)
 	require.Equal(t, 0, len(tk.Session().GetSessionVars().TxnCtx.Savepoints))
 	tk.MustExec("commit")
 	tk.MustQuery("select * from t1").Check(testkit.Rows("1"))
@@ -2009,11 +1979,9 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 	tk.MustExec("create table t7(id int primary key, pid int, index(pid), foreign key(pid) references t7(id) on delete cascade);")
 
 	cases := []struct {
-		prepare     []string
-		sql         string
-		plan        string
-		nextGen     string
-		skipNextGen bool // next-gen
+		prepare []string
+		sql     string
+		plan    string
 	}{
 		// Test foreign key use primary key.
 		{
@@ -2022,8 +1990,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 			},
 			sql: "explain analyze insert into t2 values (1),(2),(3);",
 			plan: "Insert_. N/A 0 root  time:.*, loops:1, prepare:.*, insert:.*" +
-				"└─Foreign_Key_Check_. 0.00 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
-			nextGen: "Insert_. N/A 0 root  time:.*, open:.*, close:.*, loops:.*, prepare:.*, insert:.*" +
 				"└─Foreign_Key_Check_. 0.00 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
 		},
 		{
@@ -2037,7 +2003,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"├─TableReader_.*" +
 				"│ └─TableRangeScan.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:2 foreign_key:fk, check_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze delete from t1 where id>1",
@@ -2047,7 +2012,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:.*, foreign_keys:4 foreign_key:fk, on_delete:CASCADE N/A N/A.*" +
 				"  └─Delete_.*" +
 				"    └─Batch_Point_Get_.*",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze update t1 set id=id+1 where id = 1",
@@ -2057,13 +2021,11 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"  └─Update_.*" +
 				"    ├─Point_Get_.*" +
 				"    └─Foreign_Key_Check_.*",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze insert into t1 values (1) on duplicate key update id = 100",
 			plan: "Insert_.*" +
 				"└─Foreign_Key_Cascade_.* 0 root table:t2 total:0s foreign_key:fk, on_update:CASCADE N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze insert into t1 values (2) on duplicate key update id = 100",
@@ -2072,7 +2034,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"  └─Update_.*" +
 				"    ├─Point_Get_.*" +
 				"    └─Foreign_Key_Check_.* 0 root table:t1 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk, check_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		// Test foreign key use index.
 		{
@@ -2082,7 +2043,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 			sql: "explain analyze insert into t4 values (1),(2),(3);",
 			plan: "Insert_.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t3, index:idx total:.*, check:.*, lock:.*, foreign_keys:3 foreign_key:fk, check_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze update t4 set id=id+2 where id >1",
@@ -2090,14 +2050,12 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"├─IndexReader_.*" +
 				"│ └─IndexRangeScan_.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t3, index:idx total:.*, check:.*, lock:.*, foreign_keys:2 foreign_key:fk, check_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze delete from t3 where id in (2,3)",
 			plan: "Delete_.*" +
 				"├─Batch_Point_Get_.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:2 foreign_key:fk, check_not_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			prepare: []string{
@@ -2107,20 +2065,17 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 			plan: "Update_.*" +
 				"├─Point_Get_.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 
 		{
 			sql: "explain analyze insert into t3 values (2) on duplicate key update id = 100",
 			plan: "Insert_.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:0s foreign_key:fk, check_not_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze insert into t3 values (3) on duplicate key update id = 100",
 			plan: "Insert_.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t4, index:idx_id total:.*, check:.*, foreign_keys:1 foreign_key:fk, check_not_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		// Test multi-foreign keys in on table.
 		{
@@ -2132,15 +2087,13 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"├─Foreign_Key_Check_.* 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
 				"├─Foreign_Key_Check_.* 0 root table:t5, index:idx2 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze insert ignore into t6 values (1,1,10)",
 			plan: "Insert_.* root  time:.* loops:.* prepare:.* check_insert.* fk_check:.*" +
-				"├─Foreign_Key_Check.* 0 root table:t5 total:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
-				"├─Foreign_Key_Check.* 0 root table:t5, index:idx2 total:.*, lock:.*, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
+				"├─Foreign_Key_Check.* 0 root table:t5 total:0s, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
+				"├─Foreign_Key_Check.* 0 root table:t5, index:idx2 total:0s, foreign_keys:1 foreign_key:fk_2, check_exist N/A N/A.*" +
 				"└─Foreign_Key_Check.* 0 root table:t5, index:idx3 total:0s, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze update t6 set id=id+1, id3=id2+1 where id = 1",
@@ -2150,7 +2103,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"│ └─TableRowIDScan_.*" +
 				"├─Foreign_Key_Check_.* 0 root table:t5 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_1, check_exist N/A N/A.*" +
 				"└─Foreign_Key_Check_.* 0 root table:t5, index:idx3 total:.*, check:.*, lock:.*, foreign_keys:1 foreign_key:fk_3, check_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze delete from t5 where id in (4,5)",
@@ -2167,7 +2119,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"    └─IndexLookUp_.*" +
 				"      ├─IndexRangeScan_.*" +
 				"      └─TableRowIDScan_.*",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze update t5 set id=id+1, id2=id2+1 where id = 3",
@@ -2185,7 +2136,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"    │ ├─IndexRangeScan_.*" +
 				"    │ └─TableRowIDScan_.*" +
 				"    └─Foreign_Key_Check_.* 0 root table:t5, index:idx2 total:0s foreign_key:fk_2, check_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			prepare: []string{
@@ -2207,7 +2157,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"    │ ├─IndexRangeScan_.*" +
 				"    │ └─TableRowIDScan_.*" +
 				"    └─Foreign_Key_Check_.* 0 root table:t5, index:idx2 total:0s foreign_key:fk_2, check_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			sql: "explain analyze insert into t5 values (1,1,1) on duplicate key update id = 100, id3=100",
@@ -2219,7 +2168,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"    │ ├─IndexRangeScan_.*" +
 				"    │ └─TableRowIDScan_.*" +
 				"    └─Foreign_Key_Check_.* 0 root table:t5 total:0s foreign_key:fk_1, check_exist N/A N/A",
-			skipNextGen: true, // TODO: fix it
 		},
 		{
 			prepare: []string{
@@ -2233,7 +2181,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"    ├─UnionScan_.*" +
 				"    │ └─IndexReader_.*" +
 				"    │   └─IndexRangeScan_.*" +
-				"    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.* foreign_keys:1 foreign_key:fk_1, on_delete:CASCADE.*" +
+				"    └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:.* foreign_keys:2 foreign_key:fk_1, on_delete:CASCADE.*" +
 				"      └─Delete_.*" +
 				"        ├─UnionScan_.*" +
 				"        │ └─IndexReader_.*" +
@@ -2304,7 +2252,6 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 				"                                                            │ └─IndexReader_.*" +
 				"                                                            │   └─IndexRangeScan_.*" +
 				"                                                            └─Foreign_Key_Cascade_.* 0 root table:t7, index:pid total:0s foreign_key:fk_1, on_delete:CASCADE.*",
-			skipNextGen: true, // TODO: fix it
 		},
 	}
 	for _, ca := range cases {
@@ -2313,14 +2260,7 @@ func TestExplainAnalyzeDMLWithFKInfo(t *testing.T) {
 		}
 		res := tk.MustQuery(ca.sql)
 		explain := getExplainResult(res)
-		if kerneltype.IsNextGen() && ca.skipNextGen {
-			continue
-		}
-		if kerneltype.IsNextGen() && ca.nextGen != "" {
-			require.Regexp(t, ca.nextGen, explain, ca.sql)
-		} else {
-			require.Regexp(t, ca.plan, explain, ca.sql)
-		}
+		require.Regexp(t, ca.plan, explain)
 	}
 }
 
@@ -2400,6 +2340,36 @@ func TestPrivilegeCheckInForeignKeyCascade(t *testing.T) {
 	}
 }
 
+func TestTableLockInForeignKeyCascade(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
+	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
+	tk.MustExec("set @@foreign_key_checks=1")
+	tk.MustExec("use test")
+	tk2 := testkit.NewTestKit(t, store)
+	tk2.MustExec("use test")
+	tk2.MustExec("set @@foreign_key_checks=1")
+	// enable table lock
+	config.UpdateGlobal(func(conf *config.Config) {
+		conf.EnableTableLock = true
+	})
+	defer func() {
+		config.UpdateGlobal(func(conf *config.Config) {
+			conf.EnableTableLock = false
+		})
+	}()
+	tk.MustExec("create table t1 (id int key);")
+	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
+	tk.MustExec("insert into t1 values (1), (2), (3);")
+	tk.MustExec("insert into t2 values (1), (2), (3);")
+	tk.MustExec("lock table t2 read;")
+	tk2.MustGetDBError("delete from t1 where id = 1", infoschema.ErrTableLocked)
+	tk.MustExec("unlock tables;")
+	tk2.MustExec("delete from t1 where id = 1")
+	tk.MustQuery("select * from t1 order by id").Check(testkit.Rows("2", "3"))
+	tk.MustQuery("select * from t2 order by id").Check(testkit.Rows("2", "3"))
+}
+
 func TestForeignKeyIssue39732(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
@@ -2434,28 +2404,28 @@ func TestForeignKeyOnReplaceIntoChildTable(t *testing.T) {
 		}
 		tk.MustExec("replace into t1 (id, a, b) values (1, 1, 1);")
 		tk.MustExec("replace into t2 (id, a, b) values (1, 1, 1)")
-		tk.MustGetDBError("replace into t1 (id, a, b) values (1, 2, 3);", plannererrors.ErrRowIsReferenced2)
+		tk.MustGetDBError("replace into t1 (id, a, b) values (1, 2, 3);", plannercore.ErrRowIsReferenced2)
 		if !ca.notNull {
 			tk.MustExec("replace into t2 (id, a, b) values (2, null, 1)")
 			tk.MustExec("replace into t2 (id, a, b) values (3, 1, null)")
 			tk.MustExec("replace into t2 (id, a, b) values (4, null, null)")
 		}
-		tk.MustGetDBError("replace into t2 (id, a, b) values (5, 1, 0);", plannererrors.ErrNoReferencedRow2)
-		tk.MustGetDBError("replace into t2 (id, a, b) values (6, 0, 1);", plannererrors.ErrNoReferencedRow2)
-		tk.MustGetDBError("replace into t2 (id, a, b) values (7, 2, 2);", plannererrors.ErrNoReferencedRow2)
+		tk.MustGetDBError("replace into t2 (id, a, b) values (5, 1, 0);", plannercore.ErrNoReferencedRow2)
+		tk.MustGetDBError("replace into t2 (id, a, b) values (6, 0, 1);", plannercore.ErrNoReferencedRow2)
+		tk.MustGetDBError("replace into t2 (id, a, b) values (7, 2, 2);", plannercore.ErrNoReferencedRow2)
 		// Test replace into from select.
 		tk.MustExec("delete from t2")
 		tk.MustExec("replace into t2 (id, a, b) select id, a, b from t_data where t_data.id=1")
-		tk.MustGetDBError("replace into t2 (id, a, b) select id, a, b from t_data where t_data.id=2", plannererrors.ErrNoReferencedRow2)
+		tk.MustGetDBError("replace into t2 (id, a, b) select id, a, b from t_data where t_data.id=2", plannercore.ErrNoReferencedRow2)
 
 		// Test in txn
 		tk.MustExec("delete from t2")
 		tk.MustExec("begin")
 		tk.MustExec("delete from t1 where a=1")
-		tk.MustGetDBError("replace into t2 (id, a, b) values (1, 1, 1)", plannererrors.ErrNoReferencedRow2)
+		tk.MustGetDBError("replace into t2 (id, a, b) values (1, 1, 1)", plannercore.ErrNoReferencedRow2)
 		tk.MustExec("replace into t1 (id, a, b) values (2, 2, 2)")
 		tk.MustExec("replace into t2 (id, a, b) values (2, 2, 2)")
-		tk.MustGetDBError("replace into t1 (id, a, b) values (2, 2, 3);", plannererrors.ErrRowIsReferenced2)
+		tk.MustGetDBError("replace into t1 (id, a, b) values (2, 2, 3);", plannercore.ErrRowIsReferenced2)
 		tk.MustExec("rollback")
 		tk.MustQuery("select id, a, b from t1 order by id").Check(testkit.Rows("1 1 1"))
 		tk.MustQuery("select id, a, b from t2 order by id").Check(testkit.Rows())
@@ -2469,15 +2439,15 @@ func TestForeignKeyOnReplaceIntoChildTable(t *testing.T) {
 	tk.MustExec("create table t2 (id int key,a int not null default 0, index (a), foreign key fk(a) references t1(id));")
 	tk.MustExec("replace into t1 values (1, 1);")
 	tk.MustExec("replace into t2 values (1, 1);")
-	tk.MustGetDBError("replace into t2 (id) values (10);", plannererrors.ErrNoReferencedRow2)
-	tk.MustGetDBError("replace into t2 values (3, 2);", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("replace into t2 (id) values (10);", plannercore.ErrNoReferencedRow2)
+	tk.MustGetDBError("replace into t2 values (3, 2);", plannercore.ErrNoReferencedRow2)
 
 	// Case-11: test primary key is handle and contain foreign key column, and foreign key column doesn't have default value.
 	tk.MustExec("drop table if exists t2;")
 	tk.MustExec("create table t2 (id int key,a int, index (a), foreign key fk(a) references t1(id));")
 	tk.MustExec("replace into t2 values (1, 1);")
 	tk.MustExec("replace into t2 (id) values (10);")
-	tk.MustGetDBError("replace into t2 values (3, 2);", plannererrors.ErrNoReferencedRow2)
+	tk.MustGetDBError("replace into t2 values (3, 2);", plannercore.ErrNoReferencedRow2)
 }
 
 func TestForeignKeyLargeTxnErr(t *testing.T) {
@@ -2487,7 +2457,7 @@ func TestForeignKeyLargeTxnErr(t *testing.T) {
 	tk.MustExec("use test")
 	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
 	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz1234567890');")
-	for range 8 {
+	for i := 0; i < 8; i++ {
 		tk.MustExec("insert into t1 (name) select name from t1;")
 	}
 	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
@@ -2540,92 +2510,30 @@ func TestForeignKeyAndLockView(t *testing.T) {
 	wg.Wait()
 }
 
-func TestFKBuild(t *testing.T) {
+func TestForeignKeyAndMemoryTracker(t *testing.T) {
 	store := testkit.CreateMockStore(t)
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("set @@global.tidb_enable_foreign_key=1")
 	tk.MustExec("set @@foreign_key_checks=1")
 	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int key);")
-	tk.MustExec("create table t2 (id int key, foreign key fk (id) references t1(id) ON DELETE CASCADE ON UPDATE CASCADE);")
-
-	testfailpoint.Enable(t, "github.com/pingcap/tidb/pkg/infoschema/issyncer/MockTryLoadDiffError", `return("renametable")`)
-
-	tk.MustExec("rename table t1 to t3;")
-	tk.MustExec("insert into test.t3 values (1)")
-	tk.MustExec("insert into test.t2 values (1)")
-	tk.MustExec("delete from test.t3")
-	tk.MustQuery("select * from test.t2").Check(testkit.Rows())
-}
-
-func TestLockKeysInDML(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int primary key);")
-	tk.MustExec("create table t2 (id int primary key, foreign key fk (id) references t1(id));")
-
-	tk.MustExec("insert into t1 values (1)")
-	tk.MustExec("BEGIN")
-	tk.MustExec("INSERT INTO t2 VALUES (1)")
-	var wg sync.WaitGroup
-	var tk2CommitTime time.Time
-	tk2StartTime := time.Now()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-		tk2 := testkit.NewTestKit(t, store)
-		tk2.MustExec("use test")
-		tk2.MustExec("BEGIN")
-		require.NotNil(t, tk2.ExecToErr("UPDATE t1 SET id = 2 WHERE id = 1"))
-		tk2.MustExec("COMMIT")
-		tk2CommitTime = time.Now()
-	}()
-	sleepDuration := 500 * time.Millisecond
-	time.Sleep(sleepDuration)
-	tk.MustExec("COMMIT")
-	wg.Wait()
-	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
-	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
-	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
-}
-
-func TestLockKeysInInsertIgnore(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("create table t1 (id int primary key);")
-	tk.MustExec("create table t2 (id int primary key, foreign key fk (id) references t1(id));")
-	tk.MustExec("insert into t1 values (1)")
-
-	tk.MustExec("BEGIN")
-	tk.MustExec("INSERT IGNORE INTO t2 VALUES (1)")
-
-	var wg sync.WaitGroup
-	var tk2CommitTime time.Time
-	tk2StartTime := time.Now()
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
-
-		tk2 := testkit.NewTestKit(t, store)
-		// unistore has a bug to handle the fair locking mechanism. We need to disable it to pass this test.
-		// Ref: https://github.com/pingcap/tidb/issues/56663
-		tk2.MustExec("set tidb_pessimistic_txn_fair_locking = 'OFF'")
-		tk2.MustExec("use test")
-		tk2.MustExec("BEGIN")
-		require.NotNil(t, tk2.ExecToErr("UPDATE t1 SET id = 2 WHERE id = 1"))
-		tk2.MustExec("COMMIT")
-		tk2CommitTime = time.Now()
-	}()
-
-	sleepDuration := 500 * time.Millisecond
-	time.Sleep(sleepDuration)
-	tk.MustExec("COMMIT")
-	wg.Wait()
-
-	require.Greater(t, tk2CommitTime.Sub(tk2StartTime), sleepDuration)
-	tk.MustQuery("SELECT * FROM t1").Check(testkit.Rows("1"))
-	tk.MustQuery("SELECT * FROM t2").Check(testkit.Rows("1"))
+	tk.MustExec("create table t1 (id int auto_increment key, pid int, name varchar(200), index(pid));")
+	tk.MustExec("insert into t1 (name) values ('abcdefghijklmnopqrstuvwxyz1234567890abcdefghijklmnopqrstuvwxyz');")
+	for i := 0; i < 8; i++ {
+		tk.MustExec("insert into t1 (name) select name from t1;")
+	}
+	tk.MustQuery("select count(*) from t1").Check(testkit.Rows("256"))
+	tk.MustExec("update t1 set pid=1 where id>1")
+	tk.MustExec("alter table t1 add foreign key (pid) references t1 (id) on update cascade")
+	tk.MustQuery("select sum(id) from t1").Check(testkit.Rows("32896"))
+	defer tk.MustExec("SET GLOBAL tidb_mem_oom_action = DEFAULT")
+	tk.MustExec("SET GLOBAL tidb_mem_oom_action='CANCEL'")
+	tk.MustExec("set @@tidb_mem_quota_query=40960;")
+	// foreign key cascade behaviour will exceed memory quota.
+	err := tk.ExecToErr("update t1 set id=id+100000 where id=1")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), memory.PanicMemoryExceedWarnMsg+memory.WarnMsgSuffixForSingleQuery)
+	tk.MustQuery("select id,pid from t1 where id = 1").Check(testkit.Rows("1 <nil>"))
+	tk.MustExec("set @@foreign_key_checks=0")
+	// After disable foreign_key_checks, following DML will execute successful.
+	tk.MustExec("update t1 set id=id+100000 where id=1")
+	tk.MustQuery("select id,pid from t1 where id<3 or pid is null order by id").Check(testkit.Rows("2 1", "100001 <nil>"))
 }

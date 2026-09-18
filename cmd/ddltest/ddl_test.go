@@ -21,11 +21,9 @@ import (
 	"flag"
 	"fmt"
 	"math/rand"
-	"net"
 	"os"
 	"os/exec"
 	"reflect"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,24 +33,21 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/ddl"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/session/sessionapi"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessiontxn"
-	"github.com/pingcap/tidb/pkg/store"
-	tidbdriver "github.com/pingcap/tidb/pkg/store/driver"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store"
+	tidbdriver "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/tables"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
 )
@@ -81,7 +76,7 @@ type server struct {
 type ddlSuite struct {
 	store kv.Storage
 	dom   *domain.Domain
-	s     sessionapi.Session
+	s     session.Session
 	ctx   sessionctx.Context
 
 	m     sync.Mutex
@@ -99,13 +94,12 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 
 	s.quit = make(chan struct{})
 
-	config.GetGlobalConfig().Store = config.StoreTypeTiKV
 	s.store, err = store.New(fmt.Sprintf("tikv://%s%s", *etcd, *tikvPath))
 	require.NoError(t, err)
 
 	// Make sure the schema lease of this session is equal to other TiDB servers'.
-	vardef.SetSchemaLease(time.Duration(*lease) * time.Second)
-	require.NoError(t, ddl.StartOwnerManager(context.Background(), s.store))
+	session.SetSchemaLease(time.Duration(*lease) * time.Second)
+
 	s.dom, err = session.BootstrapSession(s.store)
 	require.NoError(t, err)
 
@@ -123,7 +117,6 @@ func createDDLSuite(t *testing.T) (s *ddlSuite) {
 	err = domain.GetDomain(s.ctx).DDL().Stop()
 	require.NoError(t, err)
 	config.GetGlobalConfig().Instance.TiDBEnableDDL.Store(false)
-	ddl.CloseOwnerManager(s.store)
 	session.ResetStoreForWithTiKVTest(s.store)
 	s.dom.Close()
 	require.NoError(t, s.store.Close())
@@ -203,7 +196,7 @@ func (s *ddlSuite) startServers() (err error) {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	for i := range s.procs {
+	for i := 0; i < len(s.procs); i++ {
 		if s.procs[i] != nil {
 			continue
 		}
@@ -244,7 +237,7 @@ func (s *ddlSuite) stopServers() error {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	for i := range s.procs {
+	for i := 0; i < len(s.procs); i++ {
 		if proc := s.procs[i]; proc != nil {
 			if proc.db != nil {
 				if err := proc.db.Close(); err != nil {
@@ -265,7 +258,7 @@ func (s *ddlSuite) stopServers() error {
 var logFilePrefix = "tidb_log_file_"
 
 func createLogFiles(t *testing.T, length int) {
-	for i := range length {
+	for i := 0; i < length; i++ {
 		fp, err := os.Create(fmt.Sprintf("%s%d", logFilePrefix, i))
 		if err != nil {
 			require.NoError(t, err)
@@ -299,10 +292,10 @@ func (s *ddlSuite) startServer(i int, fp *os.File) (*server, error) {
 
 	// Open database.
 	var db *sql.DB
-	addr := net.JoinHostPort(*tidbIP, strconv.FormatUint(uint64(*startPort+i), 10))
+	addr := fmt.Sprintf("%s:%d", *tidbIP, *startPort+i)
 	sleepTime := time.Millisecond * 250
 	startTime := time.Now()
-	for i := range s.retryCount {
+	for i := 0; i < s.retryCount; i++ {
 		db, err = sql.Open("mysql", fmt.Sprintf("root@(%s)/test_ddl", addr))
 		if err != nil {
 			log.Warn("open addr failed", zap.String("addr", addr), zap.Int("retry count", i), zap.Error(err))
@@ -394,7 +387,7 @@ func isRetryError(err error) bool {
 	return false
 }
 
-func (s *ddlSuite) exec(query string, args ...any) (sql.Result, error) {
+func (s *ddlSuite) exec(query string, args ...interface{}) (sql.Result, error) {
 	for {
 		server := s.getServer()
 		r, err := server.db.Exec(query, args...)
@@ -411,7 +404,7 @@ func (s *ddlSuite) exec(query string, args ...any) (sql.Result, error) {
 	}
 }
 
-func (s *ddlSuite) mustExec(query string, args ...any) sql.Result {
+func (s *ddlSuite) mustExec(query string, args ...interface{}) sql.Result {
 	r, err := s.exec(query, args...)
 	if err != nil {
 		log.Fatal("[mustExec fail]query",
@@ -424,7 +417,7 @@ func (s *ddlSuite) mustExec(query string, args ...any) sql.Result {
 	return r
 }
 
-func (s *ddlSuite) execInsert(query string, args ...any) sql.Result {
+func (s *ddlSuite) execInsert(query string, args ...interface{}) sql.Result {
 	for {
 		r, err := s.exec(query, args...)
 		if err == nil {
@@ -447,7 +440,7 @@ func (s *ddlSuite) execInsert(query string, args ...any) sql.Result {
 	}
 }
 
-func (s *ddlSuite) query(query string, args ...any) (*sql.Rows, error) {
+func (s *ddlSuite) query(query string, args ...interface{}) (*sql.Rows, error) {
 	for {
 		server := s.getServer()
 		r, err := server.db.Query(query, args...)
@@ -468,7 +461,7 @@ func (s *ddlSuite) getServer() *server {
 	s.m.Lock()
 	defer s.m.Unlock()
 
-	for range 20 {
+	for i := 0; i < 20; i++ {
 		i := rand.Intn(*serverNum)
 
 		if s.procs[i] != nil {
@@ -497,25 +490,25 @@ func (s *ddlSuite) runDDL(sql string) chan error {
 }
 
 func (s *ddlSuite) getTable(t *testing.T, name string) table.Table {
-	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(goctx.Background(), ast.NewCIStr("test_ddl"), ast.NewCIStr(name))
+	tbl, err := domain.GetDomain(s.ctx).InfoSchema().TableByName(model.NewCIStr("test_ddl"), model.NewCIStr(name))
 	require.NoError(t, err)
 	return tbl
 }
 
-func dumpRows(t *testing.T, rows *sql.Rows) [][]any {
+func dumpRows(t *testing.T, rows *sql.Rows) [][]interface{} {
 	cols, err := rows.Columns()
 	require.NoError(t, err)
-	var ay [][]any
+	var ay [][]interface{}
 	for rows.Next() {
-		v := make([]any, len(cols))
+		v := make([]interface{}, len(cols))
 		for i := range v {
-			v[i] = new(any)
+			v[i] = new(interface{})
 		}
 		err = rows.Scan(v...)
 		require.NoError(t, err)
 
 		for i := range v {
-			v[i] = *(v[i].(*any))
+			v[i] = *(v[i].(*interface{}))
 		}
 		ay = append(ay, v)
 	}
@@ -525,7 +518,7 @@ func dumpRows(t *testing.T, rows *sql.Rows) [][]any {
 	return ay
 }
 
-func matchRows(t *testing.T, rows *sql.Rows, expected [][]any) {
+func matchRows(t *testing.T, rows *sql.Rows, expected [][]interface{}) {
 	ay := dumpRows(t, rows)
 	require.Equalf(t, len(expected), len(ay), "%v", expected)
 	for i := range ay {
@@ -533,7 +526,7 @@ func matchRows(t *testing.T, rows *sql.Rows, expected [][]any) {
 	}
 }
 
-func match(t *testing.T, row []any, expected ...any) {
+func match(t *testing.T, row []interface{}, expected ...interface{}) {
 	require.Equal(t, len(expected), len(row))
 	for i := range row {
 		if row[i] == nil {
@@ -567,7 +560,7 @@ func (s *ddlSuite) Bootstrap(t *testing.T) {
 	tk.MustExec("create table test_mixed (c1 int, c2 int, primary key(c1))")
 	tk.MustExec("create table test_inc (c1 int, c2 int, primary key(c1))")
 
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeOn
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeOn
 	tk.MustExec("drop table if exists test_insert_common, test_conflict_insert_common, " +
 		"test_update_common, test_conflict_update_common, test_delete_common, test_conflict_delete_common, " +
 		"test_mixed_common, test_inc_common")
@@ -579,7 +572,7 @@ func (s *ddlSuite) Bootstrap(t *testing.T) {
 	tk.MustExec("create table test_conflict_delete_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_mixed_common (c1 int, c2 int, primary key(c1, c2))")
 	tk.MustExec("create table test_inc_common (c1 int, c2 int, primary key(c1, c2))")
-	tk.Session().GetSessionVars().EnableClusteredIndex = vardef.ClusteredIndexDefModeIntOnly
+	tk.Session().GetSessionVars().EnableClusteredIndex = variable.ClusteredIndexDefModeIntOnly
 }
 
 func TestSimple(t *testing.T) {
@@ -596,7 +589,7 @@ func TestSimple(t *testing.T) {
 
 		rows, err := s.query("select c1 from test_simple limit 1")
 		require.NoError(t, err)
-		matchRows(t, rows, [][]any{{1}})
+		matchRows(t, rows, [][]interface{}{{1}})
 
 		done = s.runDDL("drop table if exists test_simple")
 		err = <-done
@@ -621,11 +614,11 @@ func TestSimple(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := range batch {
+						for j := 0; j < batch; j++ {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 						}
@@ -642,11 +635,11 @@ func TestSimple(t *testing.T) {
 				defaultValue := int64(-1)
 
 				wg.Add(workerNum)
-				for range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func() {
 						defer wg.Done()
 
-						for range batch {
+						for j := 0; j < batch; j++ {
 							key := atomic.AddInt64(&rowID, 1)
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, key, key))
 							key = int64(randomNum(rowCount))
@@ -707,11 +700,11 @@ func TestSimple(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := range batch {
+						for j := 0; j < batch; j++ {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 						}
@@ -725,11 +718,11 @@ func TestSimple(t *testing.T) {
 				start = time.Now()
 
 				wg.Add(workerNum)
-				for range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func() {
 						defer wg.Done()
 
-						for range batch {
+						for j := 0; j < batch; j++ {
 							s.mustExec(fmt.Sprintf("update %s set c2 = c2 + 1 where c1 = 0", tblName))
 						}
 					}()
@@ -786,11 +779,11 @@ func TestSimpleInsert(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := range batch {
+						for j := 0; j < batch; j++ {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 						}
@@ -839,11 +832,11 @@ func TestSimpleInsert(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func() {
 						defer wg.Done()
 
-						for range batch {
+						for j := 0; j < batch; j++ {
 							k := randomNum(rowCount)
 							_, _ = s.exec(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							mu.Lock()
@@ -902,11 +895,11 @@ func TestSimpleUpdate(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := range batch {
+						for j := 0; j < batch; j++ {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							v := randomNum(rowCount)
@@ -961,11 +954,11 @@ func TestSimpleUpdate(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := range batch {
+						for j := 0; j < batch; j++ {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							mu.Lock()
@@ -983,11 +976,11 @@ func TestSimpleUpdate(t *testing.T) {
 
 				defaultValue := int64(-1)
 				wg.Add(workerNum)
-				for range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func() {
 						defer wg.Done()
 
-						for range batch {
+						for j := 0; j < batch; j++ {
 							k := randomNum(rowCount)
 							s.mustExec(fmt.Sprintf("update %s set c2 = %d where c1 = %d", tblName, defaultValue, k))
 							mu.Lock()
@@ -1047,11 +1040,11 @@ func TestSimpleDelete(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := range batch {
+						for j := 0; j < batch; j++ {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
@@ -1100,11 +1093,11 @@ func TestSimpleDelete(t *testing.T) {
 
 				var wg sync.WaitGroup
 				wg.Add(workerNum)
-				for i := range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func(i int) {
 						defer wg.Done()
 
-						for j := range batch {
+						for j := 0; j < batch; j++ {
 							k := batch*i + j
 							s.execInsert(fmt.Sprintf("insert into %s values (%d, %d)", tblName, k, k))
 							mu.Lock()
@@ -1121,11 +1114,11 @@ func TestSimpleDelete(t *testing.T) {
 				start = time.Now()
 
 				wg.Add(workerNum)
-				for i := range workerNum {
+				for i := 0; i < workerNum; i++ {
 					go func(i int) {
 						defer wg.Done()
 
-						for range batch {
+						for j := 0; j < batch; j++ {
 							k := randomNum(rowCount)
 							s.mustExec(fmt.Sprintf("delete from %s where c1 = %d", tblName, k))
 							mu.Lock()
@@ -1163,5 +1156,6 @@ func addEnvPath(newPath string) {
 }
 
 func init() {
-	_ = store.Register(config.StoreTypeTiKV, &tidbdriver.TiKVDriver{})
+	rand.Seed(time.Now().UnixNano())
+	_ = store.Register("tikv", tidbdriver.TiKVDriver{})
 }

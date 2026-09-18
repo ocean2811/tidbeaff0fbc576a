@@ -18,12 +18,11 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	statstypes "github.com/pingcap/tidb/pkg/statistics/handle/types"
-	"github.com/pingcap/tidb/pkg/statistics/handle/util"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec/mock"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 )
@@ -160,15 +159,9 @@ func TestInsertIntoStatsTableLocked(t *testing.T) {
 		util.StatsCtx,
 		util.UseCurrentSessionOpt,
 		gomock.Eq(insertSQL),
-		gomock.Eq([]any{int64(1), int64(1)}),
+		gomock.Eq([]interface{}{int64(1), int64(1)}),
 	)
-	exec.EXPECT().ExecRestrictedSQL(
-		util.StatsCtx,
-		util.UseCurrentSessionOpt,
-		gomock.Eq(updateMetaVersionSQL),
-		gomock.Any(),
-	)
-	err := insertIntoStatsTableLockedAndUpdateStatsVersion(wrapAsSCtx(exec), 1)
+	err := insertIntoStatsTableLocked(wrapAsSCtx(exec), 1)
 	require.NoError(t, err)
 
 	// Error should be returned when ExecRestrictedSQL returns error.
@@ -179,7 +172,7 @@ func TestInsertIntoStatsTableLocked(t *testing.T) {
 		gomock.Any(),
 	).Return(nil, nil, errors.New("test error"))
 
-	err = insertIntoStatsTableLockedAndUpdateStatsVersion(wrapAsSCtx(exec), 1)
+	err = insertIntoStatsTableLocked(wrapAsSCtx(exec), 1)
 	require.Equal(t, "test error", err.Error())
 }
 
@@ -202,39 +195,23 @@ func TestAddLockedTables(t *testing.T) {
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		insertSQL,
-		gomock.Eq([]any{int64(2), int64(2)}),
-	)
-	exec.EXPECT().ExecRestrictedSQL(
-		util.StatsCtx,
-		util.UseCurrentSessionOpt,
-		gomock.Eq(updateMetaVersionSQL),
-		gomock.Any(),
+		gomock.Eq([]interface{}{int64(2), int64(2)}),
 	)
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		insertSQL,
-		gomock.Eq([]any{int64(3), int64(3)}),
+		gomock.Eq([]interface{}{int64(3), int64(3)}),
 	)
-	exec.EXPECT().ExecRestrictedSQL(
-		util.StatsCtx,
-		util.UseCurrentSessionOpt,
-		gomock.Eq(updateMetaVersionSQL),
-		gomock.Any(),
-	)
+
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		insertSQL,
-		gomock.Eq([]any{int64(4), int64(4)}),
+		gomock.Eq([]interface{}{int64(4), int64(4)}),
 	)
-	exec.EXPECT().ExecRestrictedSQL(
-		util.StatsCtx,
-		util.UseCurrentSessionOpt,
-		gomock.Eq(updateMetaVersionSQL),
-		gomock.Any(),
-	)
-	tables := map[int64]*statstypes.StatsLockTable{
+
+	tables := map[int64]*util.StatsLockTable{
 		1: {
 			FullName: "test.t1",
 			PartitionInfo: map[int64]string{
@@ -273,25 +250,13 @@ func TestAddLockedPartitions(t *testing.T) {
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		insertSQL,
-		gomock.Eq([]any{int64(2), int64(2)}),
-	)
-	exec.EXPECT().ExecRestrictedSQL(
-		util.StatsCtx,
-		util.UseCurrentSessionOpt,
-		gomock.Eq(updateMetaVersionSQL),
-		gomock.Any(),
+		gomock.Eq([]interface{}{int64(2), int64(2)}),
 	)
 	exec.EXPECT().ExecRestrictedSQL(
 		gomock.All(&ctxMatcher{}),
 		util.UseCurrentSessionOpt,
 		insertSQL,
-		gomock.Eq([]any{int64(3), int64(3)}),
-	)
-	exec.EXPECT().ExecRestrictedSQL(
-		util.StatsCtx,
-		util.UseCurrentSessionOpt,
-		gomock.Eq(updateMetaVersionSQL),
-		gomock.Any(),
+		gomock.Eq([]interface{}{int64(3), int64(3)}),
 	)
 
 	msg, err := AddLockedPartitions(

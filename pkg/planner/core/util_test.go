@@ -20,21 +20,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/planner/core/resolve"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
 	"github.com/stretchr/testify/require"
-)
-
-var (
-	_ ast.InPlaceVisitor = (*colNameInOnDupExtractor)(nil)
-	_ ast.InPlaceVisitor = (*importIntoCollAssignmentChecker)(nil)
-	_ ast.InPlaceVisitor = (*userVariableChecker)(nil)
-	_ ast.InPlaceVisitor = (*subqueryExprExtractor)(nil)
-	_ ast.InPlaceVisitor = (*AggregateFuncExtractor)(nil)
-	_ ast.InPlaceVisitor = (*WindowFuncExtractor)(nil)
 )
 
 func tableNamesAsStr(tableNames []*ast.TableName) string {
@@ -63,31 +52,31 @@ func TestExtractTableList(t *testing.T) {
 		{
 			sql: "WITH t AS (SELECT * FROM t2) SELECT * FROM t, t1, mysql.user WHERE t1.a = mysql.user.username",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
-				{Name: ast.NewCIStr("t1")},
-				{Name: ast.NewCIStr("t2")},
-				{Name: ast.NewCIStr("user"), Schema: ast.NewCIStr("mysql")},
+				{Name: model.NewCIStr("t")},
+				{Name: model.NewCIStr("t1")},
+				{Name: model.NewCIStr("t2")},
+				{Name: model.NewCIStr("user"), Schema: model.NewCIStr("mysql")},
 			},
 		},
 		{
 			sql: "SELECT (SELECT a,b,c FROM t1) AS t WHERE t.a = 1",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t1")},
+				{Name: model.NewCIStr("t1")},
 			},
 		},
 		{
 			sql: "SELECT * FROM t, v AS w",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
-				{Name: ast.NewCIStr("v")},
+				{Name: model.NewCIStr("t")},
+				{Name: model.NewCIStr("v")},
 			},
 		},
 		{
 			sql:    "SELECT * FROM t, v AS w",
 			asName: true,
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
-				{Name: ast.NewCIStr("w")},
+				{Name: model.NewCIStr("t")},
+				{Name: model.NewCIStr("w")},
 			},
 		},
 		{
@@ -110,206 +99,206 @@ func TestExtractTableList(t *testing.T) {
 					ORDER BY
 					  avg_score DESC`,
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("scores")},
-				{Name: ast.NewCIStr("students")},
+				{Name: model.NewCIStr("scores")},
+				{Name: model.NewCIStr("students")},
 			},
 		},
 		{
 			sql: "DELETE FROM x.y z WHERE z.a > 0",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("y"), Schema: ast.NewCIStr("x")},
+				{Name: model.NewCIStr("y"), Schema: model.NewCIStr("x")},
 			},
 		},
 		{
 			sql: "WITH t AS (SELECT * FROM v) DELETE FROM x.y z WHERE z.a > t.c",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("y"), Schema: ast.NewCIStr("x")},
-				{Name: ast.NewCIStr("v")},
+				{Name: model.NewCIStr("y"), Schema: model.NewCIStr("x")},
+				{Name: model.NewCIStr("v")},
 			},
 		},
 		{
 			sql: "DELETE FROM `t1` AS `t2` USE INDEX (`fld1`) WHERE `t2`.`fld`=2",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t1")},
+				{Name: model.NewCIStr("t1")},
 			},
 		},
 		{
 			sql:    "DELETE FROM `t1` AS `t2` USE INDEX (`fld1`) WHERE `t2`.`fld`=2",
 			asName: true,
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t2")},
+				{Name: model.NewCIStr("t2")},
 			},
 		},
 		{
 			sql: "UPDATE t1 USE INDEX(idx_a) JOIN t2 SET t1.price=t2.price WHERE t1.id=t2.id;",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t1")},
-				{Name: ast.NewCIStr("t2")},
+				{Name: model.NewCIStr("t1")},
+				{Name: model.NewCIStr("t2")},
 			},
 		},
 		{
 			sql: "INSERT INTO t (a,b,c) SELECT x,y,z FROM t1;",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
-				{Name: ast.NewCIStr("t1")},
+				{Name: model.NewCIStr("t")},
+				{Name: model.NewCIStr("t1")},
 			},
 		},
 		{
 			sql: "WITH t AS (SELECT * FROM v) SELECT a FROM t UNION SELECT b FROM t1",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("v")},
-				{Name: ast.NewCIStr("t")},
-				{Name: ast.NewCIStr("t1")},
+				{Name: model.NewCIStr("v")},
+				{Name: model.NewCIStr("t")},
+				{Name: model.NewCIStr("t1")},
 			},
 		},
 		{
 			sql: "LOAD DATA INFILE '/a.csv' FORMAT 'sql file' INTO TABLE `t`",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
+				{Name: model.NewCIStr("t")},
 			},
 		},
 		{
 			sql: "batch on c limit 10 delete from t where t.c = 10",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
+				{Name: model.NewCIStr("t")},
 			},
 		},
 		{
 			sql: "split table t1 between () and () regions 10",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t1")},
+				{Name: model.NewCIStr("t1")},
 			},
 		},
 		{
 			sql: "show create table t",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
+				{Name: model.NewCIStr("t")},
 			},
 		},
 		{
 			sql: "show create database test",
 			expect: []*ast.TableName{
-				{Schema: ast.NewCIStr("test")},
+				{Schema: model.NewCIStr("test")},
 			},
 		},
 		{
 			sql: "create database test",
 			expect: []*ast.TableName{
-				{Schema: ast.NewCIStr("test")},
+				{Schema: model.NewCIStr("test")},
 			},
 		},
 		{
 			sql: "FLASHBACK DATABASE t1 TO t2",
 			expect: []*ast.TableName{
-				{Schema: ast.NewCIStr("t1")},
-				{Schema: ast.NewCIStr("t2")},
+				{Schema: model.NewCIStr("t1")},
+				{Schema: model.NewCIStr("t2")},
 			},
 		},
 		{
 			sql: "flashback table t,t1,test.t2 to timestamp '2021-05-26 16:45:26'",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
-				{Name: ast.NewCIStr("t1")},
-				{Name: ast.NewCIStr("t2"), Schema: ast.NewCIStr("test")},
+				{Name: model.NewCIStr("t")},
+				{Name: model.NewCIStr("t1")},
+				{Name: model.NewCIStr("t2"), Schema: model.NewCIStr("test")},
 			},
 		},
 		{
 			sql: "flashback database test to timestamp '2021-05-26 16:45:26'",
 			expect: []*ast.TableName{
-				{Schema: ast.NewCIStr("test")},
+				{Schema: model.NewCIStr("test")},
 			},
 		},
 		{
 			sql: "flashback table t TO t1",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
-				{Name: ast.NewCIStr("t1")},
+				{Name: model.NewCIStr("t")},
+				{Name: model.NewCIStr("t1")},
 			},
 		},
 		{
 			sql: "create table t",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
+				{Name: model.NewCIStr("t")},
 			},
 		},
 		{
 			sql: "RENAME TABLE t TO t1, test.t2 TO test.t3",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
-				{Name: ast.NewCIStr("t1")},
-				{Name: ast.NewCIStr("t2"), Schema: ast.NewCIStr("test")},
-				{Name: ast.NewCIStr("t3"), Schema: ast.NewCIStr("test")},
+				{Name: model.NewCIStr("t")},
+				{Name: model.NewCIStr("t1")},
+				{Name: model.NewCIStr("t2"), Schema: model.NewCIStr("test")},
+				{Name: model.NewCIStr("t3"), Schema: model.NewCIStr("test")},
 			},
 		},
 		{
 			sql: "drop table test.t, t1",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t1")},
-				{Name: ast.NewCIStr("t"), Schema: ast.NewCIStr("test")},
+				{Name: model.NewCIStr("t1")},
+				{Name: model.NewCIStr("t"), Schema: model.NewCIStr("test")},
 			},
 		},
 		{
 			sql: "create view v as (select * from t)",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("v")},
-				{Name: ast.NewCIStr("t")},
+				{Name: model.NewCIStr("v")},
+				{Name: model.NewCIStr("t")},
 			},
 		},
 		{
 			sql: "create sequence if not exists seq no cycle",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("seq")},
+				{Name: model.NewCIStr("seq")},
 			},
 		},
 		{
 			sql: "CREATE INDEX idx ON t ( a ) VISIBLE INVISIBLE",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
+				{Name: model.NewCIStr("t")},
 			},
 		},
 		{
 			sql: "LOCK TABLE t1 WRITE, t2 READ",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t1")},
-				{Name: ast.NewCIStr("t2")},
+				{Name: model.NewCIStr("t1")},
+				{Name: model.NewCIStr("t2")},
 			},
 		},
 		{
 			sql: "grant select on test.* to u1",
 			expect: []*ast.TableName{
-				{Schema: ast.NewCIStr("test")},
+				{Schema: model.NewCIStr("test")},
 			},
 		},
 		{
 			sql: "BACKUP TABLE a.b,c.d,e TO 'noop://'",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("b"), Schema: ast.NewCIStr("a")},
-				{Name: ast.NewCIStr("d"), Schema: ast.NewCIStr("c")},
-				{Name: ast.NewCIStr("e")},
+				{Name: model.NewCIStr("b"), Schema: model.NewCIStr("a")},
+				{Name: model.NewCIStr("d"), Schema: model.NewCIStr("c")},
+				{Name: model.NewCIStr("e")},
 			},
 		},
 		{
 			sql: "TRACE SELECT (SELECT a,b,c FROM t1) AS t WHERE t.a = 1",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t1")},
+				{Name: model.NewCIStr("t1")},
 			},
 		},
 		{
 			sql: "EXPLAIN SELECT (SELECT a,b,c FROM t1) AS t WHERE t.a = 1",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t1")},
+				{Name: model.NewCIStr("t1")},
 			},
 		},
 		{
 			sql: "PLAN REPLAYER DUMP EXPLAIN SELECT (SELECT a,b,c FROM t1) AS t WHERE t.a = 1",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t1")},
+				{Name: model.NewCIStr("t1")},
 			},
 		},
 		{
 			sql: "ALTER TABLE t COMPACT",
 			expect: []*ast.TableName{
-				{Name: ast.NewCIStr("t")},
+				{Name: model.NewCIStr("t")},
 			},
 		},
 	}
@@ -317,8 +306,7 @@ func TestExtractTableList(t *testing.T) {
 	for i, c := range cases {
 		stmtNode, err := p.ParseOneStmt(c.sql, "", "")
 		require.NoError(t, err, "case %d sql: %s", i, c.sql)
-		nodeW := resolve.NewNodeW(stmtNode)
-		tableNames := ExtractTableList(nodeW, c.asName)
+		tableNames := ExtractTableList(stmtNode, c.asName)
 		require.Len(t, tableNames, len(c.expect), "case %d sql: %s, len: %d, actual: %s", i, c.sql, len(tableNames), tableNamesAsStr(tableNames))
 		sortTableNames(tableNames)
 		sortTableNames(c.expect)
@@ -327,33 +315,4 @@ func TestExtractTableList(t *testing.T) {
 			require.Equal(t, c.expect[j].Name.L, tn.Name.L, "case %d sql: %s, j: %d, actual: %s", i, c.sql, j, tableNamesAsStr(tableNames))
 		}
 	}
-}
-
-func TestCheckMViewUpdatable(t *testing.T) {
-	vars := variable.NewSessionVars(nil)
-	mv := &model.TableInfo{
-		Name:             ast.NewCIStr("mv"),
-		MaterializedView: &model.MaterializedViewInfo{},
-	}
-	mlog := &model.TableInfo{
-		Name:                ast.NewCIStr("$mlog$t"),
-		MaterializedViewLog: &model.MaterializedViewLogInfo{},
-	}
-	base := &model.TableInfo{Name: ast.NewCIStr("t")}
-
-	require.NoError(t, CheckMViewUpdatable(vars, base, "", "INSERT"))
-	require.Error(t, CheckMViewUpdatable(vars, mv, "", "INSERT"))
-	require.Error(t, CheckMViewUpdatable(vars, mlog, "", "INSERT"))
-
-	// Maintenance SQL must be restricted; otherwise this is an internal error.
-	vars.InMViewMaintenance = true
-	vars.InRestrictedSQL = false
-	err := CheckMViewUpdatable(vars, mv, "", "INSERT")
-	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
-	err = CheckMViewUpdatable(vars, mlog, "", "INSERT")
-	require.ErrorContains(t, err, "materialized view maintenance should only run in restricted SQL mode")
-
-	vars.InRestrictedSQL = true
-	require.NoError(t, CheckMViewUpdatable(vars, mv, "", "INSERT"))
-	require.NoError(t, CheckMViewUpdatable(vars, mlog, "", "INSERT"))
 }

@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/util/globalconn"
+	"github.com/cznic/mathutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/globalconn"
 	"github.com/stretchr/testify/assert"
-	"modernc.org/mathutil"
 )
 
 func TestAutoIncPool(t *testing.T) {
@@ -189,7 +189,7 @@ func (p *LockBasedCircularPool) InitExt(size uint32, fillCount uint32) {
 
 	fillCount = mathutil.MinUint32(p.cap-1, fillCount)
 	var i uint32
-	for i = range fillCount {
+	for i = 0; i < fillCount; i++ {
 		p.slots[i] = i + 1
 	}
 	for ; i < p.cap; i++ {
@@ -270,7 +270,7 @@ func prepareConcurrencyTest(pool globalconn.IDPool, producers int, consumers int
 	if producers > 0 {
 		reqsPerProducer := (requests + producers - 1) / producers
 		wgProducer.Add(producers)
-		for p := range producers {
+		for p := 0; p < producers; p++ {
 			go func(p int) {
 				defer wgProducer.Done()
 				<-ready
@@ -287,7 +287,7 @@ func prepareConcurrencyTest(pool globalconn.IDPool, producers int, consumers int
 	wgConsumer = &sync.WaitGroup{}
 	if consumers > 0 {
 		wgConsumer.Add(consumers)
-		for c := range consumers {
+		for c := 0; c < consumers; c++ {
 			go func(c int) {
 				defer wgConsumer.Done()
 				<-ready
@@ -459,7 +459,7 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 	for _, ta := range cases {
 		b.Run(fmt.Sprintf("LockBasedCircularPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
 			b.ResetTimer()
-			for range b.N {
+			for i := 0; i < b.N; i++ {
 				b.StopTimer()
 				var total int64
 				pool := prepareLockBasedPool(poolSizeInBits, 0)
@@ -479,7 +479,7 @@ func BenchmarkPoolConcurrency(b *testing.B) {
 
 		b.Run(fmt.Sprintf("LockFreeCircularPool: P:C: %v:%v", ta.producers, ta.consumers), func(b *testing.B) {
 			b.ResetTimer()
-			for range b.N {
+			for i := 0; i < b.N; i++ {
 				b.StopTimer()
 				var total int64
 				pool := prepareLockFreePool(poolSizeInBits, 0, 0)

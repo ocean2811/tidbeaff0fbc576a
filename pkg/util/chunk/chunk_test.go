@@ -23,8 +23,10 @@ import (
 	"time"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
 	"github.com/stretchr/testify/require"
 )
 
@@ -33,7 +35,7 @@ func TestAppendRow(t *testing.T) {
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)
 	strFmt := "%d.12345"
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		chk.AppendNull(0)
 		chk.AppendInt64(1, int64(i))
 		str := fmt.Sprintf(strFmt, i)
@@ -44,7 +46,7 @@ func TestAppendRow(t *testing.T) {
 	}
 	require.Equal(t, numCols, chk.NumCols())
 	require.Equal(t, numRows, chk.NumRows())
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
 		require.Equal(t, int64(0), row.GetInt64(0))
 		require.True(t, row.IsNull(0))
@@ -62,11 +64,11 @@ func TestAppendRow(t *testing.T) {
 	}
 
 	chk2 := newChunk(8, 8, 0, 0, 40, 0)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		row := chk.GetRow(i)
 		chk2.AppendRow(row)
 	}
-	for i := range numCols {
+	for i := 0; i < numCols; i++ {
 		col2, col1 := chk2.columns[i], chk.columns[i]
 		col2.elemBuf, col1.elemBuf = nil, nil
 		require.Equal(t, col1, col2)
@@ -205,7 +207,7 @@ func TestTruncateTo(t *testing.T) {
 
 	src := NewChunkWithCapacity(fieldTypes, 32)
 
-	for range 8 {
+	for i := 0; i < 8; i++ {
 		src.AppendFloat32(0, 12.8)
 		src.AppendString(1, "abc")
 		src.AppendJSON(2, jsonObj)
@@ -268,7 +270,7 @@ func TestChunkSizeControl(t *testing.T) {
 	chk := New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, maxChunkSize, maxChunkSize)
 	require.Equal(t, maxChunkSize, chk.RequiredRows())
 
-	for range maxChunkSize {
+	for i := 0; i < maxChunkSize; i++ {
 		chk.AppendInt64(0, 1)
 	}
 	maxChunkSize += maxChunkSize / 3
@@ -282,7 +284,7 @@ func TestChunkSizeControl(t *testing.T) {
 	chk.Reset()
 	for i := 1; i < maxChunkSize*2; i++ {
 		chk.SetRequiredRows(i, maxChunkSize)
-		require.Equal(t, min(maxChunkSize, i), chk.RequiredRows())
+		require.Equal(t, mathutil.Min(maxChunkSize, i), chk.RequiredRows())
 	}
 
 	chk.SetRequiredRows(1, maxChunkSize).
@@ -400,10 +402,10 @@ func newAllTypes() []*types.FieldType {
 func TestCompare(t *testing.T) {
 	allTypes := newAllTypes()
 	chunk := NewChunkWithCapacity(allTypes, 32)
-	for i := range allTypes {
+	for i := 0; i < len(allTypes); i++ {
 		chunk.AppendNull(i)
 	}
-	for i := range allTypes {
+	for i := 0; i < len(allTypes); i++ {
 		switch allTypes[i].GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 			if mysql.HasUnsignedFlag(allTypes[i].GetFlag()) {
@@ -436,7 +438,7 @@ func TestCompare(t *testing.T) {
 			require.FailNow(t, "type not handled", allTypes[i].GetType())
 		}
 	}
-	for i := range allTypes {
+	for i := 0; i < len(allTypes); i++ {
 		switch allTypes[i].GetType() {
 		case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 			if mysql.HasUnsignedFlag(allTypes[i].GetFlag()) {
@@ -472,7 +474,7 @@ func TestCompare(t *testing.T) {
 	rowNull := chunk.GetRow(0)
 	rowSmall := chunk.GetRow(1)
 	rowBig := chunk.GetRow(2)
-	for i := range allTypes {
+	for i := 0; i < len(allTypes); i++ {
 		cmpFunc := GetCompareFunc(allTypes[i])
 		require.Equal(t, 0, cmpFunc(rowNull, i, rowNull, i))
 		require.Equal(t, -1, cmpFunc(rowNull, i, rowSmall, i))
@@ -487,11 +489,11 @@ func TestCompare(t *testing.T) {
 func TestCopyTo(t *testing.T) {
 	allTypes := newAllTypes()
 	chunk := NewChunkWithCapacity(allTypes, 101)
-	for i := range allTypes {
+	for i := 0; i < len(allTypes); i++ {
 		chunk.AppendNull(i)
 	}
-	for k := range 100 {
-		for i := range allTypes {
+	for k := 0; k < 100; k++ {
+		for i := 0; i < len(allTypes); i++ {
 			switch allTypes[i].GetType() {
 			case mysql.TypeTiny, mysql.TypeShort, mysql.TypeInt24, mysql.TypeLong, mysql.TypeLonglong, mysql.TypeYear:
 				if mysql.HasUnsignedFlag(allTypes[i].GetFlag()) {
@@ -528,10 +530,10 @@ func TestCopyTo(t *testing.T) {
 
 	ck1 := chunk.CopyConstruct()
 
-	for k := range 101 {
+	for k := 0; k < 101; k++ {
 		row := chunk.GetRow(k)
 		r1 := ck1.GetRow(k)
-		for i := range allTypes {
+		for i := 0; i < len(allTypes); i++ {
 			cmpFunc := GetCompareFunc(allTypes[i])
 			require.Zero(t, cmpFunc(row, i, r1, i))
 		}
@@ -543,8 +545,8 @@ func TestGetDecimalDatum(t *testing.T) {
 	decType := types.NewFieldType(mysql.TypeNewDecimal)
 	decType.SetFlen(4)
 	decType.SetDecimal(2)
-	typeCtx := types.DefaultStmtNoWarningContext
-	decDatum, err := datum.ConvertTo(typeCtx, decType)
+	sc := stmtctx.NewStmtCtx()
+	decDatum, err := datum.ConvertTo(sc, decType)
 	require.NoError(t, err)
 
 	chk := NewChunkWithCapacity([]*types.FieldType{decType}, 32)
@@ -579,8 +581,6 @@ func TestChunkMemoryUsage(t *testing.T) {
 	}
 	// empty chunk with initial capactiy
 	require.Equal(t, int64(expectedUsage), chk.MemoryUsage())
-	initialUsedMemory := chk.UsedMemoryUsage()
-	require.Less(t, initialUsedMemory, chk.MemoryUsage())
 
 	jsonObj, err := types.ParseBinaryJSONFromString("1")
 	require.NoError(t, err)
@@ -610,12 +610,6 @@ func TestChunkMemoryUsage(t *testing.T) {
 		expectedUsage += colUsage[i] + int(unsafe.Sizeof(*chk.columns[i]))
 	}
 	require.Equal(t, int64(expectedUsage), chk.MemoryUsage())
-	require.Greater(t, chk.UsedMemoryUsage(), initialUsedMemory)
-
-	allocatedMemory := chk.MemoryUsage()
-	chk.Reset()
-	require.Equal(t, initialUsedMemory, chk.UsedMemoryUsage())
-	require.Equal(t, allocatedMemory, chk.MemoryUsage())
 }
 
 func TestSwapColumn(t *testing.T) {
@@ -648,25 +642,25 @@ func TestSwapColumn(t *testing.T) {
 	checkRef()
 
 	// swap two chunk's columns
-	require.NoError(t, chk1.swapColumn(0, chk2, 0))
+	require.NoError(t, chk1.SwapColumn(0, chk2, 0))
 	checkRef()
 
-	require.NoError(t, chk1.swapColumn(0, chk2, 0))
+	require.NoError(t, chk1.SwapColumn(0, chk2, 0))
 	checkRef()
 
 	// swap reference and referenced columns
-	require.NoError(t, chk2.swapColumn(1, chk2, 0))
+	require.NoError(t, chk2.SwapColumn(1, chk2, 0))
 	checkRef()
 
 	// swap the same column in the same chunk
-	require.NoError(t, chk2.swapColumn(1, chk2, 1))
+	require.NoError(t, chk2.SwapColumn(1, chk2, 1))
 	checkRef()
 
 	// swap reference and another column
-	require.NoError(t, chk2.swapColumn(1, chk2, 2))
+	require.NoError(t, chk2.SwapColumn(1, chk2, 2))
 	checkRef()
 
-	require.NoError(t, chk2.swapColumn(2, chk2, 0))
+	require.NoError(t, chk2.SwapColumn(2, chk2, 0))
 	checkRef()
 }
 
@@ -674,7 +668,7 @@ func TestAppendSel(t *testing.T) {
 	tll := types.NewFieldType(mysql.TypeLonglong)
 	chk := NewChunkWithCapacity([]*types.FieldType{tll}, 1024)
 	sel := make([]int, 0, 1024/2)
-	for i := range 1024 / 2 {
+	for i := 0; i < 1024/2; i++ {
 		chk.AppendInt64(0, int64(i))
 		if i%2 == 0 {
 			sel = append(sel, i)
@@ -735,14 +729,14 @@ func TestToString(t *testing.T) {
 func BenchmarkAppendInt(b *testing.B) {
 	b.ReportAllocs()
 	chk := newChunk(8)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendInt(chk)
 	}
 }
 
 func appendInt(chk *Chunk) {
 	chk.Reset()
-	for i := range 1000 {
+	for i := 0; i < 1000; i++ {
 		chk.AppendInt64(0, int64(i))
 	}
 }
@@ -750,14 +744,14 @@ func appendInt(chk *Chunk) {
 func BenchmarkAppendString(b *testing.B) {
 	b.ReportAllocs()
 	chk := newChunk(0)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendString(chk)
 	}
 }
 
 func appendString(chk *Chunk) {
 	chk.Reset()
-	for range 1000 {
+	for i := 0; i < 1000; i++ {
 		chk.AppendString(0, "abcd")
 	}
 }
@@ -771,14 +765,14 @@ func BenchmarkAppendRow(b *testing.B) {
 	rowChk.AppendBytes(3, []byte("abcd"))
 
 	chk := newChunk(8, 8, 0, 0)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendRow(chk, rowChk.GetRow(0))
 	}
 }
 
 func appendRow(chk *Chunk, row Row) {
 	chk.Reset()
-	for range 1000 {
+	for i := 0; i < 1000; i++ {
 		chk.AppendRow(row)
 	}
 }
@@ -786,7 +780,7 @@ func appendRow(chk *Chunk, row Row) {
 func BenchmarkAppendBytes1024(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 1024)
 	}
 }
@@ -794,7 +788,7 @@ func BenchmarkAppendBytes1024(b *testing.B) {
 func BenchmarkAppendBytes512(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 512)
 	}
 }
@@ -802,7 +796,7 @@ func BenchmarkAppendBytes512(b *testing.B) {
 func BenchmarkAppendBytes256(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 256)
 	}
 }
@@ -810,7 +804,7 @@ func BenchmarkAppendBytes256(b *testing.B) {
 func BenchmarkAppendBytes128(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 128)
 	}
 }
@@ -818,7 +812,7 @@ func BenchmarkAppendBytes128(b *testing.B) {
 func BenchmarkAppendBytes64(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 64)
 	}
 }
@@ -826,7 +820,7 @@ func BenchmarkAppendBytes64(b *testing.B) {
 func BenchmarkAppendBytes32(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 32)
 	}
 }
@@ -834,7 +828,7 @@ func BenchmarkAppendBytes32(b *testing.B) {
 func BenchmarkAppendBytes16(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 16)
 	}
 }
@@ -842,7 +836,7 @@ func BenchmarkAppendBytes16(b *testing.B) {
 func BenchmarkAppendBytes8(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 8)
 	}
 }
@@ -850,7 +844,7 @@ func BenchmarkAppendBytes8(b *testing.B) {
 func BenchmarkAppendBytes4(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 4)
 	}
 }
@@ -858,7 +852,7 @@ func BenchmarkAppendBytes4(b *testing.B) {
 func BenchmarkAppendBytes2(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 2)
 	}
 }
@@ -866,14 +860,14 @@ func BenchmarkAppendBytes2(b *testing.B) {
 func BenchmarkAppendBytes1(b *testing.B) {
 	chk := NewChunkWithCapacity([]*types.FieldType{types.NewFieldType(mysql.TypeString)}, 32)
 	var bs = make([]byte, 256)
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		appendBytes(chk, bs, 1)
 	}
 }
 
 func appendBytes(chk *Chunk, bs []byte, times int) {
 	chk.Reset()
-	for range times {
+	for i := 0; i < times; i++ {
 		chk.AppendBytes(0, bs)
 	}
 }
@@ -881,13 +875,13 @@ func appendBytes(chk *Chunk, bs []byte, times int) {
 func BenchmarkAccess(b *testing.B) {
 	b.StopTimer()
 	rowChk := newChunk(8)
-	for range 8192 {
+	for i := 0; i < 8192; i++ {
 		rowChk.AppendInt64(0, math.MaxUint16)
 	}
 	b.StartTimer()
 	var sum int64
-	for range b.N {
-		for j := range 8192 {
+	for i := 0; i < b.N; i++ {
+		for j := 0; j < 8192; j++ {
 			sum += rowChk.GetRow(j).GetInt64(0)
 		}
 	}
@@ -906,14 +900,14 @@ func BenchmarkChunkMemoryUsage(b *testing.B) {
 	timeObj := types.NewTime(types.FromGoTime(time.Now()), mysql.TypeDatetime, 0)
 	durationObj := types.Duration{Duration: math.MaxInt64, Fsp: 0}
 
-	for range initCap {
+	for i := 0; i < initCap; i++ {
 		chk.AppendFloat64(0, 123.123)
 		chk.AppendString(1, "123")
 		chk.AppendTime(2, timeObj)
 		chk.AppendDuration(3, durationObj)
 	}
 	b.ResetTimer()
-	for range b.N {
+	for i := 0; i < b.N; i++ {
 		chk.MemoryUsage()
 	}
 }
@@ -987,7 +981,7 @@ func benchmarkChunkGrow(t benchChunkGrowCase) func(b *testing.B) {
 		b.ReportAllocs()
 		chk := New([]*types.FieldType{types.NewFieldType(mysql.TypeLong)}, t.initCap, t.maxCap)
 		b.ResetTimer()
-		for range b.N {
+		for i := 0; i < b.N; i++ {
 			e := &seqNumberGenerateExec{genCountSize: t.cntPerCall}
 			for {
 				e.Next(chk, t.newReset)
@@ -1011,7 +1005,7 @@ func TestAppendRows(t *testing.T) {
 	numRows := 10
 	chk := newChunk(8, 8, 0, 0, 40, 0)
 	strFmt := "%d.12345"
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		chk.AppendNull(0)
 		chk.AppendInt64(1, int64(i))
 		str := fmt.Sprintf(strFmt, i)
@@ -1026,11 +1020,11 @@ func TestAppendRows(t *testing.T) {
 	chk2 := newChunk(8, 8, 0, 0, 40, 0)
 	require.Equal(t, numCols, chk.NumCols())
 	rows := make([]Row, numRows)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		rows[i] = chk.GetRow(i)
 	}
 	chk2.AppendRows(rows)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		row := chk2.GetRow(i)
 		require.Equal(t, int64(0), row.GetInt64(0))
 		require.True(t, row.IsNull(0))
@@ -1047,51 +1041,11 @@ func TestAppendRows(t *testing.T) {
 	}
 }
 
-func TestAppendRowsByColIdxs(t *testing.T) {
-	numCols := 6
-	numRows := 10
-	chk := newChunk(8, 8, 0, 0, 40, 0)
-	strFmt := "%d.12345"
-	for i := range numRows {
-		chk.AppendNull(0)
-		chk.AppendInt64(1, int64(i))
-		str := fmt.Sprintf(strFmt, i)
-		chk.AppendString(2, str)
-		chk.AppendBytes(3, []byte(str))
-		chk.AppendMyDecimal(4, types.NewDecFromStringForTest(str))
-		chk.AppendJSON(5, types.CreateBinaryJSON(str))
-	}
-	require.Equal(t, numCols, chk.NumCols())
-	require.Equal(t, numRows, chk.NumRows())
-
-	colsIdx := []int{5, 3, 4}
-	chk2 := newChunk(0, 0, 40)
-	require.Equal(t, numCols, chk.NumCols())
-	rows := make([]Row, numRows)
-	for i := range numRows {
-		rows[i] = chk.GetRow(i)
-	}
-	wide := chk2.AppendRowsByColIdxs(rows, colsIdx)
-	require.Equal(t, 10, chk2.NumRows())
-	require.Equal(t, numRows*len(colsIdx), wide)
-
-	for i := range numRows {
-		row := chk2.GetRow(i)
-		str := fmt.Sprintf(strFmt, i)
-		require.False(t, row.IsNull(0))
-		require.Equal(t, str, string(row.GetJSON(0).GetString()))
-		require.False(t, row.IsNull(1))
-		require.Equal(t, []byte(str), row.GetBytes(1))
-		require.False(t, row.IsNull(2))
-		require.Equal(t, str, row.GetMyDecimal(2).String())
-	}
-}
-
 func BenchmarkBatchAppendRows(b *testing.B) {
 	b.ReportAllocs()
 	numRows := 4096
 	rowChk := newChunk(8, 8, 0, 0)
-	for range numRows {
+	for i := 0; i < numRows; i++ {
 		rowChk.AppendNull(0)
 		rowChk.AppendInt64(1, 1)
 		rowChk.AppendString(2, "abcd")
@@ -1113,9 +1067,9 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 	}
 	for _, conf := range testCaseConfs {
 		b.Run(fmt.Sprintf("row-%d", conf.batchSize), func(b *testing.B) {
-			for range b.N {
+			for i := 0; i < b.N; i++ {
 				chk.Reset()
-				for j := range conf.batchSize {
+				for j := 0; j < conf.batchSize; j++ {
 					chk.AppendRow(rowChk.GetRow(j))
 				}
 			}
@@ -1123,10 +1077,10 @@ func BenchmarkBatchAppendRows(b *testing.B) {
 		b.ResetTimer()
 		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
 			rows := make([]Row, conf.batchSize)
-			for i := range conf.batchSize {
+			for i := 0; i < conf.batchSize; i++ {
 				rows[i] = rowChk.GetRow(i)
 			}
-			for range b.N {
+			for i := 0; i < b.N; i++ {
 				chk.Reset()
 				chk.AppendRows(rows)
 			}
@@ -1138,7 +1092,7 @@ func BenchmarkAppendRows(b *testing.B) {
 	b.ReportAllocs()
 	rowChk := newChunk(8, 8, 0, 0)
 
-	for range 4096 {
+	for i := 0; i < 4096; i++ {
 		rowChk.AppendNull(0)
 		rowChk.AppendInt64(1, 1)
 		rowChk.AppendString(2, "abcd")
@@ -1161,16 +1115,16 @@ func BenchmarkAppendRows(b *testing.B) {
 	for _, conf := range testCaseConfs {
 		b.ResetTimer()
 		b.Run(fmt.Sprintf("row-%d", conf.batchSize), func(b *testing.B) {
-			for range b.N {
+			for i := 0; i < b.N; i++ {
 				chk.Reset()
-				for j := range conf.batchSize {
+				for j := 0; j < conf.batchSize; j++ {
 					chk.AppendRow(rowChk.GetRow(j))
 				}
 			}
 		})
 		b.ResetTimer()
 		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
-			for range b.N {
+			for i := 0; i < b.N; i++ {
 				chk.Reset()
 				chk.Append(rowChk, 0, conf.batchSize)
 			}
@@ -1182,7 +1136,7 @@ func BenchmarkAppend(b *testing.B) {
 	b.ReportAllocs()
 	rowChk := newChunk(0, 0)
 
-	for range 4096 {
+	for i := 0; i < 4096; i++ {
 		rowChk.AppendString(0, "abcd")
 		rowChk.AppendBytes(1, []byte("abcd"))
 	}
@@ -1203,7 +1157,7 @@ func BenchmarkAppend(b *testing.B) {
 	for _, conf := range testCaseConfs {
 		b.ResetTimer()
 		b.Run(fmt.Sprintf("column-%d", conf.batchSize), func(b *testing.B) {
-			for range b.N {
+			for i := 0; i < b.N; i++ {
 				chk.Reset()
 				chk.Append(rowChk, 0, conf.batchSize)
 			}

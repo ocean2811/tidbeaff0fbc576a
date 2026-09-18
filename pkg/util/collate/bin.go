@@ -17,11 +17,9 @@ package collate
 import (
 	"strings"
 
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/stringutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/stringutil"
 )
 
-// binCollator match pattern in bytes
 type binCollator struct {
 }
 
@@ -35,38 +33,14 @@ func (*binCollator) Key(str string) []byte {
 	return []byte(str)
 }
 
-// ImmutableKey implement Collator interface.
-func (*binCollator) ImmutableKey(str string) []byte {
-	return hack.Slice(str)
-}
-
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*binCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
 }
 
-// MaxKeyLen implements Collator interface.
-func (*binCollator) MaxKeyLen(s string) int {
-	return len(s)
-}
-
 // Pattern implements Collator interface.
 func (*binCollator) Pattern() WildcardPattern {
 	return &binPattern{}
-}
-
-// Clone implements Collator interface.
-func (*binCollator) Clone() Collator {
-	return new(binCollator)
-}
-
-type derivedBinCollator struct {
-	binCollator
-}
-
-// Pattern implements Collator interface.
-func (*derivedBinCollator) Pattern() WildcardPattern {
-	return &derivedBinPattern{}
 }
 
 type binPaddingCollator struct {
@@ -80,58 +54,28 @@ func (*binPaddingCollator) Key(str string) []byte {
 	return []byte(truncateTailingSpace(str))
 }
 
-// ImmutableKey implement Collator interface.
-func (*binPaddingCollator) ImmutableKey(str string) []byte {
-	return hack.Slice(truncateTailingSpace(str))
-}
-
 // KeyWithoutTrimRightSpace implement Collator interface.
 func (*binPaddingCollator) KeyWithoutTrimRightSpace(str string) []byte {
 	return []byte(str)
 }
 
-// MaxKeyLen implements Collator interface.
-func (*binPaddingCollator) MaxKeyLen(s string) int {
-	return len(s)
-}
-
 // Pattern implements Collator interface.
 // Notice that trailing spaces are significant.
 func (*binPaddingCollator) Pattern() WildcardPattern {
-	return &derivedBinPattern{}
+	return &binPattern{}
 }
 
-// Clone implements Collator interface.
-func (*binPaddingCollator) Clone() Collator {
-	return new(binPaddingCollator)
-}
-
-type derivedBinPattern struct {
+type binPattern struct {
 	patChars []rune
 	patTypes []byte
 }
 
 // Compile implements WildcardPattern interface.
-func (p *derivedBinPattern) Compile(patternStr string, escape byte) {
+func (p *binPattern) Compile(patternStr string, escape byte) {
 	p.patChars, p.patTypes = stringutil.CompilePattern(patternStr, escape)
 }
 
 // DoMatch implements WildcardPattern interface.
-func (p *derivedBinPattern) DoMatch(str string) bool {
-	return stringutil.DoMatch(str, p.patChars, p.patTypes)
-}
-
-type binPattern struct {
-	patChars []byte
-	patTypes []byte
-}
-
-// Compile implements WildcardPattern interface.
-func (p *binPattern) Compile(patternStr string, escape byte) {
-	p.patChars, p.patTypes = stringutil.CompilePatternBinary(patternStr, escape)
-}
-
-// DoMatch implements WildcardPattern interface.
 func (p *binPattern) DoMatch(str string) bool {
-	return stringutil.DoMatchBinary(str, p.patChars, p.patTypes)
+	return stringutil.DoMatch(str, p.patChars, p.patTypes)
 }

@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/version"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
 	"go.uber.org/zap"
 )
 
@@ -17,14 +17,14 @@ import (
 type rowIter struct {
 	rows    *sql.Rows
 	hasNext bool
-	args    []any
+	args    []interface{}
 }
 
 func newRowIter(rows *sql.Rows, argLen int) *rowIter {
 	r := &rowIter{
 		rows:    rows,
 		hasNext: false,
-		args:    make([]any, argLen),
+		args:    make([]interface{}, argLen),
 	}
 	r.hasNext = r.rows.Next()
 	return r
@@ -59,7 +59,7 @@ type multiQueriesChunkIter struct {
 	hasNext bool
 	id      int
 	queries []string
-	args    []any
+	args    []interface{}
 	err     error
 }
 
@@ -69,7 +69,7 @@ func newMultiQueryChunkIter(tctx *tcontext.Context, conn *sql.Conn, queries []st
 		conn:    conn,
 		queries: queries,
 		id:      0,
-		args:    make([]any, argLen),
+		args:    make([]interface{}, argLen),
 	}
 	r.nextRows()
 	return r
@@ -258,8 +258,8 @@ type tableMeta struct {
 	database         string
 	table            string
 	colTypes         []*sql.ColumnType
-	sourceColTypes   []*sql.ColumnType
 	selectedField    string
+	selectedLen      int
 	specCmts         []string
 	showCreateTable  string
 	showCreateView   string
@@ -267,74 +267,20 @@ type tableMeta struct {
 	hasImplicitRowID bool
 }
 
-type sourceColumnMeta interface {
-	sourceColumnTypes() []string
-	sourceColumnNames() []string
-}
-
-func tableSourceColumnTypes(meta TableMeta) []string {
-	if sourceMeta, ok := meta.(sourceColumnMeta); ok {
-		return sourceMeta.sourceColumnTypes()
-	}
-	return meta.ColumnTypes()
-}
-
-func tableSourceColumnNames(meta TableMeta) []string {
-	if sourceMeta, ok := meta.(sourceColumnMeta); ok {
-		return sourceMeta.sourceColumnNames()
-	}
-	return meta.ColumnNames()
-}
-
-func (tm *tableMeta) ColumnInfos() []*ColumnInfo {
-	columnInfos := make([]*ColumnInfo, 0, len(tm.colTypes))
-	for _, ct := range tm.colTypes {
-		nullable, _ := ct.Nullable()
-		precision, scale, ok := ct.DecimalSize()
-		if !ok {
-			precision, scale = 0, 0
-		}
-		columnInfos = append(columnInfos, &ColumnInfo{
-			Name:             ct.Name(),
-			DatabaseTypeName: ct.DatabaseTypeName(),
-			Nullable:         nullable,
-			Precision:        precision,
-			Scale:            scale,
-		})
-	}
-	return columnInfos
-}
-
 func (tm *tableMeta) ColumnTypes() []string {
-	return columnTypes(tm.colTypes)
+	colTypes := make([]string, len(tm.colTypes))
+	for i, ct := range tm.colTypes {
+		colTypes[i] = ct.DatabaseTypeName()
+	}
+	return colTypes
 }
 
 func (tm *tableMeta) ColumnNames() []string {
-	return columnNames(tm.colTypes)
-}
-
-func (tm *tableMeta) sourceColumnTypes() []string {
-	return columnTypes(tm.sourceColTypes)
-}
-
-func (tm *tableMeta) sourceColumnNames() []string {
-	return columnNames(tm.sourceColTypes)
-}
-
-func columnTypes(colTypes []*sql.ColumnType) []string {
-	types := make([]string, len(colTypes))
-	for i, ct := range colTypes {
-		types[i] = ct.DatabaseTypeName()
+	colNames := make([]string, len(tm.colTypes))
+	for i, ct := range tm.colTypes {
+		colNames[i] = ct.Name()
 	}
-	return types
-}
-
-func columnNames(colTypes []*sql.ColumnType) []string {
-	names := make([]string, len(colTypes))
-	for i, ct := range colTypes {
-		names[i] = ct.Name()
-	}
-	return names
+	return colNames
 }
 
 func (tm *tableMeta) DatabaseName() string {
@@ -354,7 +300,7 @@ func (tm *tableMeta) SelectedField() string {
 }
 
 func (tm *tableMeta) SelectedLen() int {
-	return len(tm.colTypes)
+	return tm.selectedLen
 }
 
 func (tm *tableMeta) SpecialComments() StringIter {

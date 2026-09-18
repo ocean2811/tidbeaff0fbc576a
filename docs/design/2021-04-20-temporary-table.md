@@ -1,8 +1,8 @@
 # Temporary Table Design
 
 - Authors: [Kangli Mao](http://github.com/tiancaiamao), [Ming Zhang](http://github.com/djshow832)
-- Discussion PR: https://github.com/pingcap/tidb/pull/24168
-- Tracking Issue: https://github.com/pingcap/tidb/issues/24169
+- Discussion PR: https://github.com/ocean2811/tidbeaff0fbc576a/pull/24168
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/24169
 
 # Introduction
 

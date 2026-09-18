@@ -26,22 +26,19 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	derr "github.com/pingcap/tidb/pkg/store/driver/error"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/redact"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	derr "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/driver/error"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/tables"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	tikverr "github.com/tikv/client-go/v2/error"
 	"go.uber.org/zap"
 )
 
-// genKeyExistsError is the fallback path when can't extract key columns for
-// kv.GenKeyExistsErr.
 func genKeyExistsError(name string, value string, err error) error {
 	if err != nil {
 		logutil.BgLogger().Info("extractKeyExistsErr meets error", zap.Error(err))
@@ -61,10 +58,10 @@ func ExtractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 		if pkInfo := tblInfo.GetPkColInfo(); pkInfo != nil {
 			if mysql.HasUnsignedFlag(pkInfo.GetFlag()) {
 				handleStr := strconv.FormatUint(uint64(handle.IntValue()), 10)
-				return kv.GenKeyExistsErr([]string{handleStr}, name)
+				return genKeyExistsError(name, handleStr, nil)
 			}
 		}
-		return kv.GenKeyExistsErr([]string{handle.String()}, name)
+		return genKeyExistsError(name, handle.String(), nil)
 	}
 
 	if len(value) == 0 {
@@ -106,11 +103,11 @@ func ExtractKeyExistsErrFromHandle(key kv.Key, value []byte, tblInfo *model.Tabl
 			str = str[:col.Length]
 		}
 		if types.IsBinaryStr(&tblInfo.Columns[col.Offset].FieldType) || types.IsTypeBit(&tblInfo.Columns[col.Offset].FieldType) {
-			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
+			str = util.FmtNonASCIIPrintableCharToHex(str)
 		}
 		valueStr = append(valueStr, str)
 	}
-	return kv.GenKeyExistsErr(valueStr, name)
+	return genKeyExistsError(name, strings.Join(valueStr, "-"), nil)
 }
 
 // ExtractKeyExistsErrFromIndex returns a ErrKeyExists error from a index key.
@@ -146,7 +143,7 @@ func ExtractKeyExistsErrFromIndex(key kv.Key, value []byte, tblInfo *model.Table
 			return genKeyExistsError(name, key.String(), err)
 		}
 		if types.IsBinaryStr(colInfo[i].Ft) || types.IsTypeBit(colInfo[i].Ft) {
-			str = util.FmtNonASCIIPrintableCharToHex(str, len(str), true)
+			str = util.FmtNonASCIIPrintableCharToHex(str)
 		}
 		valueStr = append(valueStr, str)
 	}
@@ -157,23 +154,8 @@ func extractKeyErr(err error) error {
 	if err == nil {
 		return nil
 	}
-	if e, ok := errors.Cause(err).(*tikverr.ErrSharedLockLost); ok {
-		return kv.ErrSharedLockLost.GenWithStackByArgs(e.GetStartTs(), redact.Key(e.GetKey()))
-	}
 	if e, ok := errors.Cause(err).(*tikverr.ErrWriteConflict); ok {
 		return newWriteConflictError(e.WriteConflict)
-	}
-	// Concurrent shared-lock upgraders keep their shared locks while waiting, so none can acquire the
-	// exclusive lock until one transaction is aborted. Return a non-retryable deadlock so TiDB aborts
-	// this transaction and releases its shared lock, allowing the already-waiting upgrader to proceed.
-	if e, ok := errors.Cause(err).(*tikverr.ErrLockUpgradeConflict); ok {
-		return errors.WithStack(&tikverr.ErrDeadlock{
-			Deadlock: &kvrpcpb.Deadlock{
-				LockTs:  e.OwnerStartTs,
-				LockKey: e.Key,
-			},
-			IsRetryable: false,
-		})
 	}
 	if e, ok := errors.Cause(err).(*tikverr.ErrRetryable); ok {
 		notFoundDetail := prettyLockNotFoundKey(e.Retryable)

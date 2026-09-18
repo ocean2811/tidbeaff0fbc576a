@@ -23,8 +23,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"go.uber.org/atomic"
 	"go.uber.org/zap"
 )
@@ -198,26 +198,6 @@ func Zone(loc *time.Location) (string, int64) {
 	return name, int64(offset)
 }
 
-// ZoneName return the zone name of the location. If the name is empty, it will
-// return the offset in format like "+08:00" or "-06:00".
-// Note: the input loc cannot be a Location constructed by time.FixedZone with
-// any name, otherwise the name will be returned directly, and might be
-// un-parsable by ParseTimeZone
-func ZoneName(loc *time.Location) string {
-	name, offset := Zone(loc)
-	if name != "" {
-		return name
-	}
-	sign := '+'
-	if offset < 0 {
-		sign = '-'
-		offset = -offset
-	}
-	hours := offset / int64(time.Hour/time.Second)
-	minutes := offset % int64(time.Hour/time.Second) / int64(time.Minute/time.Second)
-	return fmt.Sprintf("%c%02d:%02d", sign, hours, minutes)
-}
-
 // ConstructTimeZone constructs timezone by name first. When the timezone name
 // is set, the daylight saving problem must be considered. Otherwise the
 // timezone offset in seconds east of UTC is used to constructed the timezone.
@@ -257,7 +237,7 @@ func ParseTimeZone(s string) (*time.Location, error) {
 	// The value can be given as a string indicating an offset from UTC, such as '+10:00' or '-6:00'.
 	// The time zone's value should in [-12:59,+14:00].
 	if strings.HasPrefix(s, "+") || strings.HasPrefix(s, "-") {
-		d, _, err := types.ParseDuration(types.DefaultStmtNoWarningContext, s[1:], 0)
+		d, _, err := types.ParseDuration(nil, s[1:], 0)
 		if err == nil {
 			if s[0] == '-' {
 				if d.Duration > 12*time.Hour+59*time.Minute {

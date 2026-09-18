@@ -20,10 +20,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/tikv/client-go/v2/oracle"
 	"go.uber.org/zap"
@@ -174,12 +174,8 @@ type TxnInfo struct {
 	// How many entries are in MemDB
 	EntriesCount uint64
 
-	// The following field will be filled in `session` instead of `LazyTxn`
-	ProcessInfo *ProcessInfo
-}
+	// The following fields will be filled in `session` instead of `LazyTxn`
 
-// ProcessInfo is part of fields of txnInfo, which will be filled in `session` instead of `LazyTxn`
-type ProcessInfo struct {
 	// Which session this transaction belongs to
 	ConnectionID uint64
 	// The user who open this session
@@ -223,25 +219,13 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		return types.NewDatum(info.EntriesCount)
 	},
 	SessionIDStr: func(info *TxnInfo) types.Datum {
-		var connectionID uint64
-		if info.ProcessInfo != nil {
-			connectionID = info.ProcessInfo.ConnectionID
-		}
-		return types.NewDatum(connectionID)
+		return types.NewDatum(info.ConnectionID)
 	},
 	UserStr: func(info *TxnInfo) types.Datum {
-		var userName string
-		if info.ProcessInfo != nil {
-			userName = info.ProcessInfo.Username
-		}
-		return types.NewDatum(userName)
+		return types.NewDatum(info.Username)
 	},
 	DBStr: func(info *TxnInfo) types.Datum {
-		var currentDB string
-		if info.ProcessInfo != nil {
-			currentDB = info.ProcessInfo.CurrentDB
-		}
-		return types.NewDatum(currentDB)
+		return types.NewDatum(info.CurrentDB)
 	},
 	AllSQLDigestsStr: func(info *TxnInfo) types.Datum {
 		allSQLDigests := info.AllSQLDigests
@@ -257,10 +241,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 		return types.NewDatum(string(res))
 	},
 	RelatedTableIDsStr: func(info *TxnInfo) types.Datum {
-		var relatedTableIDs map[int64]struct{}
-		if info.ProcessInfo != nil {
-			relatedTableIDs = info.ProcessInfo.RelatedTableIDs
-		}
+		relatedTableIDs := info.RelatedTableIDs
 		str := strings.Builder{}
 		first := true
 		for tblID := range relatedTableIDs {
@@ -269,7 +250,7 @@ var columnValueGetterMap = map[string]func(*TxnInfo) types.Datum{
 			} else {
 				first = false
 			}
-			fmt.Fprintf(&str, "%d", tblID)
+			str.WriteString(fmt.Sprintf("%d", tblID))
 		}
 		return types.NewDatum(str.String())
 	},

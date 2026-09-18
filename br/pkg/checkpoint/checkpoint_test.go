@@ -17,30 +17,24 @@ package checkpoint_test
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
-	"slices"
 	"testing"
 	"time"
 
-	"github.com/pingcap/failpoint"
 	backuppb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/encryptionpb"
-	"github.com/pingcap/tidb/br/pkg/checkpoint"
-	"github.com/pingcap/tidb/br/pkg/gluetidb"
-	"github.com/pingcap/tidb/br/pkg/pdutil"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/checkpoint"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/pdutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/oracle"
 )
 
-func TestCheckpointMetaForBackup(t *testing.T) {
+func TestCheckpointMeta(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	s, err := objstore.NewLocalStorage(base)
+	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
 
 	checkpointMeta := &checkpoint.CheckpointMetadataForBackup{
@@ -55,125 +49,69 @@ func TestCheckpointMetaForBackup(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, checkpointMeta.ConfigHash, checkpointMeta2.ConfigHash)
 	require.Equal(t, checkpointMeta.BackupTS, checkpointMeta2.BackupTS)
-}
 
-func TestCheckpointMetaForRestoreOnStorage(t *testing.T) {
-	base := t.TempDir()
-	s, err := objstore.NewLocalStorage(base)
-	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
-	defer snapshotMetaManager.Close()
-	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, 1, "log", 1)
-	defer logMetaManager.Close()
-	testCheckpointMetaForRestore(t, snapshotMetaManager, logMetaManager)
-}
-
-func TestCheckpointMetaForRestoreOnTable(t *testing.T) {
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	g := gluetidb.New()
-	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName, 1)
-	require.NoError(t, err)
-	defer snapshotMetaManager.Close()
-	logMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, 1)
-	require.NoError(t, err)
-	defer logMetaManager.Close()
-	testCheckpointMetaForRestore(t, snapshotMetaManager, logMetaManager)
-}
-
-func testCheckpointMetaForRestore(
-	t *testing.T,
-	snapshotMetaManager checkpoint.SnapshotMetaManagerT,
-	logMetaManager checkpoint.LogMetaManagerT,
-) {
-	ctx := context.Background()
-
-	checkpointMetaForSnapshotRestore := &checkpoint.CheckpointMetadataForSnapshotRestore{
-		UpstreamClusterID: 123,
-		RestoredTS:        321,
+	taskName := "test123"
+	checkpointMetaForRestore := &checkpoint.CheckpointMetadataForRestore{
 		SchedulersConfig: &pdutil.ClusterConfig{
 			Schedulers: []string{"1", "2"},
-			ScheduleCfg: map[string]any{
+			ScheduleCfg: map[string]interface{}{
 				"1": "2",
 				"2": "1",
 			},
 		},
+		GcRatio: "123",
 	}
-	err := snapshotMetaManager.SaveCheckpointMetadata(ctx, checkpointMetaForSnapshotRestore)
+	err = checkpoint.SaveCheckpointMetadataForRestore(ctx, s, checkpointMetaForRestore, taskName)
 	require.NoError(t, err)
-	checkpointMetaForSnapshotRestore2, err := snapshotMetaManager.LoadCheckpointMetadata(ctx)
-	require.NoError(t, err)
-	require.Equal(t, checkpointMetaForSnapshotRestore.SchedulersConfig, checkpointMetaForSnapshotRestore2.SchedulersConfig)
-	require.Equal(t, checkpointMetaForSnapshotRestore.UpstreamClusterID, checkpointMetaForSnapshotRestore2.UpstreamClusterID)
-	require.Equal(t, checkpointMetaForSnapshotRestore.RestoredTS, checkpointMetaForSnapshotRestore2.RestoredTS)
 
-	checkpointMetaForLogRestore := &checkpoint.CheckpointMetadataForLogRestore{
-		UpstreamClusterID:        123,
-		RestoredTS:               222,
-		StartTS:                  111,
-		RewriteTS:                333,
-		GcRatio:                  "1.0",
-		RocksDBMaxBackgroundJobs: "8",
-		TiFlashItems:             map[int64]model.TiFlashReplicaInfo{1: {Count: 1}},
-	}
-
-	err = logMetaManager.SaveCheckpointMetadata(ctx, checkpointMetaForLogRestore)
+	checkpointMetaForRestore2, err := checkpoint.LoadCheckpointMetadataForRestore(ctx, s, taskName)
 	require.NoError(t, err)
-	checkpointMetaForLogRestore2, err := logMetaManager.LoadCheckpointMetadata(ctx)
-	require.NoError(t, err)
-	require.Equal(t, checkpointMetaForLogRestore.UpstreamClusterID, checkpointMetaForLogRestore2.UpstreamClusterID)
-	require.Equal(t, checkpointMetaForLogRestore.RestoredTS, checkpointMetaForLogRestore2.RestoredTS)
-	require.Equal(t, checkpointMetaForLogRestore.StartTS, checkpointMetaForLogRestore2.StartTS)
-	require.Equal(t, checkpointMetaForLogRestore.RewriteTS, checkpointMetaForLogRestore2.RewriteTS)
-	require.Equal(t, checkpointMetaForLogRestore.GcRatio, checkpointMetaForLogRestore2.GcRatio)
-	require.Equal(t, checkpointMetaForLogRestore.RocksDBMaxBackgroundJobs, checkpointMetaForLogRestore2.RocksDBMaxBackgroundJobs)
-	require.Equal(t, checkpointMetaForLogRestore.TiFlashItems, checkpointMetaForLogRestore2.TiFlashItems)
+	require.Equal(t, checkpointMetaForRestore.SchedulersConfig, checkpointMetaForRestore2.SchedulersConfig)
+	require.Equal(t, checkpointMetaForRestore.GcRatio, checkpointMetaForRestore2.GcRatio)
 
-	exists, err := logMetaManager.ExistsCheckpointProgress(ctx)
+	exists, err := checkpoint.ExistsCheckpointTaskInfo(ctx, s, 123)
 	require.NoError(t, err)
 	require.False(t, exists)
-	err = logMetaManager.SaveCheckpointProgress(ctx, &checkpoint.CheckpointProgress{
-		Progress: checkpoint.InLogRestoreAndIdMapPersisted,
-	})
+	err = checkpoint.SaveCheckpointTaskInfoForLogRestore(ctx, s, &checkpoint.CheckpointTaskInfoForLogRestore{
+		Progress:     checkpoint.InLogRestoreAndIdMapPersist,
+		StartTS:      1,
+		RestoreTS:    2,
+		RewriteTS:    3,
+		TiFlashItems: map[int64]model.TiFlashReplicaInfo{1: {Count: 1}},
+	}, 123)
 	require.NoError(t, err)
-	progress, err := logMetaManager.LoadCheckpointProgress(ctx)
+	taskInfo, err := checkpoint.LoadCheckpointTaskInfoForLogRestore(ctx, s, 123)
 	require.NoError(t, err)
-	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersisted, progress.Progress)
+	require.Equal(t, taskInfo.Progress, checkpoint.InLogRestoreAndIdMapPersist)
+	require.Equal(t, taskInfo.StartTS, uint64(1))
+	require.Equal(t, taskInfo.RestoreTS, uint64(2))
+	require.Equal(t, taskInfo.RewriteTS, uint64(3))
+	require.Equal(t, taskInfo.TiFlashItems[1].Count, uint64(1))
 
-	taskInfo, err := checkpoint.GetCheckpointTaskInfo(ctx, snapshotMetaManager, logMetaManager)
-	require.NoError(t, err)
-	require.Equal(t, uint64(123), taskInfo.Metadata.UpstreamClusterID)
-	require.Equal(t, uint64(222), taskInfo.Metadata.RestoredTS)
-	require.Equal(t, uint64(111), taskInfo.Metadata.StartTS)
-	require.Equal(t, uint64(333), taskInfo.Metadata.RewriteTS)
-	require.Equal(t, "1.0", taskInfo.Metadata.GcRatio)
-	require.Equal(t, "8", taskInfo.Metadata.RocksDBMaxBackgroundJobs)
-	require.Equal(t, true, taskInfo.HasSnapshotMetadata)
-	require.Equal(t, checkpoint.InLogRestoreAndIdMapPersisted, taskInfo.Progress)
-
-	exists, err = logMetaManager.ExistsCheckpointIngestIndexRepairSQLs(ctx)
+	exists, err = checkpoint.ExistsCheckpointIngestIndexRepairSQLs(ctx, s, "123")
 	require.NoError(t, err)
 	require.False(t, exists)
-	err = logMetaManager.SaveCheckpointIngestIndexRepairSQLs(ctx, &checkpoint.CheckpointIngestIndexRepairSQLs{
+	err = checkpoint.SaveCheckpointIngestIndexRepairSQLs(ctx, s, &checkpoint.CheckpointIngestIndexRepairSQLs{
 		SQLs: []checkpoint.CheckpointIngestIndexRepairSQL{
 			{
 				IndexID:    1,
-				SchemaName: ast.NewCIStr("2"),
-				TableName:  ast.NewCIStr("3"),
+				SchemaName: model.NewCIStr("2"),
+				TableName:  model.NewCIStr("3"),
 				IndexName:  "4",
 				AddSQL:     "5",
-				AddArgs:    []any{"6", "7", "8"},
+				AddArgs:    []interface{}{"6", "7", "8"},
 			},
 		},
-	})
+	}, "123")
 	require.NoError(t, err)
-	repairSQLs, err := logMetaManager.LoadCheckpointIngestIndexRepairSQLs(ctx)
+	repairSQLs, err := checkpoint.LoadCheckpointIngestIndexRepairSQLs(ctx, s, "123")
 	require.NoError(t, err)
 	require.Equal(t, repairSQLs.SQLs[0].IndexID, int64(1))
-	require.Equal(t, repairSQLs.SQLs[0].SchemaName, ast.NewCIStr("2"))
-	require.Equal(t, repairSQLs.SQLs[0].TableName, ast.NewCIStr("3"))
+	require.Equal(t, repairSQLs.SQLs[0].SchemaName, model.NewCIStr("2"))
+	require.Equal(t, repairSQLs.SQLs[0].TableName, model.NewCIStr("3"))
 	require.Equal(t, repairSQLs.SQLs[0].IndexName, "4")
 	require.Equal(t, repairSQLs.SQLs[0].AddSQL, "5")
-	require.Equal(t, repairSQLs.SQLs[0].AddArgs, []any{"6", "7", "8"})
+	require.Equal(t, repairSQLs.SQLs[0].AddArgs, []interface{}{"6", "7", "8"})
 }
 
 type mockTimer struct {
@@ -191,9 +129,8 @@ func (t *mockTimer) GetTS(ctx context.Context) (int64, int64, error) {
 
 func TestCheckpointBackupRunner(t *testing.T) {
 	ctx := context.Background()
-
 	base := t.TempDir()
-	s, err := objstore.NewLocalStorage(base)
+	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
 	os.MkdirAll(base+checkpoint.CheckpointDataDirForBackup, 0o755)
 	os.MkdirAll(base+checkpoint.CheckpointChecksumDirForBackup, 0o755)
@@ -247,7 +184,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "a", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
 			{Name: d.Name},
 			{Name: d.Name2},
 		})
@@ -260,7 +197,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendForBackup(ctx, checkpointRunner, []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
+		err = checkpoint.AppendForBackup(ctx, checkpointRunner, "+", []byte(d.StartKey), []byte(d.EndKey), []*backuppb.File{
 			{Name: d.Name},
 			{Name: d.Name2},
 		})
@@ -269,7 +206,7 @@ func TestCheckpointBackupRunner(t *testing.T) {
 
 	checkpointRunner.WaitForFinish(ctx, true)
 
-	checker := func(groupKey string, resp checkpoint.BackupValueType) error {
+	checker := func(groupKey string, resp checkpoint.BackupValueType) {
 		require.NotNil(t, resp)
 		d, ok := data[string(resp.StartKey)]
 		if !ok {
@@ -280,7 +217,6 @@ func TestCheckpointBackupRunner(t *testing.T) {
 		require.Equal(t, d.EndKey, string(resp.EndKey))
 		require.Equal(t, d.Name, resp.Files[0].Name)
 		require.Equal(t, d.Name2, resp.Files[1].Name)
-		return nil
 	}
 
 	_, err = checkpoint.WalkCheckpointFileForBackup(ctx, s, cipher, checker)
@@ -302,33 +238,18 @@ func TestCheckpointBackupRunner(t *testing.T) {
 	}
 }
 
-func TestCheckpointRestoreRunnerOnStorage(t *testing.T) {
-	base := t.TempDir()
-	s, err := objstore.NewLocalStorage(base)
-	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
-	defer snapshotMetaManager.Close()
-	testCheckpointRestoreRunner(t, snapshotMetaManager)
-}
-
-func TestCheckpointRestoreRunnerOnTable(t *testing.T) {
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	g := gluetidb.New()
-	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName, 1)
-	require.NoError(t, err)
-	defer snapshotMetaManager.Close()
-	testCheckpointRestoreRunner(t, snapshotMetaManager)
-}
-
-func testCheckpointRestoreRunner(
-	t *testing.T,
-	snapshotMetaManager checkpoint.SnapshotMetaManagerT,
-) {
+func TestCheckpointRestoreRunner(t *testing.T) {
 	ctx := context.Background()
-
-	err := snapshotMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForSnapshotRestore{})
+	base := t.TempDir()
+	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, 5*time.Second, 3*time.Second, snapshotMetaManager)
+	taskName := "test"
+
+	cipher := &backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+		CipherKey:  []byte("01234567890123456789012345678901"),
+	}
+	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, s, cipher, 5*time.Second, taskName)
 	require.NoError(t, err)
 
 	data := map[string]struct {
@@ -358,7 +279,7 @@ func testCheckpointRestoreRunner(
 	}
 
 	for _, d := range data {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(1, d.RangeKey))
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 1, d.RangeKey)
 		require.NoError(t, err)
 	}
 
@@ -368,15 +289,13 @@ func testCheckpointRestoreRunner(
 	checkpointRunner.FlushChecksum(ctx, 4, 4, 4, 4)
 
 	for _, d := range data2 {
-		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(2, d.RangeKey))
+		err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, 2, d.RangeKey)
 		require.NoError(t, err)
 	}
 
 	checkpointRunner.WaitForFinish(ctx, true)
 
-	require.NoError(t, err)
-	respCount := 0
-	checker := func(tableID int64, resp checkpoint.RestoreValueType) error {
+	checker := func(tableID int64, resp checkpoint.RestoreValueType) {
 		require.NotNil(t, resp)
 		d, ok := data[resp.RangeKey]
 		if !ok {
@@ -387,179 +306,32 @@ func testCheckpointRestoreRunner(
 			require.Equal(t, tableID, int64(1))
 		}
 		require.Equal(t, d.RangeKey, resp.RangeKey)
-		respCount += 1
-		return nil
 	}
 
-	_, err = snapshotMetaManager.LoadCheckpointData(ctx, checker)
+	_, err = checkpoint.WalkCheckpointFileForRestore(ctx, s, cipher, taskName, checker)
 	require.NoError(t, err)
-	require.Equal(t, 4, respCount)
 
-	checksum, _, err := snapshotMetaManager.LoadCheckpointChecksum(ctx)
+	checksum, _, err := checkpoint.LoadCheckpointChecksumForRestore(ctx, s, taskName)
 	require.NoError(t, err)
 
 	var i int64
 	for i = 1; i <= 4; i++ {
 		require.Equal(t, checksum[i].Crc64xor, uint64(i))
 	}
-
-	err = snapshotMetaManager.RemoveCheckpointData(ctx)
-	require.NoError(t, err)
-
-	exists, err := snapshotMetaManager.ExistsCheckpointMetadata(ctx)
-	require.NoError(t, err)
-	require.False(t, exists)
 }
 
-func TestCheckpointRunnerRetryOnStorage(t *testing.T) {
-	base := t.TempDir()
-	s, err := objstore.NewLocalStorage(base)
-	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
-	defer snapshotMetaManager.Close()
-	testCheckpointRunnerRetry(t, snapshotMetaManager)
-}
-
-func TestCheckpointRunnerRetryOnTable(t *testing.T) {
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	g := gluetidb.New()
-	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName, 1)
-	require.NoError(t, err)
-	defer snapshotMetaManager.Close()
-	testCheckpointRunnerRetry(t, snapshotMetaManager)
-}
-
-func testCheckpointRunnerRetry(
-	t *testing.T,
-	snapshotMetaManager checkpoint.SnapshotMetaManagerT,
-) {
+func TestCheckpointLogRestoreRunner(t *testing.T) {
 	ctx := context.Background()
-
-	err := snapshotMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForSnapshotRestore{})
-	require.NoError(t, err)
-	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, 100*time.Millisecond, 300*time.Millisecond, snapshotMetaManager)
-	require.NoError(t, err)
-
-	err = failpoint.Enable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes", "return(true)")
-	require.NoError(t, err)
-	defer func() {
-		err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes")
-		require.NoError(t, err)
-	}()
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(1, "123"))
-	require.NoError(t, err)
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(2, "456"))
-	require.NoError(t, err)
-	err = checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1)
-	require.NoError(t, err)
-	err = checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2)
-	time.Sleep(time.Second)
-	err = failpoint.Disable("github.com/pingcap/tidb/br/pkg/checkpoint/failed-after-checkpoint-flushes")
-	require.NoError(t, err)
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(3, "789"))
-	require.NoError(t, err)
-	err = checkpointRunner.FlushChecksum(ctx, 3, 3, 3, 3)
-	require.NoError(t, err)
-	checkpointRunner.WaitForFinish(ctx, true)
-
-	recordSet := make(map[string]int)
-	_, err = snapshotMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) error {
-		recordSet[fmt.Sprintf("%d_%s", tableID, v.RangeKey)] += 1
-		return nil
-	})
-	require.NoError(t, err)
-	require.LessOrEqual(t, 1, recordSet["1_123"])
-	require.LessOrEqual(t, 1, recordSet["2_456"])
-	require.LessOrEqual(t, 1, recordSet["3_789"])
-	items, _, err := snapshotMetaManager.LoadCheckpointChecksum(ctx)
-	require.NoError(t, err)
-	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[1].Crc64xor, items[1].TotalBytes, items[1].TotalKvs), "1_1_1")
-	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[2].Crc64xor, items[2].TotalBytes, items[2].TotalKvs), "2_2_2")
-	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[3].Crc64xor, items[3].TotalBytes, items[3].TotalKvs), "3_3_3")
-}
-
-func TestCheckpointRunnerNoRetryOnStorage(t *testing.T) {
 	base := t.TempDir()
-	s, err := objstore.NewLocalStorage(base)
+	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
-	snapshotMetaManager := checkpoint.NewSnapshotStorageMetaManager(s, nil, 1, "snapshot", 1)
-	defer snapshotMetaManager.Close()
-	testCheckpointRunnerNoRetry(t, snapshotMetaManager)
-}
+	taskName := "test"
 
-func TestCheckpointRunnerNoRetryOnTable(t *testing.T) {
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	g := gluetidb.New()
-	snapshotMetaManager, err := checkpoint.NewSnapshotTableMetaManager(g, s.Mock.Domain, checkpoint.SnapshotRestoreCheckpointDatabaseName, 1)
-	require.NoError(t, err)
-	defer snapshotMetaManager.Close()
-	testCheckpointRunnerNoRetry(t, snapshotMetaManager)
-}
-
-func testCheckpointRunnerNoRetry(
-	t *testing.T,
-	snapshotMetaManager checkpoint.SnapshotMetaManagerT,
-) {
-	ctx := context.Background()
-
-	err := snapshotMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForSnapshotRestore{})
-	require.NoError(t, err)
-	checkpointRunner, err := checkpoint.StartCheckpointRestoreRunnerForTest(ctx, 100*time.Millisecond, 300*time.Millisecond, snapshotMetaManager)
-	require.NoError(t, err)
-
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(1, "123"))
-	require.NoError(t, err)
-	err = checkpoint.AppendRangesForRestore(ctx, checkpointRunner, checkpoint.NewCheckpointRangeKeyItem(2, "456"))
-	require.NoError(t, err)
-	err = checkpointRunner.FlushChecksum(ctx, 1, 1, 1, 1)
-	require.NoError(t, err)
-	err = checkpointRunner.FlushChecksum(ctx, 2, 2, 2, 2)
-	require.NoError(t, err)
-	time.Sleep(time.Second)
-	checkpointRunner.WaitForFinish(ctx, true)
-
-	require.NoError(t, err)
-	recordSet := make(map[string]int)
-	_, err = snapshotMetaManager.LoadCheckpointData(ctx, func(tableID int64, v checkpoint.RestoreValueType) error {
-		recordSet[fmt.Sprintf("%d_%s", tableID, v.RangeKey)] += 1
-		return nil
-	})
-	require.NoError(t, err)
-	require.Equal(t, 1, recordSet["1_123"])
-	require.Equal(t, 1, recordSet["2_456"])
-	items, _, err := snapshotMetaManager.LoadCheckpointChecksum(ctx)
-	require.NoError(t, err)
-	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[1].Crc64xor, items[1].TotalBytes, items[1].TotalKvs), "1_1_1")
-	require.Equal(t, fmt.Sprintf("%d_%d_%d", items[2].Crc64xor, items[2].TotalBytes, items[2].TotalKvs), "2_2_2")
-}
-
-func TestCheckpointLogRestoreRunnerOnStorage(t *testing.T) {
-	base := t.TempDir()
-	s, err := objstore.NewLocalStorage(base)
-	require.NoError(t, err)
-	logMetaManager := checkpoint.NewLogStorageMetaManager(s, nil, 1, "log", 1)
-	defer logMetaManager.Close()
-	testCheckpointLogRestoreRunner(t, logMetaManager)
-}
-
-func TestCheckpointLogRestoreRunnerOnTable(t *testing.T) {
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	g := gluetidb.New()
-	logMetaManager, err := checkpoint.NewLogTableMetaManager(g, s.Mock.Domain, checkpoint.LogRestoreCheckpointDatabaseName, 1)
-	require.NoError(t, err)
-	defer logMetaManager.Close()
-	testCheckpointLogRestoreRunner(t, logMetaManager)
-}
-
-func testCheckpointLogRestoreRunner(
-	t *testing.T,
-	logMetaManager checkpoint.LogMetaManagerT,
-) {
-	ctx := context.Background()
-
-	err := logMetaManager.SaveCheckpointMetadata(ctx, &checkpoint.CheckpointMetadataForLogRestore{})
-	require.NoError(t, err)
-	checkpointRunner, err := checkpoint.StartCheckpointLogRestoreRunnerForTest(ctx, 5*time.Second, logMetaManager)
+	cipher := &backuppb.CipherInfo{
+		CipherType: encryptionpb.EncryptionMethod_AES256_CTR,
+		CipherKey:  []byte("01234567890123456789012345678901"),
+	}
+	checkpointRunner, err := checkpoint.StartCheckpointLogRestoreRunnerForTest(ctx, s, cipher, 5*time.Second, taskName)
 	require.NoError(t, err)
 
 	data := map[string]map[int][]struct {
@@ -604,9 +376,7 @@ func testCheckpointLogRestoreRunner(
 
 	checkpointRunner.WaitForFinish(ctx, true)
 
-	require.NoError(t, err)
-	respCount := 0
-	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) error {
+	checker := func(metaKey string, resp checkpoint.LogRestoreValueMarshaled) {
 		require.NotNil(t, resp)
 		d, ok := data[metaKey]
 		if !ok {
@@ -620,25 +390,17 @@ func testCheckpointLogRestoreRunner(
 			if !exists {
 				continue
 			}
-			if slices.Contains(foffs, f.foff) {
-				respCount += 1
-				return nil
+			for _, foff := range foffs {
+				if f.foff == foff {
+					return
+				}
 			}
 		}
 		require.FailNow(t, "not found in the original data")
-		return nil
 	}
 
-	_, err = logMetaManager.LoadCheckpointData(ctx, checker)
+	_, err = checkpoint.WalkCheckpointFileForRestore(ctx, s, cipher, taskName, checker)
 	require.NoError(t, err)
-	require.Equal(t, 4, respCount)
-
-	err = logMetaManager.RemoveCheckpointData(ctx)
-	require.NoError(t, err)
-
-	exists, err := logMetaManager.ExistsCheckpointMetadata(ctx)
-	require.NoError(t, err)
-	require.False(t, exists)
 }
 
 func getLockData(p, l int64) ([]byte, error) {
@@ -652,7 +414,7 @@ func getLockData(p, l int64) ([]byte, error) {
 func TestCheckpointRunnerLock(t *testing.T) {
 	ctx := context.Background()
 	base := t.TempDir()
-	s, err := objstore.NewLocalStorage(base)
+	s, err := storage.NewLocalStorage(base)
 	require.NoError(t, err)
 	os.MkdirAll(base+checkpoint.CheckpointDataDirForBackup, 0o755)
 	os.MkdirAll(base+checkpoint.CheckpointChecksumDirForBackup, 0o755)

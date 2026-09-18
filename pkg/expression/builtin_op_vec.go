@@ -18,16 +18,16 @@ import (
 	"fmt"
 	"math"
 
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
 )
 
 func (*builtinTimeIsNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinTimeIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinTimeIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -35,13 +35,13 @@ func (b *builtinTimeIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	}
 	defer b.bufAllocator.put(buf)
 
-	if err := b.args[0].VecEvalTime(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalTime(b.ctx, input, buf); err != nil {
 		return err
 	}
 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		if buf.IsNull(i) {
 			i64s[i] = 1
 		} else {
@@ -55,12 +55,12 @@ func (b *builtinLogicOrSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLogicOrSig) fallbackEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLogicOrSig) fallbackEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	x := result.Int64s()
-	for i := range n {
-		res, isNull, err := b.evalInt(ctx, input.GetRow(i))
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalInt(input.GetRow(i))
 		if err != nil {
 			return err
 		}
@@ -73,9 +73,8 @@ func (b *builtinLogicOrSig) fallbackEvalInt(ctx EvalContext, input *chunk.Chunk,
 	return nil
 }
 
-func (b *builtinLogicOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	beforeArg0Warns := ctx.WarningCount()
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+func (b *builtinLogicOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 
@@ -86,18 +85,21 @@ func (b *builtinLogicOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resu
 	}
 	defer b.bufAllocator.put(buf)
 
-	beforeArg1Warns := ctx.WarningCount()
-	err = b.args[1].VecEvalInt(ctx, input, buf)
-	afterArg1Warns := ctx.WarningCount()
-	if err != nil || afterArg1Warns > beforeArg1Warns {
-		ctx.TruncateWarnings(beforeArg0Warns)
-		return b.fallbackEvalInt(ctx, input, result)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
+	err = b.args[1].VecEvalInt(b.ctx, input, buf)
+	afterWarns := sc.WarningCount()
+	if err != nil || afterWarns > beforeWarns {
+		if afterWarns > beforeWarns {
+			sc.TruncateWarnings(int(beforeWarns))
+		}
+		return b.fallbackEvalInt(input, result)
 	}
 
 	i64s := result.Int64s()
 	arg1s := buf.Int64s()
 
-	for i := range n {
+	for i := 0; i < n; i++ {
 		isNull0 := result.IsNull(i)
 		isNull1 := buf.IsNull(i)
 		// Because buf is used to store the conversion of args[0] in place, it could
@@ -124,8 +126,8 @@ func (b *builtinBitOrSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinBitOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+func (b *builtinBitOrSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 	numRows := input.NumRows()
@@ -134,13 +136,13 @@ func (b *builtinBitOrSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		arg0s[i] |= arg1s[i]
 	}
 	return nil
@@ -150,7 +152,7 @@ func (b *builtinDecimalIsFalseSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDecimalIsFalseSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinDecimalIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
 
 	buf, err := b.bufAllocator.get()
@@ -158,7 +160,7 @@ func (b *builtinDecimalIsFalseSig) vecEvalInt(ctx EvalContext, input *chunk.Chun
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalDecimal(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -166,7 +168,7 @@ func (b *builtinDecimalIsFalseSig) vecEvalInt(ctx EvalContext, input *chunk.Chun
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
 
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		isNull := buf.IsNull(i)
 		if b.keepNull && isNull {
 			result.SetNull(i, true)
@@ -185,13 +187,13 @@ func (b *builtinIntIsFalseSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIntIsFalseSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIntIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 	i64s := result.Int64s()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		isNull := result.IsNull(i)
 		if b.keepNull && isNull {
 			continue
@@ -212,15 +214,15 @@ func (b *builtinUnaryMinusRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUnaryMinusRealSig) vecEvalReal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUnaryMinusRealSig) vecEvalReal(input *chunk.Chunk, result *chunk.Column) error {
 	var err error
-	if err = b.args[0].VecEvalReal(ctx, input, result); err != nil {
+	if err = b.args[0].VecEvalReal(b.ctx, input, result); err != nil {
 		return err
 	}
 
 	n := input.NumRows()
 	f64s := result.Float64s()
-	for i := range n {
+	for i := 0; i < n; i++ {
 		f64s[i] = -f64s[i]
 	}
 	return nil
@@ -230,13 +232,13 @@ func (b *builtinBitNegSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinBitNegSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+func (b *builtinBitNegSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 	n := input.NumRows()
 	args := result.Int64s()
-	for i := range n {
+	for i := 0; i < n; i++ {
 		args[i] = ^args[i]
 	}
 	return nil
@@ -246,14 +248,14 @@ func (b *builtinUnaryMinusDecimalSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUnaryMinusDecimalSig) vecEvalDecimal(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalDecimal(ctx, input, result); err != nil {
+func (b *builtinUnaryMinusDecimalSig) vecEvalDecimal(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, result); err != nil {
 		return err
 	}
 
 	n := input.NumRows()
 	decs := result.Decimals()
-	for i := range n {
+	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -266,13 +268,13 @@ func (b *builtinIntIsNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIntIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+func (b *builtinIntIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 
 	i64s := result.Int64s()
-	for i := range i64s {
+	for i := 0; i < len(i64s); i++ {
 		if result.IsNull(i) {
 			i64s[i] = 1
 			result.SetNull(i, false)
@@ -287,7 +289,7 @@ func (b *builtinRealIsNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRealIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRealIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -295,13 +297,13 @@ func (b *builtinRealIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	}
 	defer b.bufAllocator.put(buf)
 
-	if err := b.args[0].VecEvalReal(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
 		return err
 	}
 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		if buf.IsNull(i) {
 			i64s[i] = 1
 		} else {
@@ -315,14 +317,14 @@ func (b *builtinUnaryNotRealSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUnaryNotRealSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUnaryNotRealSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalReal(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
 		return err
 	}
 	f64s := buf.Float64s()
@@ -330,7 +332,7 @@ func (b *builtinUnaryNotRealSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk,
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := range n {
+	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -347,12 +349,12 @@ func (b *builtinLogicAndSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLogicAndSig) fallbackEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLogicAndSig) fallbackEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	result.ResizeInt64(n, false)
 	x := result.Int64s()
-	for i := range n {
-		res, isNull, err := b.evalInt(ctx, input.GetRow(i))
+	for i := 0; i < n; i++ {
+		res, isNull, err := b.evalInt(input.GetRow(i))
 		if err != nil {
 			return err
 		}
@@ -365,10 +367,10 @@ func (b *builtinLogicAndSig) fallbackEvalInt(ctx EvalContext, input *chunk.Chunk
 	return nil
 }
 
-func (b *builtinLogicAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinLogicAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	beforeArg0Warns := ctx.WarningCount()
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 
@@ -378,18 +380,21 @@ func (b *builtinLogicAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	}
 	defer b.bufAllocator.put(buf1)
 
-	beforeArg1Warns := ctx.WarningCount()
-	err = b.args[1].VecEvalInt(ctx, input, buf1)
-	afterArg1Warns := ctx.WarningCount()
-	if err != nil || afterArg1Warns > beforeArg1Warns {
-		ctx.TruncateWarnings(beforeArg0Warns)
-		return b.fallbackEvalInt(ctx, input, result)
+	sc := b.ctx.GetSessionVars().StmtCtx
+	beforeWarns := sc.WarningCount()
+	err = b.args[1].VecEvalInt(b.ctx, input, buf1)
+	afterWarns := sc.WarningCount()
+	if err != nil || afterWarns > beforeWarns {
+		if afterWarns > beforeWarns {
+			sc.TruncateWarnings(int(beforeWarns))
+		}
+		return b.fallbackEvalInt(input, result)
 	}
 
 	i64s := result.Int64s()
 	arg1 := buf1.Int64s()
 
-	for i := range n {
+	for i := 0; i < n; i++ {
 		isNull0 := result.IsNull(i)
 		if !isNull0 && i64s[i] == 0 {
 			result.SetNull(i, false)
@@ -418,8 +423,8 @@ func (b *builtinBitXorSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinBitXorSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+func (b *builtinBitXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 	numRows := input.NumRows()
@@ -428,13 +433,13 @@ func (b *builtinBitXorSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		arg0s[i] ^= arg1s[i]
 	}
 	return nil
@@ -444,8 +449,8 @@ func (b *builtinLogicXorSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLogicXorSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+func (b *builtinLogicXorSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 
@@ -455,7 +460,7 @@ func (b *builtinLogicXorSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -464,7 +469,7 @@ func (b *builtinLogicXorSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, res
 	// Returns NULL if either operand is NULL.
 	// See https://dev.mysql.com/doc/refman/5.7/en/logical-operators.html#operator_xor
 	result.MergeNulls(buf)
-	for i := range n {
+	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -483,8 +488,8 @@ func (b *builtinBitAndSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinBitAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+func (b *builtinBitAndSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 	numRows := input.NumRows()
@@ -493,13 +498,13 @@ func (b *builtinBitAndSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, resul
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		arg0s[i] &= arg1s[i]
 	}
 	return nil
@@ -509,21 +514,21 @@ func (b *builtinRealIsFalseSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRealIsFalseSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRealIsFalseSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalReal(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
 		return err
 	}
 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
 	bufF64s := buf.Float64s()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		isNull := buf.IsNull(i)
 		if b.keepNull && isNull {
 			result.SetNull(i, true)
@@ -542,14 +547,14 @@ func (b *builtinUnaryMinusIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUnaryMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+func (b *builtinUnaryMinusIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 	n := input.NumRows()
 	args := result.Int64s()
-	if mysql.HasUnsignedFlag(b.args[0].GetType(ctx).GetFlag()) {
-		for i := range n {
+	if mysql.HasUnsignedFlag(b.args[0].GetType().GetFlag()) {
+		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
 				continue
 			}
@@ -559,7 +564,7 @@ func (b *builtinUnaryMinusIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 			args[i] = -args[i]
 		}
 	} else {
-		for i := range n {
+		for i := 0; i < n; i++ {
 			if result.IsNull(i) {
 				continue
 			}
@@ -576,14 +581,14 @@ func (b *builtinUnaryNotDecimalSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUnaryNotDecimalSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUnaryNotDecimalSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalDecimal(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
 		return err
 	}
 	decs := buf.Decimals()
@@ -591,7 +596,7 @@ func (b *builtinUnaryNotDecimalSig) vecEvalInt(ctx EvalContext, input *chunk.Chu
 	result.ResizeInt64(n, false)
 	result.MergeNulls(buf)
 	i64s := result.Int64s()
-	for i := range n {
+	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -608,14 +613,14 @@ func (b *builtinUnaryNotIntSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinUnaryNotIntSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinUnaryNotIntSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	n := input.NumRows()
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 
 	i64s := result.Int64s()
-	for i := range n {
+	for i := 0; i < n; i++ {
 		if result.IsNull(i) {
 			continue
 		}
@@ -632,7 +637,7 @@ func (b *builtinDecimalIsNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDecimalIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinDecimalIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -640,13 +645,13 @@ func (b *builtinDecimalIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 	}
 	defer b.bufAllocator.put(buf)
 
-	if err := b.args[0].VecEvalDecimal(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
 		return err
 	}
 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		if buf.IsNull(i) {
 			i64s[i] = 1
 		} else {
@@ -660,8 +665,8 @@ func (b *builtinLeftShiftSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinLeftShiftSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+func (b *builtinLeftShiftSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 	numRows := input.NumRows()
@@ -670,13 +675,13 @@ func (b *builtinLeftShiftSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, re
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		arg0s[i] = int64(uint64(arg0s[i]) << uint64(arg1s[i]))
 	}
 	return nil
@@ -686,8 +691,8 @@ func (b *builtinRightShiftSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRightShiftSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+func (b *builtinRightShiftSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 	numRows := input.NumRows()
@@ -696,13 +701,13 @@ func (b *builtinRightShiftSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[1].VecEvalInt(ctx, input, buf); err != nil {
+	if err := b.args[1].VecEvalInt(b.ctx, input, buf); err != nil {
 		return err
 	}
 	arg0s := result.Int64s()
 	arg1s := buf.Int64s()
 	result.MergeNulls(buf)
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		arg0s[i] = int64(uint64(arg0s[i]) >> uint64(arg1s[i]))
 	}
 	return nil
@@ -712,7 +717,7 @@ func (b *builtinRealIsTrueSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinRealIsTrueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinRealIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -720,13 +725,13 @@ func (b *builtinRealIsTrueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, r
 	}
 	defer b.bufAllocator.put(buf)
 
-	if err := b.args[0].VecEvalReal(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalReal(b.ctx, input, buf); err != nil {
 		return err
 	}
 	result.ResizeInt64(numRows, false)
 	f64s := buf.Float64s()
 	i64s := result.Int64s()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		isNull := buf.IsNull(i)
 		if b.keepNull && isNull {
 			result.SetNull(i, true)
@@ -745,14 +750,14 @@ func (b *builtinDecimalIsTrueSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDecimalIsTrueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinDecimalIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
 		return err
 	}
 	defer b.bufAllocator.put(buf)
-	if err := b.args[0].VecEvalDecimal(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalDecimal(b.ctx, input, buf); err != nil {
 		return err
 	}
 
@@ -760,7 +765,7 @@ func (b *builtinDecimalIsTrueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
 
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		isNull := buf.IsNull(i)
 		if b.keepNull && isNull {
 			result.SetNull(i, true)
@@ -779,13 +784,13 @@ func (b *builtinIntIsTrueSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinIntIsTrueSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinIntIsTrueSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
-	if err := b.args[0].VecEvalInt(ctx, input, result); err != nil {
+	if err := b.args[0].VecEvalInt(b.ctx, input, result); err != nil {
 		return err
 	}
 	i64s := result.Int64s()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		isNull := result.IsNull(i)
 		if b.keepNull && isNull {
 			continue
@@ -804,7 +809,7 @@ func (b *builtinDurationIsNullSig) vectorized() bool {
 	return true
 }
 
-func (b *builtinDurationIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chunk, result *chunk.Column) error {
+func (b *builtinDurationIsNullSig) vecEvalInt(input *chunk.Chunk, result *chunk.Column) error {
 	numRows := input.NumRows()
 	buf, err := b.bufAllocator.get()
 	if err != nil {
@@ -812,13 +817,13 @@ func (b *builtinDurationIsNullSig) vecEvalInt(ctx EvalContext, input *chunk.Chun
 	}
 	defer b.bufAllocator.put(buf)
 
-	if err := b.args[0].VecEvalDuration(ctx, input, buf); err != nil {
+	if err := b.args[0].VecEvalDuration(b.ctx, input, buf); err != nil {
 		return err
 	}
 
 	result.ResizeInt64(numRows, false)
 	i64s := result.Int64s()
-	for i := range numRows {
+	for i := 0; i < numRows; i++ {
 		if buf.IsNull(i) {
 			i64s[i] = 1
 		} else {

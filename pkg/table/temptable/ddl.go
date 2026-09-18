@@ -19,25 +19,25 @@ import (
 	"context"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/tables"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
 // TemporaryTableDDL is an interface providing ddl operations for temporary table
 type TemporaryTableDDL interface {
 	CreateLocalTemporaryTable(db *model.DBInfo, info *model.TableInfo) error
-	DropLocalTemporaryTable(schema ast.CIStr, tblName ast.CIStr) error
-	TruncateLocalTemporaryTable(schema ast.CIStr, tblName ast.CIStr) error
+	DropLocalTemporaryTable(schema model.CIStr, tblName model.CIStr) error
+	TruncateLocalTemporaryTable(schema model.CIStr, tblName model.CIStr) error
 }
 
 // temporaryTableDDL implements temptable.TemporaryTableDDL
@@ -49,7 +49,7 @@ func (d *temporaryTableDDL) CreateLocalTemporaryTable(db *model.DBInfo, info *mo
 	if _, err := ensureSessionData(d.sctx); err != nil {
 		return err
 	}
-	info.DBID = db.ID
+
 	tbl, err := newTemporaryTableFromTableInfo(d.sctx, info)
 	if err != nil {
 		return err
@@ -58,7 +58,7 @@ func (d *temporaryTableDDL) CreateLocalTemporaryTable(db *model.DBInfo, info *mo
 	return ensureLocalTemporaryTables(d.sctx).AddTable(db, tbl)
 }
 
-func (d *temporaryTableDDL) DropLocalTemporaryTable(schema ast.CIStr, tblName ast.CIStr) error {
+func (d *temporaryTableDDL) DropLocalTemporaryTable(schema model.CIStr, tblName model.CIStr) error {
 	tbl, err := checkLocalTemporaryExistsAndReturn(d.sctx, schema, tblName)
 	if err != nil {
 		return err
@@ -68,7 +68,7 @@ func (d *temporaryTableDDL) DropLocalTemporaryTable(schema ast.CIStr, tblName as
 	return d.clearTemporaryTableRecords(tbl.Meta().ID)
 }
 
-func (d *temporaryTableDDL) TruncateLocalTemporaryTable(schema ast.CIStr, tblName ast.CIStr) error {
+func (d *temporaryTableDDL) TruncateLocalTemporaryTable(schema model.CIStr, tblName model.CIStr) error {
 	oldTbl, err := checkLocalTemporaryExistsAndReturn(d.sctx, schema, tblName)
 	if err != nil {
 		return err
@@ -81,7 +81,7 @@ func (d *temporaryTableDDL) TruncateLocalTemporaryTable(schema ast.CIStr, tblNam
 	}
 
 	localTempTables := getLocalTemporaryTables(d.sctx)
-	db, _ := localTempTables.SchemaByID(oldTblInfo.DBID)
+	db, _ := localTempTables.SchemaByTable(oldTblInfo)
 	localTempTables.RemoveTable(schema, tblName)
 	if err = localTempTables.AddTable(db, newTbl); err != nil {
 		return err
@@ -103,22 +103,18 @@ func (d *temporaryTableDDL) clearTemporaryTableRecords(tblID int64) error {
 		return err
 	}
 
-	keys := make([][]byte, 0, 16)
 	for iter.Valid() {
 		key := iter.Key()
 		if !bytes.HasPrefix(key, tblPrefix) {
 			break
 		}
-		keys = append(keys, key)
 
-		err = iter.Next()
+		err = sessionData.DeleteTableKey(tblID, key)
 		if err != nil {
 			return err
 		}
-	}
 
-	for _, key := range keys {
-		err = sessionData.DeleteTableKey(tblID, key)
+		err = iter.Next()
 		if err != nil {
 			return err
 		}
@@ -127,14 +123,14 @@ func (d *temporaryTableDDL) clearTemporaryTableRecords(tblID int64) error {
 	return nil
 }
 
-func checkLocalTemporaryExistsAndReturn(sctx sessionctx.Context, schema ast.CIStr, tblName ast.CIStr) (table.Table, error) {
+func checkLocalTemporaryExistsAndReturn(sctx sessionctx.Context, schema model.CIStr, tblName model.CIStr) (table.Table, error) {
 	ident := ast.Ident{Schema: schema, Name: tblName}
 	localTemporaryTables := getLocalTemporaryTables(sctx)
 	if localTemporaryTables == nil {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(ident.String())
 	}
 
-	tbl, exist := localTemporaryTables.TableByName(context.Background(), schema, tblName)
+	tbl, exist := localTemporaryTables.TableByName(schema, tblName)
 	if !exist {
 		return nil, infoschema.ErrTableNotExists.GenWithStackByArgs(ident.String())
 	}
@@ -167,7 +163,7 @@ func newTemporaryTableFromTableInfo(sctx sessionctx.Context, tbInfo *model.Table
 	// real table, and then we'll get into trouble.
 	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnCacheTable)
 	err := kv.RunInNewTxn(ctx, sctx.GetStore(), true, func(ctx context.Context, txn kv.Transaction) error {
-		m := meta.NewMutator(txn)
+		m := meta.NewMeta(txn)
 		tblID, err := m.GenGlobalID()
 		if err != nil {
 			return errors.Trace(err)

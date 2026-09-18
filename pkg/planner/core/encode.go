@@ -22,11 +22,9 @@ import (
 	"sync"
 
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/util/plancodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/plancodec"
 )
 
 // EncodeFlatPlan encodes a FlatPhysicalPlan with compression.
@@ -59,33 +57,30 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 	for _, cte := range flat.CTEs {
 		opCount += len(cte)
 	}
-	for _, subQ := range flat.ScalarSubQueries {
-		opCount += len(subQ)
-	}
 	// assume an operator costs around 80 bytes, preallocate space for them
 	buf.Grow(80 * opCount)
 	encodeFlatPlanTree(flat.Main, 0, &buf)
 	for _, cte := range flat.CTEs {
-		fop := cte[0]
-		cteDef := cte[0].Origin.(*physicalop.CTEDefinition)
+		op := cte[0]
+		cteDef := cte[0].Origin.(*CTEDefinition)
 		id := cteDef.CTE.IDForStorage
 		tp := plancodec.TypeCTEDefinition
-		taskTypeInfo := plancodec.EncodeTaskType(fop.IsRoot, fop.StoreType)
-		p := fop.Origin
+		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
+		p := op.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		var estRows float64
-		if fop.IsPhysicalPlan {
-			estRows = fop.Origin.(base.PhysicalPlan).GetEstRowCountForDisplay()
+		if op.IsPhysicalPlan {
+			estRows = op.Origin.(PhysicalPlan).getEstRowCountForDisplay()
 		} else if statsInfo := p.StatsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}
 		plancodec.EncodePlanNode(
-			int(fop.Depth),
-			strconv.Itoa(id)+fop.Label.String(),
+			int(op.Depth),
+			strconv.Itoa(id)+op.Label.String(),
 			tp,
 			estRows,
 			taskTypeInfo,
-			fop.Origin.ExplainInfo(),
+			op.Origin.ExplainInfo(),
 			actRows,
 			analyzeInfo,
 			memoryInfo,
@@ -96,31 +91,28 @@ func EncodeFlatPlan(flat *FlatPhysicalPlan) string {
 			encodeFlatPlanTree(cte[1:], 1, &buf)
 		}
 	}
-	for _, subQ := range flat.ScalarSubQueries {
-		encodeFlatPlanTree(subQ, 0, &buf)
-	}
 	return plancodec.Compress(buf.Bytes())
 }
 
 func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 	for i := 0; i < len(flatTree); {
-		fop := flatTree[i]
-		taskTypeInfo := plancodec.EncodeTaskType(fop.IsRoot, fop.StoreType)
-		p := fop.Origin
+		op := flatTree[i]
+		taskTypeInfo := plancodec.EncodeTaskType(op.IsRoot, op.StoreType)
+		p := op.Origin
 		actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 		var estRows float64
-		if fop.IsPhysicalPlan {
-			estRows = fop.Origin.(base.PhysicalPlan).GetEstRowCountForDisplay()
+		if op.IsPhysicalPlan {
+			estRows = op.Origin.(PhysicalPlan).getEstRowCountForDisplay()
 		} else if statsInfo := p.StatsInfo(); statsInfo != nil {
 			estRows = statsInfo.RowCount
 		}
 		plancodec.EncodePlanNode(
-			int(fop.Depth),
-			strconv.Itoa(fop.Origin.ID())+fop.Label.String(),
-			fop.Origin.TP(fop.IsINLProbeChild),
+			int(op.Depth),
+			strconv.Itoa(op.Origin.ID())+op.Label.String(),
+			op.Origin.TP(),
 			estRows,
 			taskTypeInfo,
-			fop.Origin.ExplainInfo(),
+			op.Origin.ExplainInfo(),
 			actRows,
 			analyzeInfo,
 			memoryInfo,
@@ -128,16 +120,16 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 			buf,
 		)
 
-		if fop.NeedReverseDriverSide {
+		if op.NeedReverseDriverSide {
 			// If NeedReverseDriverSide is true, we don't rely on the order of flatTree.
 			// Instead, we manually slice the build and probe side children from flatTree and recursively call
 			// encodeFlatPlanTree to keep build side before probe side.
-			buildSide := flatTree[fop.ChildrenIdx[1]-offset : fop.ChildrenEndIdx+1-offset]
-			probeSide := flatTree[fop.ChildrenIdx[0]-offset : fop.ChildrenIdx[1]-offset]
-			encodeFlatPlanTree(buildSide, fop.ChildrenIdx[1], buf)
-			encodeFlatPlanTree(probeSide, fop.ChildrenIdx[0], buf)
+			buildSide := flatTree[op.ChildrenIdx[1]-offset : op.ChildrenEndIdx+1-offset]
+			probeSide := flatTree[op.ChildrenIdx[0]-offset : op.ChildrenIdx[1]-offset]
+			encodeFlatPlanTree(buildSide, op.ChildrenIdx[1], buf)
+			encodeFlatPlanTree(probeSide, op.ChildrenIdx[0], buf)
 			// Skip the children plan tree of the current operator.
-			i = fop.ChildrenEndIdx + 1 - offset
+			i = op.ChildrenEndIdx + 1 - offset
 		} else {
 			// Normally, we just go to the next element in the slice.
 			i++
@@ -146,7 +138,7 @@ func encodeFlatPlanTree(flatTree FlatPlanTree, offset int, buf *bytes.Buffer) {
 }
 
 var encoderPool = sync.Pool{
-	New: func() any {
+	New: func() interface{} {
 		return &planEncoder{}
 	},
 }
@@ -155,12 +147,12 @@ type planEncoder struct {
 	buf          bytes.Buffer
 	encodedPlans map[int]bool
 
-	ctes []*physicalop.PhysicalCTE
+	ctes []*PhysicalCTE
 }
 
 // EncodePlan is used to encodePlan the plan to the plan tree with compressing.
 // Deprecated: FlattenPhysicalPlan() + EncodeFlatPlan() is preferred.
-func EncodePlan(p base.Plan) string {
+func EncodePlan(p Plan) string {
 	if explain, ok := p.(*Explain); ok {
 		p = explain.TargetPlan
 	}
@@ -178,7 +170,7 @@ func EncodePlan(p base.Plan) string {
 	return pn.encodePlanTree(p)
 }
 
-func (pn *planEncoder) encodePlanTree(p base.Plan) string {
+func (pn *planEncoder) encodePlanTree(p Plan) string {
 	pn.encodedPlans = make(map[int]bool)
 	pn.buf.Reset()
 	pn.ctes = pn.ctes[:0]
@@ -192,8 +184,8 @@ func (pn *planEncoder) encodeCTEPlan() {
 		return
 	}
 	explainedCTEPlan := make(map[int]struct{})
-	for i := range pn.ctes {
-		x := (*physicalop.CTEDefinition)(pn.ctes[i])
+	for i := 0; i < len(pn.ctes); i++ {
+		x := (*CTEDefinition)(pn.ctes[i])
 		// skip if the CTE has been explained, the same CTE has same IDForStorage
 		if _, ok := explainedCTEPlan[x.CTE.IDForStorage]; ok {
 			continue
@@ -213,12 +205,12 @@ func (pn *planEncoder) encodeCTEPlan() {
 	}
 }
 
-func (pn *planEncoder) encodePlan(p base.Plan, isRoot bool, store kv.StoreType, depth int) {
+func (pn *planEncoder) encodePlan(p Plan, isRoot bool, store kv.StoreType, depth int) {
 	taskTypeInfo := plancodec.EncodeTaskType(isRoot, store)
 	actRows, analyzeInfo, memoryInfo, diskInfo := getRuntimeInfoStr(p.SCtx(), p, nil)
 	rowCount := 0.0
-	if pp, ok := p.(base.PhysicalPlan); ok {
-		rowCount = pp.GetEstRowCountForDisplay()
+	if pp, ok := p.(PhysicalPlan); ok {
+		rowCount = pp.getEstRowCountForDisplay()
 	} else if statsInfo := p.StatsInfo(); statsInfo != nil {
 		rowCount = statsInfo.RowCount
 	}
@@ -241,27 +233,27 @@ func (pn *planEncoder) encodePlan(p base.Plan, isRoot bool, store kv.StoreType, 
 		pn.encodePlan(child, isRoot, store, depth)
 	}
 	switch copPlan := selectPlan.(type) {
-	case *physicalop.PhysicalTableReader:
-		pn.encodePlan(copPlan.TablePlan, false, copPlan.StoreType, depth)
-	case *physicalop.PhysicalIndexReader:
-		pn.encodePlan(copPlan.IndexPlan, false, store, depth)
-	case *physicalop.PhysicalIndexLookUpReader:
-		pn.encodePlan(copPlan.IndexPlan, false, store, depth)
-		pn.encodePlan(copPlan.TablePlan, false, store, depth)
-	case *physicalop.PhysicalIndexMergeReader:
-		for _, p := range copPlan.PartialPlansRaw {
+	case *PhysicalTableReader:
+		pn.encodePlan(copPlan.tablePlan, false, copPlan.StoreType, depth)
+	case *PhysicalIndexReader:
+		pn.encodePlan(copPlan.indexPlan, false, store, depth)
+	case *PhysicalIndexLookUpReader:
+		pn.encodePlan(copPlan.indexPlan, false, store, depth)
+		pn.encodePlan(copPlan.tablePlan, false, store, depth)
+	case *PhysicalIndexMergeReader:
+		for _, p := range copPlan.partialPlans {
 			pn.encodePlan(p, false, store, depth)
 		}
-		if copPlan.TablePlan != nil {
-			pn.encodePlan(copPlan.TablePlan, false, store, depth)
+		if copPlan.tablePlan != nil {
+			pn.encodePlan(copPlan.tablePlan, false, store, depth)
 		}
-	case *physicalop.PhysicalCTE:
+	case *PhysicalCTE:
 		pn.ctes = append(pn.ctes, copPlan)
 	}
 }
 
 var digesterPool = sync.Pool{
-	New: func() any {
+	New: func() interface{} {
 		return &planDigester{
 			hasher: sha256.New(),
 		}
@@ -291,12 +283,12 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 	}()
 	// assume an operator costs around 30 bytes, preallocate space for them
 	d.buf.Grow(30 * len(selectPlan))
-	for _, fop := range selectPlan {
-		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(fop.IsRoot, fop.StoreType)
-		p := fop.Origin.(base.PhysicalPlan)
+	for _, op := range selectPlan {
+		taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(op.IsRoot, op.StoreType)
+		p := op.Origin.(PhysicalPlan)
 		plancodec.NormalizePlanNode(
-			int(fop.Depth-uint32(selectPlanOffset)),
-			fop.Origin.TP(fop.IsINLProbeChild),
+			int(op.Depth-uint32(selectPlanOffset)),
+			op.Origin.TP(),
 			taskTypeInfo,
 			p.ExplainNormalizedInfo(),
 			&d.buf,
@@ -316,7 +308,7 @@ func NormalizeFlatPlan(flat *FlatPhysicalPlan) (normalized string, digest *parse
 
 // NormalizePlan is used to normalize the plan and generate plan digest.
 // Deprecated: FlattenPhysicalPlan() + NormalizeFlatPlan() is preferred.
-func NormalizePlan(p base.Plan) (normalized string, digest *parser.Digest) {
+func NormalizePlan(p Plan) (normalized string, digest *parser.Digest) {
 	selectPlan := getSelectPlan(p)
 	if selectPlan == nil {
 		return "", parser.NewDigest(nil)
@@ -337,15 +329,15 @@ func NormalizePlan(p base.Plan) (normalized string, digest *parser.Digest) {
 	return
 }
 
-func (d *planDigester) normalizePlanTree(p base.PhysicalPlan) {
+func (d *planDigester) normalizePlanTree(p PhysicalPlan) {
 	d.encodedPlans = make(map[int]bool)
 	d.buf.Reset()
-	d.normalizePlan(p, true, kv.TiKV, 0, false)
+	d.normalizePlan(p, true, kv.TiKV, 0)
 }
 
-func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.StoreType, depth int, isChildOfINL bool) {
+func (d *planDigester) normalizePlan(p PhysicalPlan, isRoot bool, store kv.StoreType, depth int) {
 	taskTypeInfo := plancodec.EncodeTaskTypeForNormalize(isRoot, store)
-	plancodec.NormalizePlanNode(depth, p.TP(isChildOfINL), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
+	plancodec.NormalizePlanNode(depth, p.TP(), taskTypeInfo, p.ExplainNormalizedInfo(), &d.buf)
 	d.encodedPlans[p.ID()] = true
 
 	depth++
@@ -353,37 +345,37 @@ func (d *planDigester) normalizePlan(p base.PhysicalPlan, isRoot bool, store kv.
 		if d.encodedPlans[child.ID()] {
 			continue
 		}
-		d.normalizePlan(child, isRoot, store, depth, isChildOfINL)
+		d.normalizePlan(child, isRoot, store, depth)
 	}
 	switch x := p.(type) {
-	case *physicalop.PhysicalTableReader:
-		d.normalizePlan(x.TablePlan, false, x.StoreType, depth, false)
-	case *physicalop.PhysicalIndexReader:
-		d.normalizePlan(x.IndexPlan, false, store, depth, false)
-	case *physicalop.PhysicalIndexLookUpReader:
-		d.normalizePlan(x.IndexPlan, false, store, depth, false)
-		d.normalizePlan(x.TablePlan, false, store, depth, true)
-	case *physicalop.PhysicalIndexMergeReader:
-		for _, p := range x.PartialPlansRaw {
-			d.normalizePlan(p, false, store, depth, false)
+	case *PhysicalTableReader:
+		d.normalizePlan(x.tablePlan, false, x.StoreType, depth)
+	case *PhysicalIndexReader:
+		d.normalizePlan(x.indexPlan, false, store, depth)
+	case *PhysicalIndexLookUpReader:
+		d.normalizePlan(x.indexPlan, false, store, depth)
+		d.normalizePlan(x.tablePlan, false, store, depth)
+	case *PhysicalIndexMergeReader:
+		for _, p := range x.partialPlans {
+			d.normalizePlan(p, false, store, depth)
 		}
-		if x.TablePlan != nil {
-			d.normalizePlan(x.TablePlan, false, store, depth, true)
+		if x.tablePlan != nil {
+			d.normalizePlan(x.tablePlan, false, store, depth)
 		}
 	}
 }
 
-func getSelectPlan(p base.Plan) base.PhysicalPlan {
-	var selectPlan base.PhysicalPlan
-	if physicalPlan, ok := p.(base.PhysicalPlan); ok {
+func getSelectPlan(p Plan) PhysicalPlan {
+	var selectPlan PhysicalPlan
+	if physicalPlan, ok := p.(PhysicalPlan); ok {
 		selectPlan = physicalPlan
 	} else {
 		switch x := p.(type) {
-		case *physicalop.Delete:
+		case *Delete:
 			selectPlan = x.SelectPlan
-		case *physicalop.Update:
+		case *Update:
 			selectPlan = x.SelectPlan
-		case *physicalop.Insert:
+		case *Insert:
 			selectPlan = x.SelectPlan
 		case *Explain:
 			selectPlan = getSelectPlan(x.TargetPlan)

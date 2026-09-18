@@ -18,44 +18,21 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"runtime"
+	_ "runtime" // import link package
+	_ "unsafe"  // required by go:linkname
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/config/deploymode"
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/util/israce"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/versioninfo"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/israce"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/versioninfo"
 	"go.uber.org/zap"
 )
 
-var buildVersion string
-
-func init() {
-	buildVersion = runtime.Version()
-}
-
-func getReleaseVersionsForDisplay() (releaseVersion string, componentVersion string) {
-	releaseVersion = mysql.TiDBReleaseVersion
-	if !kerneltype.IsNextGen() {
-		return releaseVersion, ""
-	}
-	normalizedReleaseVersion := mysql.NormalizeTiDBReleaseVersionForNextGen(mysql.TiDBReleaseVersion)
-	tidbXReleaseVersion, err := mysql.BuildTiDBXReleaseVersion(normalizedReleaseVersion)
-	if err != nil {
-		// Startup validates this value in nextgen. Keep this fallback to avoid
-		// panics when helper is called outside the normal startup flow.
-		return releaseVersion, ""
-	}
-	return tidbXReleaseVersion, normalizedReleaseVersion
-}
-
 // PrintTiDBInfo prints the TiDB version information.
 func PrintTiDBInfo() {
-	releaseVersion, componentVersion := getReleaseVersionsForDisplay()
 	fields := []zap.Field{
-		zap.String("Release Version", releaseVersion),
+		zap.String("Release Version", mysql.TiDBReleaseVersion),
 		zap.String("Edition", versioninfo.TiDBEdition),
 		zap.String("Git Commit Hash", versioninfo.TiDBGitHash),
 		zap.String("Git Branch", versioninfo.TiDBGitBranch),
@@ -64,13 +41,6 @@ func PrintTiDBInfo() {
 		zap.Bool("Race Enabled", israce.RaceEnabled),
 		zap.Bool("Check Table Before Drop", config.CheckTableBeforeDrop),
 	}
-	if componentVersion != "" {
-		fields = append(fields, zap.String("TiDB Component Version", componentVersion))
-	}
-	if kerneltype.IsNextGen() {
-		fields = append(fields, zap.Stringer("Deploy Mode", deploymode.Get()))
-	}
-	fields = append(fields, zap.String("Kernel Type", kerneltype.Name()))
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		fields = append(fields, zap.String("Enterprise Extension Commit Hash", versioninfo.TiDBEnterpriseExtensionGitHash))
 	}
@@ -84,12 +54,11 @@ func PrintTiDBInfo() {
 
 // GetTiDBInfo returns the git hash and build time of this tidb-server binary.
 func GetTiDBInfo() string {
-	releaseVersion, _ := getReleaseVersionsForDisplay()
 	enterpriseVersion := ""
 	if versioninfo.TiDBEnterpriseExtensionGitHash != "" {
 		enterpriseVersion = fmt.Sprintf("\nEnterprise Extension Commit Hash: %s", versioninfo.TiDBEnterpriseExtensionGitHash)
 	}
-	info := fmt.Sprintf("Release Version: %s\n"+
+	return fmt.Sprintf("Release Version: %s\n"+
 		"Edition: %s\n"+
 		"Git Commit Hash: %s\n"+
 		"Git Branch: %s\n"+
@@ -99,7 +68,7 @@ func GetTiDBInfo() string {
 		"Check Table Before Drop: %v\n"+
 		"Store: %s"+
 		"%s",
-		releaseVersion,
+		mysql.TiDBReleaseVersion,
 		versioninfo.TiDBEdition,
 		versioninfo.TiDBGitHash,
 		versioninfo.TiDBGitBranch,
@@ -110,8 +79,6 @@ func GetTiDBInfo() string {
 		config.GetGlobalConfig().Store,
 		enterpriseVersion,
 	)
-	info += "\nKernel Type: " + kerneltype.Name()
-	return info
 }
 
 // checkValidity checks whether cols and every data have the same length.
@@ -208,3 +175,6 @@ func GetPrintResult(cols []string, datas [][]string) (string, bool) {
 	value = append(value, getPrintDivLine(maxColLen)...)
 	return string(value), true
 }
+
+//go:linkname buildVersion runtime.buildVersion
+var buildVersion string

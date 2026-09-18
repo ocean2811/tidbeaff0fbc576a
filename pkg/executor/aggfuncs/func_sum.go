@@ -18,11 +18,12 @@ import (
 	"unsafe"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/hack"
-	"github.com/pingcap/tidb/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/hack"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set"
 )
 
 const (
@@ -47,11 +48,15 @@ type partialResult4SumDecimal struct {
 }
 
 type partialResult4SumDistinctFloat64 struct {
+	val    float64
+	isNull bool
 	valSet set.Float64SetWithMemoryUsage
 }
 
 type partialResult4SumDistinctDecimal struct {
-	valSet set.StringToDecimalMapWithMemoryUsage
+	val    types.MyDecimal
+	isNull bool
+	valSet set.StringSetWithMemoryUsage
 }
 
 type baseSumAggFunc struct {
@@ -73,7 +78,7 @@ func (*baseSum4Float64) ResetPartialResult(pr PartialResult) {
 	p.notNullRowCount = 0
 }
 
-func (e *baseSum4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *baseSum4Float64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumFloat64)(pr)
 	if p.notNullRowCount == 0 {
 		chk.AppendNull(e.ordinal)
@@ -83,7 +88,7 @@ func (e *baseSum4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr Par
 	return nil
 }
 
-func (e *baseSum4Float64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *baseSum4Float64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4SumFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -99,7 +104,7 @@ func (e *baseSum4Float64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInG
 	return 0, nil
 }
 
-func (*baseSum4Float64) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (*baseSum4Float64) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4SumFloat64)(src), (*partialResult4SumFloat64)(dst)
 	if p1.notNullRowCount == 0 {
 		return 0, nil
@@ -109,35 +114,15 @@ func (*baseSum4Float64) MergePartialResult(_ AggFuncUpdateContext, src, dst Part
 	return 0, nil
 }
 
-func (e *baseSum4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4SumFloat64)(partialResult)
-	resBuf := spillHelper.serializePartialResult4SumFloat64(*pr)
-	chk.AppendBytes(e.ordinal, resBuf)
-}
-
-func (e *baseSum4Float64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *baseSum4Float64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	result := (*partialResult4SumFloat64)(pr)
-	success := helper.deserializePartialResult4SumFloat64(result)
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta
-}
-
 type sum4Float64 struct {
 	baseSum4Float64
 }
 
 var _ SlidingWindowAggFunc = &sum4Float64{}
 
-func (e *sum4Float64) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+func (e *sum4Float64) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4SumFloat64)(pr)
-	for i := range shiftEnd {
+	for i := uint64(0); i < shiftEnd; i++ {
 		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -148,7 +133,7 @@ func (e *sum4Float64) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk
 		p.val += input
 		p.notNullRowCount++
 	}
-	for i := range shiftStart {
+	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalReal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -170,26 +155,6 @@ type sum4Decimal struct {
 	baseSumAggFunc
 }
 
-func (e *sum4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4SumDecimal)(partialResult)
-	resBuf := spillHelper.serializePartialResult4SumDecimal(*pr)
-	chk.AppendBytes(e.ordinal, resBuf)
-}
-
-func (e *sum4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *sum4Decimal) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	result := (*partialResult4SumDecimal)(pr)
-	success := helper.deserializePartialResult4SumDecimal(result)
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta
-}
-
 func (*sum4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDecimal)
 	return PartialResult(p), DefPartialResult4SumDecimalSize
@@ -200,7 +165,7 @@ func (*sum4Decimal) ResetPartialResult(pr PartialResult) {
 	p.notNullRowCount = 0
 }
 
-func (e *sum4Decimal) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *sum4Decimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDecimal)(pr)
 	if p.notNullRowCount == 0 {
 		chk.AppendNull(e.ordinal)
@@ -221,7 +186,7 @@ func (e *sum4Decimal) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr Partial
 	return nil
 }
 
-func (e *sum4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *sum4Decimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4SumDecimal)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
@@ -250,9 +215,9 @@ func (e *sum4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup
 
 var _ SlidingWindowAggFunc = &sum4Decimal{}
 
-func (e *sum4Decimal) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
+func (e *sum4Decimal) Slide(sctx sessionctx.Context, getRow func(uint64) chunk.Row, lastStart, lastEnd uint64, shiftStart, shiftEnd uint64, pr PartialResult) error {
 	p := (*partialResult4SumDecimal)(pr)
-	for i := range shiftEnd {
+	for i := uint64(0); i < shiftEnd; i++ {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastEnd+i))
 		if err != nil {
 			return err
@@ -273,7 +238,7 @@ func (e *sum4Decimal) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk
 		p.val = *newSum
 		p.notNullRowCount++
 	}
-	for i := range shiftStart {
+	for i := uint64(0); i < shiftStart; i++ {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, getRow(lastStart+i))
 		if err != nil {
 			return err
@@ -292,7 +257,7 @@ func (e *sum4Decimal) Slide(sctx AggFuncUpdateContext, getRow func(uint64) chunk
 	return nil
 }
 
-func (*sum4Decimal) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialResult) (memDelta int64, err error) {
+func (*sum4Decimal) MergePartialResult(_ sessionctx.Context, src, dst PartialResult) (memDelta int64, err error) {
 	p1, p2 := (*partialResult4SumDecimal)(src), (*partialResult4SumDecimal)(dst)
 	if p1.notNullRowCount == 0 {
 		return 0, nil
@@ -307,39 +272,25 @@ func (*sum4Decimal) MergePartialResult(_ AggFuncUpdateContext, src, dst PartialR
 	return 0, nil
 }
 
-type baseSumDistinct struct {
-	baseAggFunc
+type sum4DistinctFloat64 struct {
+	baseSumAggFunc
 }
 
-func (*baseSumDistinct) AllocPartialResult() (PartialResult, int64) {
-	panic("Not implemented")
-}
-
-func (*baseSumDistinct) ResetPartialResult(PartialResult) {
-	panic("Not implemented")
-}
-
-func (*baseSumDistinct) UpdatePartialResult(AggFuncUpdateContext, []chunk.Row, PartialResult) (int64, error) {
-	panic("Not implemented")
-}
-
-type baseSumDistinct4Float64 struct {
-	baseSumDistinct
-}
-
-func (*baseSumDistinct4Float64) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*sum4DistinctFloat64) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	setSize := int64(0)
 	p := new(partialResult4SumDistinctFloat64)
+	p.isNull = true
 	p.valSet, setSize = set.NewFloat64SetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctFloat64Size + setSize
 }
 
-func (*baseSumDistinct4Float64) ResetPartialResult(pr PartialResult) {
+func (*sum4DistinctFloat64) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
+	p.isNull = true
 	p.valSet, _ = set.NewFloat64SetWithMemoryUsage()
 }
 
-func (e *baseSumDistinct4Float64) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *sum4DistinctFloat64) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4SumDistinctFloat64)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalReal(sctx, row)
@@ -350,81 +301,45 @@ func (e *baseSumDistinct4Float64) UpdatePartialResult(sctx AggFuncUpdateContext,
 			continue
 		}
 		memDelta += p.valSet.Insert(input)
+		if p.isNull {
+			p.val = input
+			p.isNull = false
+			continue
+		}
+		p.val += input
 	}
 	return memDelta, nil
 }
 
-func (e *baseSumDistinct4Float64) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *sum4DistinctFloat64) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDistinctFloat64)(pr)
-	if p.valSet.Count() == 0 {
+	if p.isNull {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	sum := float64(0)
-	for val := range p.valSet.M {
-		sum += val
-	}
-	chk.AppendFloat64(e.ordinal, sum)
+	chk.AppendFloat64(e.ordinal, p.val)
 	return nil
 }
 
-func (e *baseSumDistinct4Float64) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4SumDistinctFloat64)(partialResult)
-	resBuf := spillHelper.serializePartialResult4SumDistinctFloat64(*pr)
-	chk.AppendBytes(e.ordinal, resBuf)
+type sum4DistinctDecimal struct {
+	baseSumAggFunc
 }
 
-func (e *baseSumDistinct4Float64) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *baseSumDistinct4Float64) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	result := (*partialResult4SumDistinctFloat64)(pr)
-	success, dataMemDelta := helper.deserializePartialResult4SumDistinctFloat64(result)
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta + dataMemDelta
-}
-
-type sum4PartialDistinctFloat64 struct {
-	baseSumDistinct4Float64
-}
-
-func (*sum4PartialDistinctFloat64) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
-	s, d := (*partialResult4SumDistinctFloat64)(src), (*partialResult4SumDistinctFloat64)(dst)
-	for val := range s.valSet.M {
-		if d.valSet.Exist(val) {
-			continue
-		}
-
-		memDelta += d.valSet.Insert(val)
-	}
-	return memDelta, nil
-}
-
-type sum4OriginalDistinct4Float64 struct {
-	baseSumDistinct4Float64
-}
-
-type baseSumDistinct4Decimal struct {
-	baseSumDistinct
-}
-
-func (*baseSumDistinct4Decimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
+func (*sum4DistinctDecimal) AllocPartialResult() (pr PartialResult, memDelta int64) {
 	p := new(partialResult4SumDistinctDecimal)
+	p.isNull = true
 	setSize := int64(0)
-	p.valSet, setSize = set.NewStringToDecimalMapWithMemoryUsage()
+	p.valSet, setSize = set.NewStringSetWithMemoryUsage()
 	return PartialResult(p), DefPartialResult4SumDistinctDecimalSize + setSize
 }
 
-func (*baseSumDistinct4Decimal) ResetPartialResult(pr PartialResult) {
+func (*sum4DistinctDecimal) ResetPartialResult(pr PartialResult) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
-	p.valSet, _ = set.NewStringToDecimalMapWithMemoryUsage()
+	p.isNull = true
+	p.valSet, _ = set.NewStringSetWithMemoryUsage()
 }
 
-func (e *baseSumDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
+func (e *sum4DistinctDecimal) UpdatePartialResult(sctx sessionctx.Context, rowsInGroup []chunk.Row, pr PartialResult) (memDelta int64, err error) {
 	p := (*partialResult4SumDistinctDecimal)(pr)
 	for _, row := range rowsInGroup {
 		input, isNull, err := e.args[0].EvalDecimal(sctx, row)
@@ -438,69 +353,32 @@ func (e *baseSumDistinct4Decimal) UpdatePartialResult(sctx AggFuncUpdateContext,
 		if err != nil {
 			return memDelta, err
 		}
-		keyStr := string(hack.String(hash))
-		if p.valSet.Exist(keyStr) {
+		decStr := string(hack.String(hash))
+		if p.valSet.Exist(decStr) {
 			continue
 		}
-		memDelta += p.valSet.Insert(keyStr, input.Clone()) + int64(len(keyStr)) + types.MyDecimalStructSize
+		memDelta += p.valSet.Insert(decStr)
+		memDelta += int64(len(decStr))
+		if p.isNull {
+			p.val = *input
+			p.isNull = false
+			continue
+		}
+		newSum := new(types.MyDecimal)
+		if err = types.DecimalAdd(&p.val, input, newSum); err != nil {
+			return memDelta, err
+		}
+		p.val = *newSum
 	}
 	return memDelta, nil
 }
 
-func (e *baseSumDistinct4Decimal) AppendFinalResult2Chunk(_ AggFuncUpdateContext, pr PartialResult, chk *chunk.Chunk) error {
+func (e *sum4DistinctDecimal) AppendFinalResult2Chunk(_ sessionctx.Context, pr PartialResult, chk *chunk.Chunk) error {
 	p := (*partialResult4SumDistinctDecimal)(pr)
-	if p.valSet.Count() == 0 {
+	if p.isNull {
 		chk.AppendNull(e.ordinal)
 		return nil
 	}
-	var sumBuf, sumTmpBuf types.MyDecimal
-	sum, sumTmp := sumBuf.FromInt(0), &sumTmpBuf
-	for _, val := range p.valSet.M {
-		if err := types.DecimalAdd(sum, val, sumTmp); err != nil {
-			return err
-		}
-		sum, sumTmp = sumTmp, sum
-	}
-	chk.AppendMyDecimal(e.ordinal, sum)
+	chk.AppendMyDecimal(e.ordinal, &p.val)
 	return nil
-}
-
-func (e *baseSumDistinct4Decimal) SerializePartialResult(partialResult PartialResult, chk *chunk.Chunk, spillHelper *SerializeHelper) {
-	pr := (*partialResult4SumDistinctDecimal)(partialResult)
-	resBuf := spillHelper.serializePartialResult4SumDistinctDecimal(*pr)
-	chk.AppendBytes(e.ordinal, resBuf)
-}
-
-func (e *baseSumDistinct4Decimal) DeserializePartialResult(src *chunk.Chunk) ([]PartialResult, int64) {
-	return deserializePartialResultCommon(src, e.ordinal, e.deserializeForSpill)
-}
-
-func (e *baseSumDistinct4Decimal) deserializeForSpill(helper *deserializeHelper) (PartialResult, int64) {
-	pr, memDelta := e.AllocPartialResult()
-	result := (*partialResult4SumDistinctDecimal)(pr)
-	success, dataMemDelta := helper.deserializePartialResult4SumDistinctDecimal(result)
-	if !success {
-		return nil, 0
-	}
-	return pr, memDelta + dataMemDelta
-}
-
-type sum4PartialDistinct4Decimal struct {
-	baseSumDistinct4Decimal
-}
-
-func (*sum4PartialDistinct4Decimal) MergePartialResult(_ AggFuncUpdateContext, src PartialResult, dst PartialResult) (memDelta int64, err error) {
-	s, d := (*partialResult4SumDistinctDecimal)(src), (*partialResult4SumDistinctDecimal)(dst)
-	for key, val := range s.valSet.M {
-		if d.valSet.Exist(key) {
-			continue
-		}
-
-		memDelta += d.valSet.Insert(key, val)
-	}
-	return memDelta, nil
-}
-
-type sum4OriginalDistinct4Decimal struct {
-	baseSumDistinct4Decimal
 }

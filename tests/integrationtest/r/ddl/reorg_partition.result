@@ -8,12 +8,13 @@ a	b	c
 23	23	32
 alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE));
 admin check table t;
+
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int unsigned NOT NULL,
+  `a` int(10) unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -59,6 +60,7 @@ a	b	c
 23	23	32
 alter table t reorganize partition p2,pMax into (partition p2 values less than (35),partition p3 values less than (47), partition pMax values less than (MAXVALUE));
 admin check table t;
+
 select * from t;
 a	b	c
 1	1	1
@@ -70,9 +72,9 @@ a	b	c
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int unsigned NOT NULL,
+  `a` int(10) unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -101,12 +103,13 @@ a	b	c
 56	56	65
 alter table t reorganize partition p0,p1 into (partition p1 values less than (20));
 admin check table t;
+
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int unsigned NOT NULL,
+  `a` int(10) unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -127,12 +130,13 @@ a	b	c
 alter table t drop index b;
 alter table t drop index c;
 admin check table t;
+
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int unsigned NOT NULL,
+  `a` int(10) unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE (`a`)
@@ -156,9 +160,9 @@ Error 1526 (HY000): Table has no partition for value 56
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `a` int unsigned NOT NULL,
+  `a` int(10) unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -169,12 +173,13 @@ PARTITION BY RANGE (`a`)
  PARTITION `pMax` VALUES LESS THAN (MAXVALUE))
 alter table t2 reorganize partition pMax into (partition p4 values less than (90));
 admin check table t2;
+
 show create table t2;
 Table	Create Table
 t2	CREATE TABLE `t2` (
-  `a` int unsigned NOT NULL,
+  `a` int(10) unsigned NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -188,12 +193,13 @@ create table t (a int PRIMARY KEY, b varchar(255), c int, key (b), key (c,b)) pa
 insert into t values (0,"0",0),(1,"1",1),(2,"2",-2),(-12,"12",21),(23,"23",32),(-34,"34",43),(45,"45",54),(56,"56",65);
 alter table t reorganize partition pMax into (partition p2 values less than (30), partition pMax values less than (MAXVALUE));
 admin check table t;
+
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int NOT NULL,
+  `a` int(11) NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -214,12 +220,13 @@ a	b	c
 alter table t drop index b;
 alter table t reorganize partition p0,p1,p2,pMax into (partition pAll values less than (maxvalue));
 admin check table t;
+
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int NOT NULL,
+  `a` int(11) NOT NULL,
   `b` varchar(255) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] CLUSTERED */,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -257,12 +264,13 @@ a	b	c
 ALTER TABLE t DROP INDEX c;
 ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN (2,'ggg'), PARTITION p01 VALUES LESS THAN (5,'ggg'));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int DEFAULT NULL,
+  `a` int(11) DEFAULT NULL,
   `b` char(3) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `b` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`a`,`b`)
@@ -299,12 +307,13 @@ a	b	c
 ALTER TABLE t DROP INDEX b;
 ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN ('ccc',2), PARTITION p01 VALUES LESS THAN ('ggg',5));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int DEFAULT NULL,
+  `a` int(11) DEFAULT NULL,
   `b` char(3) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`b`,`a`)
@@ -321,12 +330,13 @@ a	b	c
 3	ccc	3
 ALTER TABLE t REORGANIZE PARTITION p00,p01,p1 into (PARTITION p1 VALUES LESS THAN ('mmm',10));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int DEFAULT NULL,
+  `a` int(11) DEFAULT NULL,
   `b` char(3) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`b`,`a`)
@@ -356,12 +366,13 @@ PARTITION pMax VALUES LESS THAN (MAXVALUE,MAXVALUE)
 INSERT INTO t VALUES('2020-04-10', '2020-04-10 10:10:10', 1), ('2020-05-04', '2020-05-04 10:10:10', 2),('2020-05-05', '2020-05-05 10:10:10', 3), ('2021-05-04', '2021-05-04 10:10:10', 4),('2022-05-05', '2022-05-05 10:10:10', 5), ('2023-05-05', '2023-05-05 10:10:10', 6);
 ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN ('2020-04-10', '2020-04-10 10:10:10'), PARTITION p01 VALUES LESS THAN ('2020-05-05', '2020-05-05 10:10:10'));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -382,18 +393,20 @@ Error 1493 (HY000): VALUES LESS THAN value must be strictly increasing for each 
 ALTER TABLE t DROP INDEX c;
 ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS THAN ('2022-05-05', '2022-05-05 10:10:10'));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `b` (`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`a`,`b`)
 (PARTITION `p0` VALUES LESS THAN ('2022-05-05','2022-05-05 10:10:10'),
  PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))
 ADMIN CHECK TABLE t;
+
 SELECT * FROM t PARTITION(p0);
 a	b	c
 2020-04-10	2020-04-10 10:10:10	1
@@ -421,12 +434,13 @@ PARTITION pMax VALUES LESS THAN (MAXVALUE,MAXVALUE)
 INSERT INTO t VALUES('2020-04-10', '2020-04-10 10:10:10', 1), ('2020-05-04', '2020-05-04 10:10:10', 2),('2020-05-05', '2020-05-05 10:10:10', 3), ('2021-05-04', '2021-05-04 10:10:10', 4),('2022-05-05', '2022-05-05 10:10:10', 5), ('2023-05-05', '2023-05-05 10:10:10', 6);
 ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES LESS THAN ('2020-04-10 10:10:10', '2020-04-10'), PARTITION p01 VALUES LESS THAN ('2020-05-05 10:10:10', '2020-05-05'));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -447,18 +461,20 @@ ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS 
 Error 1493 (HY000): VALUES LESS THAN value must be strictly increasing for each partition
 ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION p0 VALUES LESS THAN ('2022-05-05 10:10:10', '2022-05-05'));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY RANGE COLUMNS(`b`,`a`)
 (PARTITION `p0` VALUES LESS THAN ('2022-05-05 10:10:10','2022-05-05'),
  PARTITION `pMax` VALUES LESS THAN (MAXVALUE,MAXVALUE))
 ADMIN CHECK TABLE t;
+
 SELECT * FROM t PARTITION(p0);
 a	b	c
 2020-04-10	2020-04-10 10:10:10	1
@@ -474,12 +490,13 @@ create table t (a int, b varchar(55), c int) partition by list (a) (partition p1
 insert into t values (12,"12",21), (24,"24",42),(51,"51",15),(23,"23",32),(63,"63",36),(45,"45",54);
 alter table t reorganize partition p1 into (partition p0 values in (12,51,13), partition p1 values in (23));
 admin check table t;
+
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int DEFAULT NULL,
+  `a` int(11) DEFAULT NULL,
   `b` varchar(55) DEFAULT NULL,
-  `c` int DEFAULT NULL
+  `c` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST (`a`)
 (PARTITION `p0` VALUES IN (12,51,13),
@@ -489,12 +506,13 @@ PARTITION BY LIST (`a`)
 alter table t add primary key (a), add key (b), add key (c,b);
 alter table t reorganize partition p1, p3 into (partition pa values in (45,23,15));
 admin check table t;
+
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int NOT NULL,
+  `a` int(11) NOT NULL,
   `b` varchar(55) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -516,6 +534,7 @@ insert into t values
 (-24,"-24",42),(51,"-51",15),(23,"23",32),(63,"63",36),(45,"45",54);
 alter table t reorganize partition p0, p1 into (partition p0 values in (0,1,2,12,51,13), partition p1 values in (23));
 admin check table t;
+
 select * from t partition (p0);
 a	b	c
 -1	-1	11
@@ -526,9 +545,9 @@ a	b	c
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int DEFAULT NULL,
+  `a` int(11) DEFAULT NULL,
   `b` varchar(55) DEFAULT NULL,
-  `c` int DEFAULT NULL
+  `c` int(11) DEFAULT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST (ABS(`a`))
 (PARTITION `p0` VALUES IN (0,1,2,12,51,13),
@@ -538,6 +557,7 @@ PARTITION BY LIST (ABS(`a`))
 alter table t add primary key (a), add key (b), add key (c,b);
 alter table t reorganize partition p0,p1,p2,p3 into (partition paa values in (0,1,2,12,13,23,24,45,51,63,64));
 admin check table t;
+
 select * from t partition (paa);
 a	b	c
 -1	-1	11
@@ -552,9 +572,9 @@ a	b	c
 show create table t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int NOT NULL,
+  `a` int(11) NOT NULL,
   `b` varchar(55) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   PRIMARY KEY (`a`) /*T![clustered_index] NONCLUSTERED */,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
@@ -578,6 +598,7 @@ select * from t;
 a	b	c	d
 0	Zero value!	0	2022-02-30 00:00:00
 admin check table t;
+
 drop table if exists t;
 CREATE TABLE t (
 a INT,
@@ -600,12 +621,13 @@ ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES IN ((0,'uuu'),(
 Error 1526 (HY000): Table has no partition for value from column_list
 ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES IN ((0,'uuu'),(1,'aaa')), PARTITION p01 VALUES IN ((2,'bbb'),(3,'ccc')));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int DEFAULT NULL,
+  `a` int(11) DEFAULT NULL,
   `b` char(3) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -624,6 +646,7 @@ ALTER TABLE t DROP INDEX b;
 ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN
 ((0,'uuu'),(1,'aaa'),(2,'bbb'),(3,'ccc'),(4,'ddd'),(5,'eee'),(6,'fff'),(16,'lll'),(17,'mmm'),(18,'lll')));
 ADMIN CHECK TABLE t;
+
 SELECT * FROM t PARTITION(pAll);
 a	b	c
 1	aaa	1
@@ -656,12 +679,13 @@ a	b	c
 3	ccc	3
 ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES IN (('uuu',-1),('aaa',1)), PARTITION p01 VALUES IN (('bbb',2),('ccc',3),('ccc',4)));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
-  `a` int DEFAULT NULL,
+  `a` int(11) DEFAULT NULL,
   `b` char(3) DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -680,6 +704,7 @@ ALTER TABLE t DROP INDEX c;
 ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN
 (('uuu',-1),('aaa',1),('bbb',2),('ccc',3),('ccc',4),('ddd',4),('eee',5),('fff',6),('lll',16),('mmm',17),('lll',18)));
 ADMIN CHECK TABLE t;
+
 SELECT * FROM t PARTITION(pAll);
 a	b	c
 1	aaa	1
@@ -708,12 +733,13 @@ PARTITION p2 VALUES IN (('2022-05-04','2022-05-04 10:10:10'),('2022-05-05','2022
 INSERT INTO t VALUES('2020-04-10', '2020-04-10 10:10:10', 1), ('2020-05-04', '2020-05-04 10:10:10', 2),('2020-05-04', '2020-05-04 10:10:10', 3), ('2021-05-04', '2021-05-04 10:10:10', 4),('2022-05-04', '2022-05-04 10:10:10', 5), ('2022-05-05', '2022-05-06 11:11:11', 6);
 ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES IN (('2020-04-10', '2020-04-10 10:10:10')), PARTITION p01 VALUES IN (('2020-05-04', '2020-05-04 10:10:10')));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -734,17 +760,19 @@ ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN 
 Error 1526 (HY000): Table has no partition for value from column_list
 ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN (('2020-04-10','2020-04-10 10:10:10'),('2020-05-04','2020-05-04 10:10:10'), ('2021-05-04','2021-05-04 10:10:10'),('2021-05-05','2021-05-05 10:10:10'), ('2022-05-04','2022-05-04 10:10:10'),('2022-05-05','2022-05-06 11:11:11')));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS(`a`,`b`)
 (PARTITION `pAll` VALUES IN (('2020-04-10','2020-04-10 10:10:10'),('2020-05-04','2020-05-04 10:10:10'),('2021-05-04','2021-05-04 10:10:10'),('2021-05-05','2021-05-05 10:10:10'),('2022-05-04','2022-05-04 10:10:10'),('2022-05-05','2022-05-06 11:11:11')))
 ADMIN CHECK TABLE t;
+
 SELECT * FROM t PARTITION(pAll);
 a	b	c
 2020-04-10	2020-04-10 10:10:10	1
@@ -777,12 +805,13 @@ PARTITION p2 VALUES IN (('2022-05-04 10:10:10','2022-05-04'),('2022-05-06 11:11:
 INSERT INTO t VALUES('2020-04-10', '2020-04-10 10:10:10', 1), ('2020-05-04', '2020-05-04 10:10:10', 2),('2020-05-04', '2020-05-04 10:10:10', 3), ('2021-05-04', '2021-05-04 10:10:10', 4),('2022-05-04', '2022-05-04 10:10:10', 5), ('2022-05-05', '2022-05-06 11:11:11', 6);
 ALTER TABLE t REORGANIZE PARTITION p0 into (PARTITION p00 VALUES IN (('2020-04-10 10:10:10','2020-04-10')), PARTITION p01 VALUES IN (('2020-05-04 10:10:10','2020-05-04')));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `b` (`b`),
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
@@ -803,17 +832,19 @@ ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN 
 Error 1526 (HY000): Table has no partition for value from column_list
 ALTER TABLE t REORGANIZE PARTITION p00,p01,p1,p2 into (PARTITION pAll VALUES IN (('2020-04-10 10:10:10','2020-04-10'),('2020-05-04 10:10:10','2020-05-04'), ('2021-05-04 10:10:10','2021-05-04'),('2021-05-05 10:10:10','2021-05-05'), ('2022-05-04 10:10:10','2022-05-04'),('2022-05-06 11:11:11','2022-05-05')));
 ADMIN CHECK TABLE t;
+
 SHOW CREATE TABLE t;
 Table	Create Table
 t	CREATE TABLE `t` (
   `a` date DEFAULT NULL,
   `b` datetime DEFAULT NULL,
-  `c` int DEFAULT NULL,
+  `c` int(11) DEFAULT NULL,
   KEY `c` (`c`,`b`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_bin
 PARTITION BY LIST COLUMNS(`b`,`a`)
 (PARTITION `pAll` VALUES IN (('2020-04-10 10:10:10','2020-04-10'),('2020-05-04 10:10:10','2020-05-04'),('2021-05-04 10:10:10','2021-05-04'),('2021-05-05 10:10:10','2021-05-05'),('2022-05-04 10:10:10','2022-05-04'),('2022-05-06 11:11:11','2022-05-05')))
 ADMIN CHECK TABLE t;
+
 SELECT * FROM t PARTITION(pAll);
 a	b	c
 2020-04-10	2020-04-10 10:10:10	1
@@ -830,14 +861,3 @@ a	b	c
 2021-05-04	2021-05-04 10:10:10	4
 2022-05-04	2022-05-04 10:10:10	5
 2022-05-05	2022-05-06 11:11:11	6
-drop table t;
-create table t(a varchar(20), b int) partition by hash(a) partitions 2;
-Error 1659 (HY000): Field 'a' is of a not allowed type for this type of partitioning
-create table t(a varchar(20), b int);
-alter table t partition by hash(a) partitions 2;
-Error 1659 (HY000): Field 'ddl__reorg_partition.t.a' is of a not allowed type for this type of partitioning
-alter table t partition by key() partitions 2;
-Error 1105 (HY000): expression should not be an empty string
-alter table t partition by key(c) partitions 2;
-Error 1488 (HY000): Field in list of fields for partition function not found in table
-drop table t;

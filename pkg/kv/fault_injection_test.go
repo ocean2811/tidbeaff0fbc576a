@@ -19,10 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tikv/client-go/v2/kv"
 	"github.com/tikv/client-go/v2/tikv"
 )
 
@@ -44,12 +43,12 @@ func TestFaultInjectionBasic(t *testing.T) {
 	b, err := txn.Get(context.TODO(), []byte{'a'})
 	assert.NotNil(t, err)
 	assert.Equal(t, err1.Error(), err.Error())
-	assert.Equal(t, kv.ValueEntry{}, b)
+	assert.Nil(t, b)
 
 	b, err = snap.Get(context.TODO(), []byte{'a'})
 	assert.NotNil(t, err)
 	assert.Equal(t, err1.Error(), err.Error())
-	assert.Equal(t, kv.ValueEntry{}, b)
+	assert.Nil(t, b)
 
 	bs, err := snap.BatchGet(context.Background(), nil)
 	assert.NotNil(t, err)
@@ -75,7 +74,7 @@ func TestFaultInjectionBasic(t *testing.T) {
 	snap = storage.GetSnapshot(ver)
 	b, err = txn.Get(context.TODO(), []byte{'a'})
 	assert.Nil(t, err)
-	assert.Equal(t, kv.ValueEntry{}, b)
+	assert.Nil(t, b)
 
 	bs, err = txn.BatchGet(context.Background(), nil)
 	assert.Nil(t, err)
@@ -83,7 +82,7 @@ func TestFaultInjectionBasic(t *testing.T) {
 
 	b, err = snap.Get(context.TODO(), []byte{'a'})
 	assert.True(t, terror.ErrorEqual(ErrNotExist, err))
-	assert.Equal(t, kv.ValueEntry{}, b)
+	assert.Nil(t, b)
 
 	bs, err = snap.BatchGet(context.Background(), []Key{[]byte("a")})
 	assert.Nil(t, err)

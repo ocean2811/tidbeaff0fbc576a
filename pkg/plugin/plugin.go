@@ -16,10 +16,8 @@ package plugin
 
 import (
 	"context"
-	"maps"
 	"path/filepath"
 	gplugin "plugin"
-	"slices"
 	"strconv"
 	"sync"
 	"sync/atomic"
@@ -28,9 +26,9 @@ import (
 
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"go.uber.org/zap"
 )
@@ -55,11 +53,14 @@ type plugins struct {
 func (p *plugins) clone() *plugins {
 	np := &plugins{
 		plugins:      make(map[Kind][]Plugin, len(p.plugins)),
-		versions:     maps.Clone(p.versions),
+		versions:     make(map[string]uint16, len(p.versions)),
 		dyingPlugins: make([]Plugin, len(p.dyingPlugins)),
 	}
 	for key, value := range p.plugins {
-		np.plugins[key] = slices.Clone(value)
+		np.plugins[key] = append([]Plugin(nil), value...)
+	}
+	for key, value := range p.versions {
+		np.versions[key] = value
 	}
 	copy(np.dyingPlugins, p.dyingPlugins)
 	return np
@@ -73,9 +74,6 @@ func (p plugins) add(plugin *Plugin) {
 	}
 	plugins = append(plugins, *plugin)
 	p.plugins[plugin.Kind] = plugins
-	if p.versions == nil {
-		p.versions = make(map[string]uint16, 1)
-	}
 	p.versions[plugin.Name] = plugin.Version
 }
 
@@ -140,10 +138,14 @@ func (p *Plugin) validate(ctx context.Context, tiPlugins *plugins) error {
 // This method need be called before domain init to inject global variable info during bootstrap.
 func Load(ctx context.Context, cfg Config) (err error) {
 	tiPlugins := &plugins{
-		plugins: make(map[Kind][]Plugin),
-		// Setup component version info for plugin running env.
-		versions:     maps.Clone(cfg.EnvVersion),
+		plugins:      make(map[Kind][]Plugin),
+		versions:     make(map[string]uint16, len(cfg.EnvVersion)),
 		dyingPlugins: make([]Plugin, 0),
+	}
+
+	// Setup component version info for plugin running env.
+	for component, version := range cfg.EnvVersion {
+		tiPlugins.versions[component] = version
 	}
 
 	// Load plugin dl & manifest.

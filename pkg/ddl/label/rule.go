@@ -19,24 +19,17 @@ import (
 	"encoding/json"
 	"fmt"
 	"slices"
-	"strconv"
-	"strings"
 
-	"github.com/pingcap/tidb/pkg/config/kerneltype"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/tikv/client-go/v2/tikv"
-	pd "github.com/tikv/pd/client/http"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 	"gopkg.in/yaml.v2"
 )
 
 const (
 	// IDPrefix is the prefix for label rule ID.
 	IDPrefix = "schema"
-	// KeyspacePrefix is the prefix for keyspace in label rule ID.
-	KeyspacePrefix = "keyspace"
-	ruleType       = "key-range"
+	ruleType = "key-range"
 )
 
 const (
@@ -60,7 +53,13 @@ var (
 )
 
 // Rule is used to establish the relationship between labels and a key range.
-type Rule pd.LabelRule
+type Rule struct {
+	ID       string        `json:"id"`
+	Index    int           `json:"index"`
+	Labels   Labels        `json:"labels"`
+	RuleType string        `json:"rule_type"`
+	Data     []interface{} `json:"data"`
+}
 
 // NewRule creates a rule.
 func NewRule() *Rule {
@@ -70,7 +69,7 @@ func NewRule() *Rule {
 // ApplyAttributesSpec will transfer attributes defined in AttributesSpec to the labels.
 func (r *Rule) ApplyAttributesSpec(spec *ast.AttributesSpec) error {
 	if spec.Default {
-		r.Labels = []pd.RegionLabel{}
+		r.Labels = []Label{}
 		return nil
 	}
 	// construct a string list
@@ -100,55 +99,20 @@ func (r *Rule) Clone() *Rule {
 	return newRule
 }
 
-// UseKeyspaceAwareRules returns true when table attribute label rules should be
-// scoped by keyspace in NextGen deployments.
-func UseKeyspaceAwareRules(tikvCodec tikv.Codec) bool {
-	return kerneltype.IsNextGen() && tikvCodec != nil && tikvCodec.GetKeyspaceMeta() != nil
-}
-
-// NewRuleID generates a new rule ID for a table or partition.
-func NewRuleID(tikvCodec tikv.Codec, dbName, tableName, partName string) string {
-	var id string
+// Reset will reset the label rule for a table/partition with a given ID and names.
+func (r *Rule) Reset(dbName, tableName, partName string, ids ...int64) *Rule {
 	isPartition := partName != ""
 	if isPartition {
-		id = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName)
+		r.ID = fmt.Sprintf(PartitionIDFormat, IDPrefix, dbName, tableName, partName)
 	} else {
-		id = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
+		r.ID = fmt.Sprintf(TableIDFormat, IDPrefix, dbName, tableName)
 	}
-	if UseKeyspaceAwareRules(tikvCodec) {
-		id = fmt.Sprintf("%s/%d/%s", KeyspacePrefix, tikvCodec.GetKeyspaceID(), id)
-	}
-	return id
-}
-
-// RestoreRuleID converts an internal label rule ID to the user-visible form.
-func RestoreRuleID(ruleID string) string {
-	if !kerneltype.IsNextGen() {
-		return ruleID
-	}
-	parts := strings.Split(ruleID, "/")
-	if len(parts) >= 3 && parts[0] == KeyspacePrefix && parts[2] == IDPrefix {
-		return strings.Join(parts[2:], "/")
-	}
-	return ruleID
-}
-
-// Reset will reset the label rule for a table/partition with a given ID and names.
-func (r *Rule) Reset(tikvCodec tikv.Codec, dbName, tableName, partName string, ids ...int64) *Rule {
-	isPartition := partName != ""
-	useKeyspace := UseKeyspaceAwareRules(tikvCodec)
-	r.ID = NewRuleID(tikvCodec, dbName, tableName, partName)
 	if len(r.Labels) == 0 {
 		return r
 	}
-	var hasKeyspaceKey, hasDBKey, hasTableKey, hasPartitionKey bool
+	var hasDBKey, hasTableKey, hasPartitionKey bool
 	for i := range r.Labels {
 		switch r.Labels[i].Key {
-		case keyspaceKey:
-			if useKeyspace {
-				r.Labels[i].Value = strconv.FormatInt(int64(tikvCodec.GetKeyspaceID()), 10)
-				hasKeyspaceKey = true
-			}
 		case dbKey:
 			r.Labels[i].Value = dbName
 			hasDBKey = true
@@ -164,41 +128,27 @@ func (r *Rule) Reset(tikvCodec tikv.Codec, dbName, tableName, partName string, i
 		}
 	}
 
-	if useKeyspace && !hasKeyspaceKey {
-		r.Labels = append(r.Labels, pd.RegionLabel{Key: keyspaceKey, Value: strconv.FormatInt(int64(tikvCodec.GetKeyspaceID()), 10)})
-	}
-
 	if !hasDBKey {
-		r.Labels = append(r.Labels, pd.RegionLabel{Key: dbKey, Value: dbName})
+		r.Labels = append(r.Labels, Label{Key: dbKey, Value: dbName})
 	}
 
 	if !hasTableKey {
-		r.Labels = append(r.Labels, pd.RegionLabel{Key: tableKey, Value: tableName})
+		r.Labels = append(r.Labels, Label{Key: tableKey, Value: tableName})
 	}
 
 	if isPartition && !hasPartitionKey {
-		r.Labels = append(r.Labels, pd.RegionLabel{Key: partitionKey, Value: partName})
+		r.Labels = append(r.Labels, Label{Key: partitionKey, Value: partName})
 	}
 	r.RuleType = ruleType
-	dataSlice := make([]any, 0, len(ids))
+	r.Data = []interface{}{}
 	slices.Sort(ids)
-	for i := range ids {
-		var startKey, endKey []byte
-		if useKeyspace {
-			// Label rules are consumed as region boundary keys, so V2 must encode
-			// the whole outer key instead of prefixing a mem-encoded table key.
-			startKey, endKey = tikvCodec.EncodeRegionRange(tablecodec.GenTablePrefix(ids[i]), tablecodec.GenTablePrefix(ids[i]+1))
-		} else {
-			startKey = codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]))
-			endKey = codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]+1))
-		}
+	for i := 0; i < len(ids); i++ {
 		data := map[string]string{
-			"start_key": hex.EncodeToString(startKey),
-			"end_key":   hex.EncodeToString(endKey),
+			"start_key": hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]))),
+			"end_key":   hex.EncodeToString(codec.EncodeBytes(nil, tablecodec.GenTablePrefix(ids[i]+1))),
 		}
-		dataSlice = append(dataSlice, data)
+		r.Data = append(r.Data, data)
 	}
-	r.Data = dataSlice
 	// We may support more types later.
 	r.Index = RuleIndexTable
 	if isPartition {
@@ -207,14 +157,16 @@ func (r *Rule) Reset(tikvCodec tikv.Codec, dbName, tableName, partName string, i
 	return r
 }
 
+// RulePatch is the patch to update the label rules.
+type RulePatch struct {
+	SetRules    []*Rule  `json:"sets"`
+	DeleteRules []string `json:"deletes"`
+}
+
 // NewRulePatch returns a patch of rules which need to be set or deleted.
-func NewRulePatch(setRules []*Rule, deleteRules []string) *pd.LabelRulePatch {
-	labelRules := make([]*pd.LabelRule, 0, len(setRules))
-	for _, rule := range setRules {
-		labelRules = append(labelRules, (*pd.LabelRule)(rule))
-	}
-	return &pd.LabelRulePatch{
-		SetRules:    labelRules,
+func NewRulePatch(setRules []*Rule, deleteRules []string) *RulePatch {
+	return &RulePatch{
+		SetRules:    setRules,
 		DeleteRules: deleteRules,
 	}
 }

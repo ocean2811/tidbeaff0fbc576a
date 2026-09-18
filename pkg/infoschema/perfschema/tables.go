@@ -24,28 +24,23 @@ import (
 	"sync"
 	"time"
 
-	"github.com/ngaut/pools"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/terror"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/table/tables"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	"github.com/pingcap/tidb/pkg/util/profile"
-	pd "github.com/tikv/pd/client/http"
-	"go.uber.org/zap"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/tables"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/profile"
 )
 
 const (
 	tableNameGlobalStatus                    = "global_status"
-	tableNameGlobalVariables                 = "global_variables"
 	tableNameSessionStatus                   = "session_status"
 	tableNameSetupActors                     = "setup_actors"
 	tableNameSetupObjects                    = "setup_objects"
@@ -78,7 +73,6 @@ const (
 	tableNameSessionAccountConnectAttrs      = "session_account_connect_attrs"
 	tableNameSessionConnectAttrs             = "session_connect_attrs"
 	tableNameSessionVariables                = "session_variables"
-	tableNameStatusByConnection              = "status_by_connection"
 )
 
 var tableIDMap = map[string]int64{
@@ -115,8 +109,6 @@ var tableIDMap = map[string]int64{
 	tableNameSessionVariables:                autoid.PerformanceSchemaDBID + 31,
 	tableNameSessionConnectAttrs:             autoid.PerformanceSchemaDBID + 32,
 	tableNameSessionAccountConnectAttrs:      autoid.PerformanceSchemaDBID + 33,
-	tableNameGlobalVariables:                 autoid.PerformanceSchemaDBID + 34,
-	tableNameStatusByConnection:              autoid.PerformanceSchemaDBID + 35,
 }
 
 // perfSchemaTable stands for the fake table all its data is in the memory.
@@ -136,7 +128,7 @@ func IsPredefinedTable(tableName string) bool {
 	return ok
 }
 
-func tableFromMeta(allocs autoid.Allocators, _ func() (pools.Resource, error), meta *model.TableInfo) (table.Table, error) {
+func tableFromMeta(allocs autoid.Allocators, meta *model.TableInfo) (table.Table, error) {
 	if f, ok := pluginTable[meta.Name.L]; ok {
 		ret, err := f(allocs, meta)
 		return ret, err
@@ -213,11 +205,6 @@ func (vt *perfSchemaTable) Indices() []table.Index {
 	return vt.indices
 }
 
-// DeletableIndices implements table.Table DeletableIndices interface.
-func (vt *perfSchemaTable) DeletableIndices() []table.Index {
-	return nil
-}
-
 // GetPartitionedTable implements table.Table GetPartitionedTable interface.
 func (vt *perfSchemaTable) GetPartitionedTable() table.PartitionedTable {
 	return nil
@@ -230,73 +217,48 @@ func initTableIndices(t *perfSchemaTable) error {
 		if idxInfo.State == model.StateNone {
 			return table.ErrIndexStateCantNone.GenWithStackByArgs(idxInfo.Name)
 		}
-		idx, err := tables.NewIndex(t.meta.ID, tblInfo, idxInfo)
-		if err != nil {
-			return err
-		}
+		idx := tables.NewIndex(t.meta.ID, tblInfo, idxInfo)
 		t.indices = append(t.indices, idx)
 	}
 	return nil
 }
 
-func logTiDBProfileRequest(sctx sessionctx.Context, tableName string) {
-	vars := sctx.GetSessionVars()
-	fields := []zap.Field{
-		zap.String("table", "performance_schema."+tableName),
-		zap.Uint64("conn", vars.ConnectionID),
-	}
-	if vars.User != nil {
-		fields = append(fields, zap.String("user", vars.User.LoginString()))
-	}
-	if vars.ConnectionInfo != nil {
-		fields = append(fields, zap.String("client-ip", vars.ConnectionInfo.ClientIP))
-	}
-	logutil.BgLogger().Info("profiling request received", fields...)
-}
-
 func (vt *perfSchemaTable) getRows(ctx context.Context, sctx sessionctx.Context, cols []*table.Column) (fullRows [][]types.Datum, err error) {
 	switch vt.meta.Name.O {
 	case tableNameTiDBProfileCPU:
-		logTiDBProfileRequest(sctx, tableNameTiDBProfileCPU)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("cpu")
 	case tableNameTiDBProfileMemory:
-		logTiDBProfileRequest(sctx, tableNameTiDBProfileMemory)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("heap")
 	case tableNameTiDBProfileMutex:
-		logTiDBProfileRequest(sctx, tableNameTiDBProfileMutex)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("mutex")
 	case tableNameTiDBProfileAllocs:
-		logTiDBProfileRequest(sctx, tableNameTiDBProfileAllocs)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("allocs")
 	case tableNameTiDBProfileBlock:
-		logTiDBProfileRequest(sctx, tableNameTiDBProfileBlock)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("block")
 	case tableNameTiDBProfileGoroutines:
-		logTiDBProfileRequest(sctx, tableNameTiDBProfileGoroutines)
 		fullRows, err = (&profile.Collector{}).ProfileGraph("goroutine")
 	case tableNameTiKVProfileCPU:
 		interval := fmt.Sprintf("%d", profile.CPUProfileInterval/time.Second)
 		fullRows, err = dataForRemoteProfile(sctx, "tikv", "/debug/pprof/profile?seconds="+interval, false)
 	case tableNamePDProfileCPU:
-		fullRows, err = dataForRemoteProfile(sctx, "pd", pd.PProfProfileAPIWithInterval(profile.CPUProfileInterval), false)
+		interval := fmt.Sprintf("%d", profile.CPUProfileInterval/time.Second)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/profile?seconds="+interval, false)
 	case tableNamePDProfileMemory:
-		fullRows, err = dataForRemoteProfile(sctx, "pd", pd.PProfHeap, false)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/heap", false)
 	case tableNamePDProfileMutex:
-		fullRows, err = dataForRemoteProfile(sctx, "pd", pd.PProfMutex, false)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/mutex", false)
 	case tableNamePDProfileAllocs:
-		fullRows, err = dataForRemoteProfile(sctx, "pd", pd.PProfAllocs, false)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/allocs", false)
 	case tableNamePDProfileBlock:
-		fullRows, err = dataForRemoteProfile(sctx, "pd", pd.PProfBlock, false)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/block", false)
 	case tableNamePDProfileGoroutines:
-		fullRows, err = dataForRemoteProfile(sctx, "pd", pd.PProfGoroutineWithDebugLevel(2), true)
+		fullRows, err = dataForRemoteProfile(sctx, "pd", "/pd/api/v1/debug/pprof/goroutine?debug=2", true)
 	case tableNameSessionVariables:
 		fullRows, err = infoschema.GetDataFromSessionVariables(ctx, sctx)
 	case tableNameSessionConnectAttrs:
 		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx, false)
 	case tableNameSessionAccountConnectAttrs:
 		fullRows, err = infoschema.GetDataFromSessionConnectAttrs(sctx, true)
-	case tableNameStatusByConnection:
-		fullRows, err = infoschema.GetDataFromStatusByConn(sctx)
 	}
 	if err != nil {
 		return
@@ -340,7 +302,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	)
 	switch nodeType {
 	case "tikv":
-		servers, err = infoschema.GetStoreServerInfo(ctx.GetStore())
+		servers, err = infoschema.GetStoreServerInfo(ctx)
 	case "pd":
 		servers, err = infoschema.GetPDServerInfo(ctx)
 	default:
@@ -381,7 +343,7 @@ func dataForRemoteProfile(ctx sessionctx.Context, nodeType, uri string, isGorout
 	for _, server := range servers {
 		statusAddr := server.StatusAddr
 		if len(statusAddr) == 0 {
-			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.NewNoStackErrorf("TiKV node %s does not contain status address", server.Address))
+			ctx.GetSessionVars().StmtCtx.AppendWarning(errors.Errorf("TiKV node %s does not contain status address", server.Address))
 			continue
 		}
 

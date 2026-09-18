@@ -17,11 +17,11 @@ package aggregation
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/mock"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 )
 
 func BenchmarkCreateContext(b *testing.B) {
@@ -37,7 +37,7 @@ func BenchmarkCreateContext(b *testing.B) {
 	fun := desc.GetAggFunc(ctx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		fun.CreateContext(ctx)
+		fun.CreateContext(ctx.GetSessionVars().StmtCtx)
 	}
 	b.ReportAllocs()
 }
@@ -53,10 +53,10 @@ func BenchmarkResetContext(b *testing.B) {
 		b.Fatal(err)
 	}
 	fun := desc.GetAggFunc(ctx)
-	evalCtx := fun.CreateContext(ctx)
+	evalCtx := fun.CreateContext(ctx.GetSessionVars().StmtCtx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		fun.ResetContext(ctx, evalCtx)
+		fun.ResetContext(ctx.GetSessionVars().StmtCtx, evalCtx)
 	}
 	b.ReportAllocs()
 }
@@ -74,7 +74,7 @@ func BenchmarkCreateDistinctContext(b *testing.B) {
 	fun := desc.GetAggFunc(ctx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		fun.CreateContext(ctx)
+		fun.CreateContext(ctx.GetSessionVars().StmtCtx)
 	}
 	b.ReportAllocs()
 }
@@ -90,10 +90,10 @@ func BenchmarkResetDistinctContext(b *testing.B) {
 		b.Fatal(err)
 	}
 	fun := desc.GetAggFunc(ctx)
-	evalCtx := fun.CreateContext(ctx)
+	evalCtx := fun.CreateContext(ctx.GetSessionVars().StmtCtx)
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		fun.ResetContext(ctx, evalCtx)
+		fun.ResetContext(ctx.GetSessionVars().StmtCtx, evalCtx)
 	}
 	b.ReportAllocs()
 }

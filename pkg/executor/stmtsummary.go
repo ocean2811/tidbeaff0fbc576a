@@ -17,18 +17,17 @@ package executor
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	plannercore "github.com/pingcap/tidb/pkg/planner/core"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	"github.com/pingcap/tidb/pkg/util/execdetails"
-	"github.com/pingcap/tidb/pkg/util/set"
-	"github.com/pingcap/tidb/pkg/util/stmtsummary"
-	stmtsummaryv2 "github.com/pingcap/tidb/pkg/util/stmtsummary/v2"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	plannercore "github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/execdetails"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/set"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/stmtsummary"
+	stmtsummaryv2 "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/stmtsummary/v2"
 )
 
 const (
@@ -159,11 +158,10 @@ func (e *stmtSummaryRetriever) initSummaryRowsReader(sctx sessionctx.Context) (*
 	}
 
 	var rows [][]types.Datum
-	if isCumulativeTable(e.table.Name.O) {
-		rows = reader.GetStmtSummaryCumulativeRows()
-	} else if isCurrentTable(e.table.Name.O) {
+	if isCurrentTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryCurrentRows()
-	} else if isHistoryTable(e.table.Name.O) {
+	}
+	if isHistoryTable(e.table.Name.O) {
 		rows = reader.GetStmtSummaryHistoryRows()
 	}
 	return newSimpleRowsReader(rows), nil
@@ -241,11 +239,6 @@ func (r *stmtSummaryRetrieverV2) initEvictedRowsReader(sctx sessionctx.Context) 
 }
 
 func (r *stmtSummaryRetrieverV2) initSummaryRowsReader(ctx context.Context, sctx sessionctx.Context) (*rowsReader, error) {
-	if isCumulativeTable(r.table.Name.O) {
-		return nil, plannererrors.ErrNotSupportedYet.GenWithStackByArgs(
-			"cumulative statement summary table with persistent mode (v2)")
-	}
-
 	vars := sctx.GetSessionVars()
 	user := vars.User
 	tz := vars.StmtCtx.TimeZone()
@@ -351,18 +344,7 @@ func isClusterTable(originalTableName string) bool {
 	switch originalTableName {
 	case infoschema.ClusterTableStatementsSummary,
 		infoschema.ClusterTableStatementsSummaryHistory,
-		infoschema.ClusterTableStatementsSummaryEvicted,
-		infoschema.ClusterTableTiDBStatementsStats:
-		return true
-	}
-
-	return false
-}
-
-func isCumulativeTable(originalTableName string) bool {
-	switch originalTableName {
-	case infoschema.TableTiDBStatementsStats,
-		infoschema.ClusterTableTiDBStatementsStats:
+		infoschema.ClusterTableStatementsSummaryEvicted:
 		return true
 	}
 
@@ -401,7 +383,7 @@ func isEvictedTable(originalTableName string) bool {
 
 func checkPrivilege(sctx sessionctx.Context) error {
 	if !hasPriv(sctx, mysql.ProcessPriv) {
-		return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
+		return plannercore.ErrSpecificAccessDenied.GenWithStackByArgs("PROCESS")
 	}
 	return nil
 }

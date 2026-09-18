@@ -1,3 +1,6 @@
+lease = 360
+tso-save-interval = "360s"
+
 [replication]
 enable-placement-rules = true
 
@@ -5,6 +8,3 @@ enable-placement-rules = true
 cacert-path = "/tmp/backup_restore_test/certs/ca.pem"
 cert-path = "/tmp/backup_restore_test/certs/pd.pem"
 key-path = "/tmp/backup_restore_test/certs/pd.key"
-
-[keyspace]
-pre-alloc = ["keyspace1", "keyspace2"]

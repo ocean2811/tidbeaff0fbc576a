@@ -8,7 +8,7 @@ go_library(
         "load_dump.go",
         "lockstore.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/lockstore",
     visibility = ["//visibility:public"],
     deps = [
         "@com_github_pingcap_errors//:errors",

@@ -1,7 +1,7 @@
 # Proposal: Extend `tidb_constraint_check_in_place` to Support Pessimistic Transactions
 
 * Authors: [sticnarf](https://github.com/sticnarf), [ekexium](https://github.com/ekexium)
-* Tracking issue: [#36579](https://github.com/pingcap/tidb/issues/36579)
+* Tracking issue: [#36579](https://github.com/ocean2811/tidbeaff0fbc576a/issues/36579)
 
 ## Abstract
 

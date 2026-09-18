@@ -15,7 +15,6 @@
 
 TIDB_TEST_STORE_NAME=$TIDB_TEST_STORE_NAME
 TIKV_PATH=$TIKV_PATH
-NEXT_GEN=$NEXT_GEN
 
 build=1
 mysql_tester="./mysql_tester"
@@ -27,10 +26,9 @@ record=0
 record_case=""
 stats="s"
 collation_opt=2
-runs_on_port=0
 
 set -eu
-trap 'set +e; PIDS=$(jobs -p); for pid in $PIDS; do kill -9 $pid 2>/dev/null || true; done' EXIT
+trap 'set +e; PIDS=$(jobs -p); [ -n "$PIDS" ] && kill -9 $PIDS' EXIT
 # make tests stable time zone wise
 export TZ="Asia/Shanghai"
 
@@ -42,7 +40,7 @@ function help_message()
 
     -d <y|Y|n|N|b|B>: \"y\" or \"Y\" for only enabling the new collation during test.
                       \"n\" or \"N\" for only disabling the new collation during test.
-                      \"b\" or \"B\" for tests the prefix is 'collation', enabling and disabling new collation during test, and for other tests, only enabling the new collation [default].
+                      \"b\" or \"B\" for both tests [default].
                       Enable/Disable the new collation during the integration test.
 
     -s <tidb-server-path>: Use tidb-server in <tidb-server-path> for testing.
@@ -60,57 +58,29 @@ function help_message()
                     This option will be ignored if \"-r <test-name>\" is provided.
                     Run all tests if this option is not provided.
 
-    -P <port>: Use tidb-server running on <port> for testing.
+    -p <portgenerator-path>: Use port generator in <portgenerator-path> for generating port numbers.
 
 "
 }
 
-# Function to find an available port starting from a given port
-function find_available_port() {
-    local port=$1
-
-    while :; do
-        if [ "$port" -ge 65536 ]; then
-            echo "Error: No available ports found below 65536." >&2
-            exit 1
-        fi
-        if ! lsof -nP -i :"$port" &> /dev/null; then
-            echo $port
-            return 0
-        fi
-        ((port++))
-    done
+function build_portgenerator()
+{
+    portgenerator="./portgenerator"
+    echo "building portgenerator binary: $portgenerator"
+    rm -rf $portgenerator
+    GO111MODULE=on go build -o $portgenerator github.com/ocean2811/tidbeaff0fbc576a/cmd/portgenerator
 }
 
-# Function to find multiple available ports starting from a given port
-function find_multiple_available_ports() {
-    local start_port=$1
-    local count=$2
-    local ports=()
-
-    while [ ${#ports[@]} -lt $count ]; do
-        local available_port=$(find_available_port $start_port)
-        if [ $? -eq 0 ]; then
-            ports+=($available_port)
-            ((start_port = available_port + 1))
-        else
-            echo "Error: Could not find an available port." >&2
-            exit 1
-        fi
-    done
-
-    echo "${ports[@]}"
-}
 
 function build_tidb_server()
 {
-    tidb_server="$(pwd)/integrationtest_tidb-server"
+    tidb_server="./integrationtest_tidb-server"
     echo "building tidb-server binary: $tidb_server"
     rm -rf $tidb_server
     if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        make -C ../.. server SERVER_OUT=$tidb_server
+        GO111MODULE=on go build -o $tidb_server github.com/ocean2811/tidbeaff0fbc576a/cmd/tidb-server
     else
-        make -C ../.. server SERVER_OUT=$tidb_server RACE_FLAG="-race"
+        GO111MODULE=on go build -race -o $tidb_server github.com/ocean2811/tidbeaff0fbc576a/cmd/tidb-server
     fi
 }
 
@@ -118,7 +88,7 @@ function build_mysql_tester()
 {
     echo "building mysql-tester binary: $mysql_tester"
     rm -rf $mysql_tester
-    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@f2d90ea9522d30c9a8e8d70cc31c7f016ca2801f
+    GOBIN=$PWD go install github.com/pingcap/mysql-tester/src@f3b554899a0cb24a3b387f7d45de2687098577c3
     mv src mysql_tester
 }
 
@@ -129,13 +99,8 @@ function extract_stats()
     unzip -qq s.zip
 }
 
-while getopts "t:s:r:b:d:c:i:P:h" opt; do
+while getopts "t:s:r:b:d:c:i:h:p" opt; do
     case $opt in
-        P)
-            runs_on_port="$OPTARG"
-            port="$OPTARG"
-            build=0
-            ;;
         t)
             tests="$OPTARG"
             ;;
@@ -155,7 +120,7 @@ while getopts "t:s:r:b:d:c:i:P:h" opt; do
                     build=0
                     ;;
                 *)
-                    help_message 1>&2
+                    help_messge 1>&2
                     exit 1
                     ;;
             esac
@@ -168,11 +133,8 @@ while getopts "t:s:r:b:d:c:i:P:h" opt; do
                 n|N)
                     collation_opt=0
                     ;;
-                b|B)
-                    collation_opt=2
-                    ;;
                 *)
-                    help_message 1>&2
+                    help_messge 1>&2
                     exit 1
                     ;;
             esac
@@ -180,6 +142,9 @@ while getopts "t:s:r:b:d:c:i:P:h" opt; do
         h)
             help_message
             exit 0
+            ;;
+        p)  
+            portgenerator="$OPTARG"
             ;;
         *)
             help_message 1>&2
@@ -196,9 +161,14 @@ if [ $build -eq 1 ]; then
     else
         echo "skip building tidb-server, using existing binary: $tidb_server"
     fi
+    if [[ -z "$portgenerator" ]]; then
+        build_portgenerator
+    else
+        echo "skip building portgenerator, using existing binary: $portgenerator"
+    fi
     build_mysql_tester
 else
-    if [ -z "$tidb_server" ] && [ "$runs_on_port" -eq 0 ]; then
+    if [ -z "$tidb_server" ]; then
         tidb_server="./integrationtest_tidb-server"
         if [[ ! -f "$tidb_server" ]]; then
             build_tidb_server
@@ -214,16 +184,25 @@ else
             echo "skip building mysql-tester, using existing binary: $mysql_tester"
         fi
     fi
+    if [ -z "$portgenerator" ]; then
+        portgenerator="./portgenerator"
+        if [[ ! -f "$portgenerator" ]]; then
+            build_portgenerator
+        else
+            echo "skip building portgenerator, using existing binary: $portgenerator"
+        fi
+    fi
 fi
 
 rm -rf $mysql_tester_log
 
-if [ "$runs_on_port" -eq 0 ]
-then
-    ports=($(find_multiple_available_ports 4000 2))
-    port=6999
-    status=${ports[1]}
-fi
+ports=()
+for port in $($portgenerator -count 2); do
+    ports+=("$port")
+done
+
+port=${ports[0]}
+status=${ports[1]}
 
 function start_tidb_server()
 {
@@ -231,22 +210,14 @@ function start_tidb_server()
     if [[ $enabled_new_collation = 0 ]]; then
         config_file="disable_new_collation.toml"
     fi
-
-    start_options="-P $port -status $status -config $config_file"
-    if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
-        start_options="$start_options -store tikv -path ${TIKV_PATH}"
-    else
-        start_options="$start_options -store unistore -path ''"
-    fi
-
-    if [ -n "$NEXT_GEN" ] && [ "$NEXT_GEN" != "0" ] && [ "$NEXT_GEN" != "false" ]; then
-        start_options="$start_options -keyspace-name SYSTEM --tidb-service-scope dxf_service"
-    fi
-
     echo "start tidb-server, log file: $mysql_tester_log"
-    $tidb_server -V
-    $tidb_server $start_options > $mysql_tester_log 2>&1 &
-    SERVER_PID=$!
+    if [ "${TIDB_TEST_STORE_NAME}" = "tikv" ]; then
+        $tidb_server -P "$port" -status "$status" -config $config_file -store tikv -path "${TIKV_PATH}" > $mysql_tester_log 2>&1 &
+        SERVER_PID=$!
+    else
+        $tidb_server -P "$port" -status "$status" -config $config_file -store unistore -path "" > $mysql_tester_log 2>&1 &
+        SERVER_PID=$!
+    fi
     echo "tidb-server(PID: $SERVER_PID) started"
 }
 
@@ -261,10 +232,10 @@ function run_mysql_tester()
     if [ $record -eq 1 ]; then
       if [ "$record_case" = 'all' ]; then
           echo "record all cases"
-          $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled --record
+          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record
       else
           echo "record result for case: \"$record_case\""
-          $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled --record $record_case
+          $mysql_tester -port "$port" --collation-disable=$coll_disabled --record $record_case
       fi
     else
       if [ -z "$tests" ]; then
@@ -272,7 +243,7 @@ function run_mysql_tester()
       else
           echo "run integration test cases($coll_msg): $tests"
       fi
-      $mysql_tester -port "$port" --check-error=true --collation-disable=$coll_disabled $tests
+      $mysql_tester -port "$port" --collation-disable=$coll_disabled $tests
     fi
 }
 
@@ -289,70 +260,28 @@ function check_data_race() {
 }
 
 enabled_new_collation=""
-function check_case_name() {
-    if [ $collation_opt != 2 ]; then
-        return
-    fi
 
-    case=""
-
-    if [ $record -eq 0 ]; then
-        if [ -z "$tests" ]; then
-            return
-        fi
-        case=$tests
-    fi
-
-    if [ $record -eq 1 ]; then
-        if [ "$record_case" = 'all' ]; then
-            return
-        fi
-        case=$record_case
-    fi
-
-    IFS='/' read -ra parts <<< "$case"
-
-    last_part="${parts[${#parts[@]}-1]}"
-
-    if [[ $last_part == collation* || $tests == collation* ]]; then
-        collation_opt=2
-    else
-        collation_opt=1
-    fi
-}
-
-check_case_name
 if [[ $collation_opt = 0 || $collation_opt = 2 ]]; then
     enabled_new_collation=0
-    if [ "$runs_on_port" -eq 0 ]
-    then
-        start_tidb_server
-    fi
+    start_tidb_server
+    sleep 5
     run_mysql_tester
-    if [ "$runs_on_port" -eq 0 ]
-    then
-        kill -15 $SERVER_PID
-        while ps -p $SERVER_PID > /dev/null; do
-            sleep 1
-        done
-    fi
+    kill -15 $SERVER_PID
+    while ps -p $SERVER_PID > /dev/null; do
+        sleep 1
+    done
     check_data_race
 fi
 
 if [[ $collation_opt = 1 || $collation_opt = 2 ]]; then
     enabled_new_collation=1
-    if [ "$runs_on_port" -eq 0 ]
-    then
-        start_tidb_server
-    fi
+    start_tidb_server
+    sleep 5
     run_mysql_tester
-    if [ "$runs_on_port" -eq 0 ]
-    then
-        kill -15 $SERVER_PID
-        while ps -p $SERVER_PID > /dev/null; do
-            sleep 1
-        done
-    fi
+    kill -15 $SERVER_PID
+    while ps -p $SERVER_PID > /dev/null; do
+        sleep 1
+    done
     check_data_race
 fi
 

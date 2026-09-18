@@ -25,11 +25,11 @@ import (
 	brpb "github.com/pingcap/kvproto/pkg/brpb"
 	"github.com/pingcap/kvproto/pkg/metapb"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/logutil"
-	"github.com/pingcap/tidb/br/pkg/utils"
-	"github.com/pingcap/tidb/pkg/util/engine"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/engine"
 	"github.com/tikv/client-go/v2/tikv"
-	"github.com/tikv/pd/client/opt"
+	pd "github.com/tikv/pd/client"
 	"go.uber.org/zap"
 	"google.golang.org/grpc"
 )
@@ -103,7 +103,7 @@ type CliEnv struct {
 }
 
 func (c CliEnv) GetAllLiveStores(ctx context.Context) ([]*metapb.Store, error) {
-	stores, err := c.Cache.PDClient().GetAllStores(ctx, opt.WithExcludeTombstone())
+	stores, err := c.Cache.PDClient().GetAllStores(ctx, pd.WithExcludeTombstone())
 	if err != nil {
 		return nil, err
 	}
@@ -176,17 +176,15 @@ func (c CliEnv) LoadRegionsInKeyRange(ctx context.Context, startKey []byte, endK
 
 type RetryAndSplitRequestEnv struct {
 	Env
-	GetBackoffStrategy func() utils.BackoffStrategy
+	GetBackoffer func() utils.Backoffer
 }
 
 func (r RetryAndSplitRequestEnv) ConnectToStore(ctx context.Context, storeID uint64) (PrepareClient, error) {
-	var bo utils.BackoffStrategy
-	if r.GetBackoffStrategy != nil {
-		bo = r.GetBackoffStrategy()
-	} else {
-		bo = utils.ConstantBackoff(10 * time.Second)
+	rs := utils.ConstantBackoff(10 * time.Second)
+	bo := utils.Backoffer(rs)
+	if r.GetBackoffer != nil {
+		bo = r.GetBackoffer()
 	}
-
 	cli, err := utils.WithRetryV2(ctx, bo, func(ctx context.Context) (PrepareClient, error) {
 		cli, err := r.Env.ConnectToStore(ctx, storeID)
 		if err != nil {

@@ -18,7 +18,7 @@ import (
 	"container/list"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/util/memory"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/memory"
 )
 
 // Key is the interface that every key in LRU Cache should implement.
@@ -27,7 +27,8 @@ type Key interface {
 }
 
 // Value is the interface that every value in LRU Cache should implement.
-type Value any
+type Value interface {
+}
 
 // cacheEntry wraps Key and Value. It's the value of list.Element.
 type cacheEntry struct {
@@ -42,7 +43,7 @@ var (
 
 const (
 	// ProfileName is the function name in heap profile
-	ProfileName = "github.com/pingcap/tidb/pkg/util/kvcache.(*SimpleLRUCache).Put"
+	ProfileName = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/kvcache.(*SimpleLRUCache).Put"
 )
 
 func init() {
@@ -91,15 +92,6 @@ func (l *SimpleLRUCache) Get(key Key) (value Value, ok bool) {
 		return nil, false
 	}
 	l.cache.MoveToFront(element)
-	return element.Value.(*cacheEntry).value, true
-}
-
-// Peek tries to find the corresponding value without updating its LRU position.
-func (l *SimpleLRUCache) Peek(key Key) (value Value, ok bool) {
-	element, exists := l.elements[string(key.Hash())]
-	if !exists {
-		return nil, false
-	}
 	return element.Value.(*cacheEntry).value, true
 }
 

@@ -15,17 +15,15 @@ import (
 	"github.com/go-sql-driver/mysql"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/log"
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/server"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/store/mockstore/teststore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/session"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore"
 	"github.com/tikv/client-go/v2/testutils"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	pdhttp "github.com/tikv/pd/client/http"
 	"go.opencensus.io/stats/view"
 	"go.uber.org/zap"
 )
@@ -41,7 +39,6 @@ type Cluster struct {
 	*domain.Domain
 	DSN        string
 	PDClient   pd.Client
-	PDHTTPCli  pdhttp.Client
 	HttpServer *http.Server
 }
 
@@ -62,7 +59,7 @@ func NewCluster() (*Cluster, error) {
 		}()
 	})
 
-	storage, err := teststore.NewMockStoreWithoutBootstrap(
+	storage, err := mockstore.NewMockStore(
 		mockstore.WithClusterInspector(func(c testutils.Cluster) {
 			mockstore.BootstrapWithSingleStore(c)
 			cluster.Cluster = c
@@ -73,6 +70,7 @@ func NewCluster() (*Cluster, error) {
 	}
 	cluster.Storage = storage
 
+	session.SetSchemaLease(0)
 	session.DisableStats4Test()
 	dom, err := session.BootstrapSession(storage)
 	if err != nil {
@@ -81,7 +79,6 @@ func NewCluster() (*Cluster, error) {
 	cluster.Domain = dom
 
 	cluster.PDClient = storage.(tikv.Storage).GetRegionCache().PDClient()
-	cluster.PDHTTPCli = storage.(tikv.Storage).GetPDHTTPClient()
 	return cluster, nil
 }
 
@@ -93,7 +90,7 @@ func (mock *Cluster) Start() error {
 	cfg := config.NewConfig()
 	// let tidb random select a port
 	cfg.Port = 0
-	cfg.Store = config.StoreTypeTiKV
+	cfg.Store = "tikv"
 	cfg.Status.StatusPort = 0
 	cfg.Status.ReportStatus = true
 	cfg.Socket = fmt.Sprintf("/tmp/tidb-mock-%d.sock", time.Now().UnixNano())
@@ -102,7 +99,6 @@ func (mock *Cluster) Start() error {
 	if err != nil {
 		return errors.Trace(err)
 	}
-	svr.SetDomain(mock.Domain)
 	mock.Server = svr
 	go func() {
 		if err1 := svr.Run(nil); err1 != nil {
@@ -171,7 +167,7 @@ func waitUntilServerOnline(addr string, statusPort uint) string {
 	}
 	// connect http status
 	statusURL := fmt.Sprintf("http://127.0.0.1:%d/status", statusPort)
-	for retry = range retryTime {
+	for retry = 0; retry < retryTime; retry++ {
 		// #nosec G107
 		resp, err := http.Get(statusURL) // nolint:noctx,gosec
 		if err == nil {

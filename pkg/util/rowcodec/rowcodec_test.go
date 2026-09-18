@@ -23,16 +23,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/sessionctx/stmtctx"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/rowcodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/stmtctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/rowcodec"
 	"github.com/stretchr/testify/require"
 )
 
@@ -51,7 +51,7 @@ func TestEncodeLargeSmallReuseBug(t *testing.T) {
 	colFt := types.NewFieldType(mysql.TypeString)
 
 	largeColID := int64(300)
-	b, err := encoder.Encode(nil, []int64{largeColID}, []types.Datum{types.NewBytesDatum([]byte(""))}, nil, nil)
+	b, err := encoder.Encode(stmtctx.NewStmtCtx(), []int64{largeColID}, []types.Datum{types.NewBytesDatum([]byte(""))}, nil)
 	require.NoError(t, err)
 
 	bDecoder := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
@@ -66,7 +66,7 @@ func TestEncodeLargeSmallReuseBug(t *testing.T) {
 
 	colFt = types.NewFieldType(mysql.TypeLonglong)
 	smallColID := int64(1)
-	b, err = encoder.Encode(nil, []int64{smallColID}, []types.Datum{types.NewIntDatum(2)}, nil, nil)
+	b, err = encoder.Encode(stmtctx.NewStmtCtx(), []int64{smallColID}, []types.Datum{types.NewIntDatum(2)}, nil)
 	require.NoError(t, err)
 
 	bDecoder = rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{
@@ -162,15 +162,16 @@ func TestDecodeRowWithHandle(t *testing.T) {
 
 			// test encode input.
 			var encoder rowcodec.Encoder
-			newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
+			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+			newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 			require.NoError(t, err)
 
 			// decode to datum map.
-			mDecoder := rowcodec.NewDatumMapDecoder(cols, time.UTC)
+			mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone())
 			dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
 			require.NoError(t, err)
 
-			dm, err = tablecodec.DecodeHandleToDatumMap(kv.IntHandle(handleValue), []int64{handleID}, handleColFtMap, time.UTC, dm)
+			dm, err = tablecodec.DecodeHandleToDatumMap(kv.IntHandle(handleValue), []int64{handleID}, handleColFtMap, sc.TimeZone(), dm)
 			require.NoError(t, err)
 
 			for _, d := range td {
@@ -180,9 +181,9 @@ func TestDecodeRowWithHandle(t *testing.T) {
 			}
 
 			// decode to chunk.
-			cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
+			cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone())
 			chk := chunk.New(fts, 1, 1)
-			err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(handleValue), chk)
+			err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(handleValue), chk)
 			require.NoError(t, err)
 
 			chkRow := chk.GetRow(0)
@@ -221,6 +222,7 @@ func TestDecodeRowWithHandle(t *testing.T) {
 
 func TestEncodeKindNullDatum(t *testing.T) {
 	var encoder rowcodec.Encoder
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	colIDs := []int64{1, 2}
 
 	var nilDt types.Datum
@@ -228,13 +230,13 @@ func TestEncodeKindNullDatum(t *testing.T) {
 	dts := []types.Datum{nilDt, types.NewIntDatum(2)}
 	ft := types.NewFieldType(mysql.TypeLonglong)
 	fts := []*types.FieldType{ft, ft}
-	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
+	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 	require.NoError(t, err)
 
 	cols := []rowcodec.ColInfo{{ID: 1, Ft: ft}, {ID: 2, Ft: ft}}
-	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
+	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone())
 	chk := chunk.New(fts, 1, 1)
-	err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
+	err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 
 	chkRow := chk.GetRow(0)
@@ -245,6 +247,7 @@ func TestEncodeKindNullDatum(t *testing.T) {
 
 func TestDecodeDecimalFspNotMatch(t *testing.T) {
 	var encoder rowcodec.Encoder
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
 	colIDs := []int64{
 		1,
 	}
@@ -253,7 +256,7 @@ func TestDecodeDecimalFspNotMatch(t *testing.T) {
 	ft := types.NewFieldType(mysql.TypeNewDecimal)
 	ft.SetDecimal(4)
 	fts := []*types.FieldType{ft}
-	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
+	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 	require.NoError(t, err)
 
 	// decode to chunk.
@@ -264,9 +267,9 @@ func TestDecodeDecimalFspNotMatch(t *testing.T) {
 		ID: 1,
 		Ft: ft,
 	})
-	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
+	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone())
 	chk := chunk.New(fts, 1, 1)
-	err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
+	err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 
 	chkRow := chk.GetRow(0)
@@ -289,7 +292,7 @@ func TestTypesNewRowCodec(t *testing.T) {
 		return d
 	}
 	getTime := func(value string) types.Time {
-		d, err := types.ParseTime(types.DefaultStmtNoWarningContext, value, mysql.TypeTimestamp, 6)
+		d, err := types.ParseTime(stmtctx.NewStmtCtxWithTimeZone(time.UTC), value, mysql.TypeTimestamp, 6, nil)
 		require.NoError(t, err)
 		return d
 	}
@@ -509,11 +512,12 @@ func TestTypesNewRowCodec(t *testing.T) {
 			}
 
 			// test encode input.
-			newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
+			sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+			newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 			require.NoError(t, err)
 
 			// decode to datum map.
-			mDecoder := rowcodec.NewDatumMapDecoder(cols, time.UTC)
+			mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone())
 			dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
 			require.NoError(t, err)
 
@@ -524,9 +528,9 @@ func TestTypesNewRowCodec(t *testing.T) {
 			}
 
 			// decode to chunk.
-			cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
+			cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone())
 			chk := chunk.New(fts, 1, 1)
-			err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
+			err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
 			require.NoError(t, err)
 
 			chkRow := chk.GetRow(0)
@@ -622,11 +626,12 @@ func TestNilAndDefault(t *testing.T) {
 
 	// test encode input.
 	var encoder rowcodec.Encoder
-	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 	require.NoError(t, err)
 
 	// decode to datum map.
-	mDecoder := rowcodec.NewDatumMapDecoder(cols, time.UTC)
+	mDecoder := rowcodec.NewDatumMapDecoder(cols, sc.TimeZone())
 	dm, err := mDecoder.DecodeToDatumMap(newRow, nil)
 	require.NoError(t, err)
 
@@ -643,8 +648,8 @@ func TestNilAndDefault(t *testing.T) {
 
 	// decode to chunk.
 	chk := chunk.New(fts, 1, 1)
-	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, ddf, time.UTC)
-	err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
+	cDecoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, ddf, sc.TimeZone())
+	err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 
 	chkRow := chk.GetRow(0)
@@ -659,8 +664,8 @@ func TestNilAndDefault(t *testing.T) {
 	}
 
 	chk = chunk.New(fts, 1, 1)
-	cDecoder = rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
-	err = cDecoder.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
+	cDecoder = rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, sc.TimeZone())
+	err = cDecoder.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 
 	chkRow = chk.GetRow(0)
@@ -677,7 +682,7 @@ func TestNilAndDefault(t *testing.T) {
 	for i, t := range td {
 		colOffset[t.id] = i
 	}
-	bDecoder := rowcodec.NewByteDecoder(cols, []int64{-1}, bdf, time.UTC)
+	bDecoder := rowcodec.NewByteDecoder(cols, []int64{-1}, bdf, sc.TimeZone())
 	oldRow, err := bDecoder.DecodeToBytes(colOffset, kv.IntHandle(-1), newRow, nil)
 	require.NoError(t, err)
 
@@ -730,10 +735,11 @@ func TestVarintCompatibility(t *testing.T) {
 
 	// test encode input.
 	var encoder rowcodec.Encoder
-	newRow, err := encoder.Encode(time.UTC, colIDs, dts, nil, nil)
+	sc := stmtctx.NewStmtCtxWithTimeZone(time.UTC)
+	newRow, err := encoder.Encode(sc, colIDs, dts, nil)
 	require.NoError(t, err)
 
-	decoder := rowcodec.NewByteDecoder(cols, []int64{-1}, nil, time.UTC)
+	decoder := rowcodec.NewByteDecoder(cols, []int64{-1}, nil, sc.TimeZone())
 	// decode to old row bytes.
 	colOffset := make(map[int64]int)
 	for i, t := range td {
@@ -752,12 +758,12 @@ func TestVarintCompatibility(t *testing.T) {
 func TestCodecUtil(t *testing.T) {
 	colIDs := []int64{1, 2, 3, 4}
 	tps := make([]*types.FieldType, 4)
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		tps[i] = types.NewFieldType(mysql.TypeLonglong)
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
 	sc := stmtctx.NewStmtCtx()
-	oldRow, err := tablecodec.EncodeOldRow(sc.TimeZone(), types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
+	oldRow, err := tablecodec.EncodeOldRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
 	require.NoError(t, err)
 
 	var (
@@ -802,12 +808,12 @@ func TestCodecUtil(t *testing.T) {
 func TestOldRowCodec(t *testing.T) {
 	colIDs := []int64{1, 2, 3, 4}
 	tps := make([]*types.FieldType, 4)
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		tps[i] = types.NewFieldType(mysql.TypeLonglong)
 	}
 	tps[3] = types.NewFieldType(mysql.TypeNull)
 	sc := stmtctx.NewStmtCtx()
-	oldRow, err := tablecodec.EncodeOldRow(sc.TimeZone(), types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
+	oldRow, err := tablecodec.EncodeOldRow(sc, types.MakeDatums(1, 2, 3, nil), colIDs, nil, nil)
 	require.NoError(t, err)
 
 	var (
@@ -826,10 +832,10 @@ func TestOldRowCodec(t *testing.T) {
 	}
 	rd := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.Local)
 	chk := chunk.NewChunkWithCapacity(tps, 1)
-	err = rd.DecodeToChunk(newRow, 0, kv.IntHandle(-1), chk)
+	err = rd.DecodeToChunk(newRow, kv.IntHandle(-1), chk)
 	require.NoError(t, err)
 	row := chk.GetRow(0)
-	for i := range 3 {
+	for i := 0; i < 3; i++ {
 		require.Equal(t, int64(i+1), row.GetInt64(i))
 	}
 }
@@ -838,9 +844,10 @@ func Test65535Bug(t *testing.T) {
 	colIds := []int64{1}
 	tps := make([]*types.FieldType, 1)
 	tps[0] = types.NewFieldType(mysql.TypeString)
+	sc := stmtctx.NewStmtCtx()
 	text65535 := strings.Repeat("a", 65535)
 	encode := rowcodec.Encoder{}
-	bd, err := encode.Encode(time.UTC, colIds, []types.Datum{types.NewStringDatum(text65535)}, nil, nil)
+	bd, err := encode.Encode(sc, colIds, []types.Datum{types.NewStringDatum(text65535)}, nil)
 	require.NoError(t, err)
 
 	cols := make([]rowcodec.ColInfo, 1)
@@ -886,7 +893,7 @@ func TestColumnEncode(t *testing.T) {
 		decMax  = types.NewMaxOrMinDec(false, 12, 6)
 		json1   = types.CreateBinaryJSON(nil)
 		json2   = types.CreateBinaryJSON(int64(42))
-		json3   = types.CreateBinaryJSON(map[string]any{"foo": "bar", "a": int64(42)})
+		json3   = types.CreateBinaryJSON(map[string]interface{}{"foo": "bar", "a": int64(42)})
 	)
 
 	for _, tt := range []struct {
@@ -1195,38 +1202,91 @@ func TestRowChecksum(t *testing.T) {
 }
 
 func TestEncodeDecodeRowWithChecksum(t *testing.T) {
+	sc := stmtctx.NewStmtCtx()
 	enc := rowcodec.Encoder{}
 
-	raw, err := enc.Encode(time.UTC, nil, nil, nil, nil)
-	require.NoError(t, err)
-
-	dec := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{}, time.UTC)
-	_, err = dec.DecodeToDatumMap(raw, nil)
-	require.NoError(t, err)
-
-	checksum, ok := dec.GetChecksum()
-	require.False(t, ok)
-	require.Zero(t, checksum)
-
-	rawChecksum := rowcodec.RawChecksum{
-		Handle: kv.IntHandle(1),
+	for _, tt := range []struct {
+		name      string
+		checksums []uint32
+	}{
+		{"NoChecksum", nil},
+		{"OneChecksum", []uint32{1}},
+		{"TwoChecksum", []uint32{1, 2}},
+		{"ThreeChecksum", []uint32{1, 2, 3}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			raw, err := enc.Encode(sc, nil, nil, nil, tt.checksums...)
+			require.NoError(t, err)
+			dec := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{}, sc.TimeZone())
+			_, err = dec.DecodeToDatumMap(raw, nil)
+			require.NoError(t, err)
+			v1, ok1 := enc.GetChecksum()
+			v2, ok2 := enc.GetExtraChecksum()
+			v3, ok3 := dec.GetChecksum()
+			v4, ok4 := dec.GetExtraChecksum()
+			if len(tt.checksums) == 0 {
+				require.False(t, ok1)
+				require.False(t, ok2)
+				require.False(t, ok3)
+				require.False(t, ok4)
+			} else if len(tt.checksums) == 1 {
+				require.True(t, ok1)
+				require.False(t, ok2)
+				require.True(t, ok3)
+				require.False(t, ok4)
+				require.Equal(t, tt.checksums[0], v1)
+				require.Equal(t, tt.checksums[0], v3)
+				require.Zero(t, v2)
+				require.Zero(t, v4)
+			} else {
+				require.True(t, ok1)
+				require.True(t, ok2)
+				require.True(t, ok3)
+				require.True(t, ok4)
+				require.Equal(t, tt.checksums[0], v1)
+				require.Equal(t, tt.checksums[1], v2)
+				require.Equal(t, tt.checksums[0], v3)
+				require.Equal(t, tt.checksums[1], v4)
+			}
+		})
 	}
-	raw, err = enc.Encode(time.UTC, nil, nil, rawChecksum, nil)
-	require.NoError(t, err)
 
-	expected, ok := enc.GetChecksum()
-	require.True(t, ok)
-	require.NotZero(t, expected)
+	t.Run("ReuseDecoder", func(t *testing.T) {
+		dec := rowcodec.NewDatumMapDecoder([]rowcodec.ColInfo{}, sc.TimeZone())
 
-	_, err = dec.DecodeToDatumMap(raw, nil)
-	require.NoError(t, err)
+		raw1, err := enc.Encode(sc, nil, nil, nil)
+		require.NoError(t, err)
+		_, err = dec.DecodeToDatumMap(raw1, nil)
+		require.NoError(t, err)
+		v1, ok1 := dec.GetChecksum()
+		v2, ok2 := dec.GetExtraChecksum()
+		require.False(t, ok1)
+		require.False(t, ok2)
+		require.Zero(t, v1)
+		require.Zero(t, v2)
 
-	checksum, ok = dec.GetChecksum()
-	require.True(t, ok)
-	require.Equal(t, expected, checksum)
+		raw2, err := enc.Encode(sc, nil, nil, nil, 1, 2)
+		require.NoError(t, err)
+		_, err = dec.DecodeToDatumMap(raw2, nil)
+		require.NoError(t, err)
+		v1, ok1 = dec.GetChecksum()
+		v2, ok2 = dec.GetExtraChecksum()
+		require.True(t, ok1)
+		require.True(t, ok2)
+		require.Equal(t, uint32(1), v1)
+		require.Equal(t, uint32(2), v2)
 
-	version := dec.ChecksumVersion()
-	require.Equal(t, 2, version)
+		raw3, err := enc.Encode(sc, nil, nil, nil, 1)
+		require.NoError(t, err)
+		_, err = dec.DecodeToDatumMap(raw3, nil)
+		require.NoError(t, err)
+		v1, ok1 = dec.GetChecksum()
+		v2, ok2 = dec.GetExtraChecksum()
+		require.True(t, ok1)
+		require.False(t, ok2)
+		require.Equal(t, uint32(1), v1)
+		require.Zero(t, v2)
+	})
 }
 
 var (
@@ -1253,7 +1313,7 @@ var (
 		}
 	}
 	getDuration = func(value string) types.Duration {
-		dur, _, _ := types.ParseDuration(types.DefaultStmtNoWarningContext, value, 0)
+		dur, _, _ := types.ParseDuration(nil, value, 0)
 		return dur
 	}
 	getOldDatumByte = func(d types.Datum) []byte {
@@ -1279,39 +1339,3 @@ var (
 		}
 	}
 )
-
-func TestDecodeWithCommitTS(t *testing.T) {
-	cols := []rowcodec.ColInfo{
-		{
-			ID: 1,
-			Ft: types.NewFieldType(mysql.TypeString),
-		},
-		{
-			ID: model.ExtraCommitTSID,
-			Ft: types.NewFieldType(mysql.TypeLonglong),
-		},
-		{
-			ID: 2,
-			Ft: types.NewFieldType(mysql.TypeString),
-		},
-	}
-	cols[1].Ft.SetFlag(mysql.UnsignedFlag)
-
-	var encoder rowcodec.Encoder
-	newRow, err := encoder.Encode(time.UTC, []int64{1, 2}, []types.Datum{
-		types.NewStringDatum("test1"),
-		types.NewStringDatum("test2"),
-	}, nil, nil)
-	require.NoError(t, err)
-
-	decoder := rowcodec.NewChunkDecoder(cols, []int64{-1}, nil, time.UTC)
-	chk := chunk.New([]*types.FieldType{cols[0].Ft, cols[1].Ft, cols[2].Ft}, 1, 1)
-	err = decoder.DecodeToChunk(newRow, 123456, nil, chk)
-	require.NoError(t, err)
-
-	require.Equal(t, 1, chk.NumRows())
-	row := chk.GetRow(0)
-	require.Equal(t, "test1", row.GetString(0))
-	require.Equal(t, uint64(123456), row.GetUint64(1))
-	require.Equal(t, "test2", row.GetString(2))
-}

@@ -42,7 +42,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/pingcap/tidb/timer/api"
+	"github.com/ocean2811/tidbeaff0fbc576a/timer/api"
 )
 
 func main() {
@@ -155,7 +155,7 @@ If you only create a timer through a client, the timer will not run by default. 
 ```go
 package main
 
-import "github.com/pingcap/tidb/timer/api"
+import "github.com/ocean2811/tidbeaff0fbc576a/timer/api"
 
 func main() {
     ctx := ... // some go context

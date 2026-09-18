@@ -18,8 +18,8 @@ import (
 	"strings"
 	"unsafe"
 
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/util/size"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/size"
 )
 
 // KeyInfo stores the columns of one unique key or primary key.
@@ -46,10 +46,10 @@ func (ki KeyInfo) String() string {
 // Schema stands for the row schema and unique key information get from input.
 type Schema struct {
 	Columns []*Column
-	PKOrUK  []KeyInfo // this fields stores the primary key or unique key.
-	// NullableUK stores those unique indexes that allow null values, but PKOrUK does not allow null values.
-	// Since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
-	NullableUK []KeyInfo
+	Keys    []KeyInfo
+	// UniqueKeys stores those unique indexes that allow null values, but Keys does not allow null values.
+	// since equivalence conditions can filter out null values, in this case a unique index with null values can be a Key.
+	UniqueKeys []KeyInfo
 }
 
 // String implements fmt.Stringer interface.
@@ -58,76 +58,26 @@ func (s *Schema) String() string {
 	for _, col := range s.Columns {
 		colStrs = append(colStrs, col.String())
 	}
-	strs := make([]string, 0, len(s.PKOrUK))
-	for _, key := range s.PKOrUK {
-		strs = append(strs, key.String())
-	}
-	ukStrs := make([]string, 0, len(s.PKOrUK))
-	for _, key := range s.NullableUK {
+	ukStrs := make([]string, 0, len(s.Keys))
+	for _, key := range s.Keys {
 		ukStrs = append(ukStrs, key.String())
 	}
-	return "Column: [" + strings.Join(colStrs, ",") +
-		"] PKOrUK: [" + strings.Join(strs, ",") +
-		"] NullableUK: [" + strings.Join(ukStrs, ",") + "]"
+	return "Column: [" + strings.Join(colStrs, ",") + "] Unique key: [" + strings.Join(ukStrs, ",") + "]"
 }
 
 // Clone copies the total schema.
 func (s *Schema) Clone() *Schema {
-	if s == nil {
-		return nil
-	}
 	cols := make([]*Column, 0, s.Len())
-	keys := make([]KeyInfo, 0, len(s.PKOrUK))
+	keys := make([]KeyInfo, 0, len(s.Keys))
 	for _, col := range s.Columns {
 		cols = append(cols, col.Clone().(*Column))
 	}
-	for _, key := range s.PKOrUK {
+	for _, key := range s.Keys {
 		keys = append(keys, key.Clone())
 	}
 	schema := NewSchema(cols...)
-	schema.SetKeys(keys)
-	if s.NullableUK != nil {
-		uniqueKeys := make([]KeyInfo, 0, len(s.NullableUK))
-		for _, key := range s.NullableUK {
-			uniqueKeys = append(uniqueKeys, key.Clone())
-		}
-		schema.SetUniqueKeys(uniqueKeys)
-	}
+	schema.SetUniqueKeys(keys)
 	return schema
-}
-
-// Equal checks if two schemas are equal.
-func (s *Schema) Equal(other *Schema) bool {
-	if s == nil || other == nil {
-		return s == other
-	}
-	if len(s.Columns) != len(other.Columns) {
-		return false
-	}
-	for i, col := range s.Columns {
-		if !col.EqualColumn(other.Columns[i]) {
-			return false
-		}
-	}
-	return true
-}
-
-// ExprReferenceSchema checks if any column of this expression are from the schema.
-func ExprReferenceSchema(expr Expression, schema *Schema) bool {
-	switch v := expr.(type) {
-	case *Column:
-		return schema.Contains(v)
-	case *ScalarFunction:
-		for _, arg := range v.GetArgs() {
-			if ExprReferenceSchema(arg, schema) {
-				return true
-			}
-		}
-		return false
-	case *CorrelatedColumn, *Constant:
-		return false
-	}
-	return false
 }
 
 // ExprFromSchema checks if all columns of this expression are from the same schema.
@@ -157,34 +107,22 @@ func (s *Schema) RetrieveColumn(col *Column) *Column {
 	return nil
 }
 
-// IsUnique checks if the column is unique key.
-// Pass strong=true to check strong contraint: unique && notnull.
-// Pass strong=false to check weak contraint: unique && nullable.
-func (s *Schema) IsUnique(strong bool, cols ...*Column) bool {
-	slicesToBeIterated := s.NullableUK
-	if strong {
-		slicesToBeIterated = s.PKOrUK
+// IsUniqueKey checks if this column is a unique key.
+func (s *Schema) IsUniqueKey(col *Column) bool {
+	for _, key := range s.Keys {
+		if len(key) == 1 && key[0].Equal(nil, col) {
+			return true
+		}
 	}
-	for _, key := range slicesToBeIterated {
-		if len(key) > len(cols) {
-			continue
-		}
-		allFound := true
-	nextKeyCol:
+	return false
+}
 
-		for _, keyCols := range key {
-			for _, col := range cols {
-				if keyCols.EqualColumn(col) {
-					continue nextKeyCol
-				}
-			}
-			allFound = false
-			break
+// IsUnique checks if this column is a unique key which may contain duplicate nulls .
+func (s *Schema) IsUnique(col *Column) bool {
+	for _, key := range s.UniqueKeys {
+		if len(key) == 1 && key[0].Equal(nil, col) {
+			return true
 		}
-		if !allFound {
-			continue
-		}
-		return true
 	}
 	return false
 }
@@ -224,14 +162,9 @@ func (s *Schema) Append(col ...*Column) {
 	s.Columns = append(s.Columns, col...)
 }
 
-// SetKeys will set the value of Schema.Keys.
-func (s *Schema) SetKeys(keys []KeyInfo) {
-	s.PKOrUK = keys
-}
-
-// SetUniqueKeys will set the value of Schema.UniqueKeys.
+// SetUniqueKeys will set the value of Schema.Keys.
 func (s *Schema) SetUniqueKeys(keys []KeyInfo) {
-	s.NullableUK = keys
+	s.Keys = keys
 }
 
 // ColumnsIndices will return a slice which contains the position of each column in schema.
@@ -285,18 +218,18 @@ func (s *Schema) MemoryUsage() (sum int64) {
 		return
 	}
 
-	sum = emptySchemaSize + int64(cap(s.Columns))*size.SizeOfPointer + int64(cap(s.PKOrUK)+cap(s.NullableUK))*size.SizeOfSlice
+	sum = emptySchemaSize + int64(cap(s.Columns))*size.SizeOfPointer + int64(cap(s.Keys)+cap(s.UniqueKeys))*size.SizeOfSlice
 
 	for _, col := range s.Columns {
 		sum += col.MemoryUsage()
 	}
-	for _, cols := range s.PKOrUK {
+	for _, cols := range s.Keys {
 		sum += int64(cap(cols)) * size.SizeOfPointer
 		for _, col := range cols {
 			sum += col.MemoryUsage()
 		}
 	}
-	for _, cols := range s.NullableUK {
+	for _, cols := range s.UniqueKeys {
 		sum += int64(cap(cols)) * size.SizeOfPointer
 		for _, col := range cols {
 			sum += col.MemoryUsage()
@@ -335,7 +268,7 @@ func MergeSchema(lSchema, rSchema *Schema) *Schema {
 }
 
 // GetUsedList shows whether each column in schema is contained in usedCols.
-func GetUsedList(ctx EvalContext, usedCols []*Column, schema *Schema) []bool {
+func GetUsedList(usedCols []*Column, schema *Schema) []bool {
 	tmpSchema := NewSchema(usedCols...)
 	used := make([]bool, schema.Len())
 	for i, col := range schema.Columns {
@@ -345,7 +278,7 @@ func GetUsedList(ctx EvalContext, usedCols []*Column, schema *Schema) []bool {
 			// When cols are a generated expression col, compare them in terms of virtual expr.
 			if expr, ok := col.VirtualExpr.(*ScalarFunction); ok && used[i] {
 				for j, colToCompare := range schema.Columns {
-					if !used[j] && j != i && (expr).Equal(ctx, colToCompare.VirtualExpr) && col.RetType.Equal(colToCompare.RetType) {
+					if !used[j] && j != i && (expr).Equal(nil, colToCompare.VirtualExpr) && col.RetType.Equal(colToCompare.RetType) {
 						used[j] = true
 					}
 				}

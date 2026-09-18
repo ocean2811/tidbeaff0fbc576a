@@ -14,9 +14,9 @@ There may be unused indexes in the database. In addition, modifying database tab
 
 Related issues:
 
-- https://github.com/pingcap/tidb/issues/14998
-- https://github.com/pingcap/tidb/issues/14607
-- https://github.com/pingcap/tidb/issues/17508
+- https://github.com/ocean2811/tidbeaff0fbc576a/issues/14998
+- https://github.com/ocean2811/tidbeaff0fbc576a/issues/14607
+- https://github.com/ocean2811/tidbeaff0fbc576a/issues/17508
 - https://asktug.com/t/topic/34614/12
 
 ## Proposal
@@ -181,7 +181,7 @@ MySQL supports `SCHEMA_UNUSED_INDEXES`. We are considering compatibility and als
 
 ## Implementation
 
-My implementation plan is in [issues/19209](https://github.com/pingcap/tidb/issues/19209)
+My implementation plan is in [issues/19209](https://github.com/ocean2811/tidbeaff0fbc576a/issues/19209)
 
 ## Testing Plan
 

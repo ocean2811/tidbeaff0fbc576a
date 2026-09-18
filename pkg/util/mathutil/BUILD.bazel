@@ -7,12 +7,9 @@ go_library(
         "math.go",
         "rand.go",
     ],
-    importpath = "github.com/pingcap/tidb/pkg/util/mathutil",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil",
     visibility = ["//visibility:public"],
-    deps = [
-        "//pkg/util/intest",
-        "@org_golang_x_exp//constraints",
-    ],
+    deps = ["@org_golang_x_exp//constraints"],
 )
 
 go_test(

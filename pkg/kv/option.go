@@ -110,21 +110,7 @@ const (
 	LoadBasedReplicaReadThreshold
 	// TiKVClientReadTimeout sets the timeout value for readonly kv request in milliseconds
 	TiKVClientReadTimeout
-	// SizeLimits sets the size limits of membuf
-	SizeLimits
-	// SessionID marks the connection id, for logging and tracing.
-	SessionID
-	// BackgroundGoroutineLifecycleHooks is the hooks to track the start and end of background goroutine
-	BackgroundGoroutineLifecycleHooks
-	// PrewriteEncounterLockPolicy is the policy to handle lock conflict during prewrite
-	PrewriteEncounterLockPolicy
 )
-
-// TxnSizeLimits is the argument type for `SizeLimits` option
-type TxnSizeLimits struct {
-	Entry uint64
-	Total uint64
-}
 
 // ReplicaReadType is the type of replica to read data from
 type ReplicaReadType byte
@@ -189,25 +175,14 @@ const (
 	InternalTxnMeta = util.InternalTxnMeta
 	// InternalTxnDDL is the type of inner txns in ddl module.
 	InternalTxnDDL = "ddl"
-	// InternalTxnMViewMaintenance is the type of materialized view maintenance operations.
-	InternalTxnMViewMaintenance = "mview_maintain"
 	// InternalTxnBackfillDDLPrefix is the prefix of the types of DDL operations needs backfilling.
 	InternalTxnBackfillDDLPrefix = "ddl_"
 	// InternalTxnCacheTable is the type of cache table usage.
 	InternalTxnCacheTable = InternalTxnOthers
 	// InternalTxnStats is the type of statistics txn.
-	// NOTE: This is only used for analyze requests to provide better resource control.
 	InternalTxnStats = "stats"
-	// InternalTxnStatsForegroundPriority is the type of statistics txn that
-	// should run at foreground priority.
-	// It separates non-analyze statistics requests, such as sync load, async load,
-	// and init stats, from analyze requests. These requests can affect user query
-	// latency, so resource control should not throttle them.
-	InternalTxnStatsForegroundPriority = "StatsForegroundPriority"
 	// InternalTxnBindInfo is the type of bind info txn.
 	InternalTxnBindInfo = InternalTxnOthers
-	// InternalTxnWorkloadLearning is the type of workload-based learning txn.
-	InternalTxnWorkloadLearning = "WorkloadLearning"
 	// InternalTxnSysVar is the type of sys var txn.
 	InternalTxnSysVar = InternalTxnOthers
 	// InternalTxnTelemetry is the type of telemetry.
@@ -235,8 +210,6 @@ const (
 	InternalDistTask = "DistTask"
 	// InternalTimer is the type of internal timer
 	InternalTimer = "Timer"
-	// InternalDDLNotifier is the type of DDL notifier
-	InternalDDLNotifier = "DDLNotifier"
 )
 
 // The bitmap:
@@ -255,8 +228,6 @@ const (
 	LossyDDLColumnReorgSource = 1
 	lossyDDLReorgSourceMax    = (1 << lossyDDLReorgSourceBits) - 1
 	lossyDDLReorgSourceShift  = cdcWriteSourceBits
-	// LightningPhysicalImportTxnSource the 17th bit is set as the txn source for Lightning physical import.
-	LightningPhysicalImportTxnSource = 1 << 16
 )
 
 // SetCDCWriteSource sets the TiCDC write source in the txnSource.

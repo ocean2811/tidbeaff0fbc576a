@@ -187,7 +187,7 @@ func (t CoreTime) GoTime(loc *gotime.Location) (gotime.Time, error) {
 // AdjustedGoTime converts Time to GoTime and adjust for invalid DST times
 // like during the DST change with increased offset,
 // normally moving to Daylight Saving Time.
-// see https://github.com/pingcap/tidb/issues/28739
+// see https://github.com/ocean2811/tidbeaff0fbc576a/issues/28739
 func (t CoreTime) AdjustedGoTime(loc *gotime.Location) (gotime.Time, error) {
 	tm, err := t.GoTime(loc)
 	if err == nil {
@@ -280,30 +280,14 @@ func compareTime(a, b CoreTime) int {
 // Dig it and we found it's caused by golang api time.Date(year int, month Month, day, hour, min, sec, nsec int, loc *Location) Time ,
 // it says October 32 converts to November 1 ,it conflicts with mysql.
 // See https://dev.mysql.com/doc/refman/5.7/en/date-and-time-functions.html#function_date-add
-func AddDate(year, month, day int64, ot gotime.Time) (nt gotime.Time, _ error) {
-	// We must limit the range of year, month and day to avoid overflow.
-	// The datetime range is from '1000-01-01 00:00:00.000000' to '9999-12-31 23:59:59.499999',
-	// so it is safe to limit the added value from -10000*365 to 10000*365.
-	const maxAdd = 10000 * 365
-	const minAdd = -maxAdd
-	if year > maxAdd || year < minAdd ||
-		month > maxAdd || month < minAdd ||
-		day > maxAdd || day < minAdd {
-		return nt, ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime")
-	}
-
+func AddDate(year, month, day int64, ot gotime.Time) (nt gotime.Time) {
 	df := getFixDays(int(year), int(month), int(day), ot)
 	if df != 0 {
 		nt = ot.AddDate(int(year), int(month), df)
 	} else {
 		nt = ot.AddDate(int(year), int(month), int(day))
 	}
-
-	if nt.Year() < 0 || nt.Year() > 9999 {
-		return nt, ErrDatetimeFunctionOverflow.GenWithStackByArgs("datetime")
-	}
-
-	return nt, nil
+	return nt
 }
 
 func calcTimeFromSec(to *CoreTime, seconds, microseconds int) {
@@ -495,6 +479,8 @@ func mixDateAndDuration(date *CoreTime, dur Duration) {
 	date.setDay(uint8(day))
 }
 
+var daysInMonth = []int{31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31}
+
 // getDateFromDaynr changes a daynr to year, month and day,
 // daynr 0 is returned as date 00.00.00
 func getDateFromDaynr(daynr uint) (year uint, month uint, day uint) {
@@ -525,7 +511,7 @@ func getDateFromDaynr(daynr uint) (year uint, month uint, day uint) {
 	}
 
 	month = 1
-	for _, days := range daysByMonth {
+	for _, days := range daysInMonth {
 		if dayOfYear <= uint(days) {
 			break
 		}

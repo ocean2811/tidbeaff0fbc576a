@@ -26,7 +26,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/pingcap/errors"
+	"github.com/cockroachdb/errors"
 	"github.com/pingcap/log"
 	"go.uber.org/zap"
 )
@@ -87,16 +87,6 @@ type CPUUsage struct {
 	NumCPU int
 }
 
-// Version represents the cgroup version.
-type Version int
-
-// cgroup versions.
-const (
-	Unknown Version = 0
-	V1      Version = 1
-	V2      Version = 2
-)
-
 // SetGOMAXPROCS is to set GOMAXPROCS to the number of CPUs.
 func SetGOMAXPROCS() (func(), error) {
 	const minGOMAXPROCS int = 1
@@ -105,8 +95,8 @@ func SetGOMAXPROCS() (func(), error) {
 		log.Info("maxprocs: No GOMAXPROCS change to reset")
 	}
 
-	if maxv, exists := os.LookupEnv(_maxProcsKey); exists {
-		log.Info(fmt.Sprintf("maxprocs: Honoring GOMAXPROCS=%q as set in environment", maxv))
+	if max, exists := os.LookupEnv(_maxProcsKey); exists {
+		log.Info(fmt.Sprintf("maxprocs: Honoring GOMAXPROCS=%q as set in environment", max))
 		return undoNoop, nil
 	}
 
@@ -146,13 +136,13 @@ func readFile(filepath string) (res []byte, err error) {
 		return nil, err
 	}
 	defer func() {
-		err = errors.Join(err, f.Close())
+		err = errors.CombineErrors(err, f.Close())
 	}()
 	res, err = io.ReadAll(f)
 	return res, err
 }
 
-// The field in /proc/self/cgroup and /proc/self/mountinfo may appear as "cpuacct,cpu" or "rw,cpuacct,cpu"
+// The field in /proc/self/cgroup and /proc/self/meminfo may appear as "cpuacct,cpu" or "rw,cpuacct,cpu"
 // while the input controller is "cpu,cpuacct"
 func controllerMatch(field string, controller string) bool {
 	if field == controller {
@@ -414,7 +404,7 @@ func detectCPUUsageInV2(cRoot string) (stime, utime uint64, err error) {
 		return 0, 0, errors.Wrapf(err, "can't read cpu usage from cgroup v2 at %s", statFilePath)
 	}
 	defer func() {
-		err = errors.Join(err, stat.Close())
+		err = errors.CombineErrors(err, stat.Close())
 	}()
 
 	scanner := bufio.NewScanner(stat)

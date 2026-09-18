@@ -17,34 +17,29 @@ package executor
 import (
 	"context"
 	"strings"
-	"time"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/dxf/framework/storage"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/extworkload"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/plugin"
-	"github.com/pingcap/tidb/pkg/privilege"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
-	"github.com/pingcap/tidb/pkg/table/temptable"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/collate"
-	"github.com/pingcap/tidb/pkg/util/dbterror/exeerrors"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
-	disttaskutil "github.com/pingcap/tidb/pkg/util/disttask"
-	"github.com/pingcap/tidb/pkg/util/gcutil"
-	"github.com/pingcap/tidb/pkg/util/logutil"
-	sem "github.com/pingcap/tidb/pkg/util/sem/compat"
-	semv2 "github.com/pingcap/tidb/pkg/util/sem/v2"
-	"github.com/tikv/client-go/v2/oracle/oracles"
-	pd "github.com/tikv/pd/client"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/plugin"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/privilege"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table/temptable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/collate"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbterror/exeerrors"
+	disttaskutil "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/disttask"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/gcutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sem"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"go.uber.org/zap"
 )
 
@@ -63,8 +58,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-	sctx := e.Ctx()
-	sessionVars := sctx.GetSessionVars()
+	sessionVars := e.Ctx().GetSessionVars()
 	for _, v := range e.vars {
 		// Variable is case insensitive, we use lower case.
 		if v.Name == ast.SetNames || v.Name == ast.SetCharset {
@@ -76,7 +70,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				}
 				continue
 			}
-			dt, err := v.Expr.(*expression.Constant).Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+			dt, err := v.Expr.(*expression.Constant).Eval(chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -94,7 +88,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 		name := strings.ToLower(v.Name)
 		if !v.IsSystem {
 			// Set user variable.
-			value, err := v.Expr.Eval(sctx.GetExprCtx().GetEvalCtx(), chunk.Row{})
+			value, err := v.Expr.Eval(chunk.Row{})
 			if err != nil {
 				return err
 			}
@@ -102,7 +96,7 @@ func (e *SetExecutor) Next(ctx context.Context, req *chunk.Chunk) error {
 				sessionVars.UnsetUserVar(name)
 			} else {
 				sessionVars.SetUserVarVal(name, value)
-				sessionVars.SetUserVarType(name, v.Expr.GetType(sctx.GetExprCtx().GetEvalCtx()))
+				sessionVars.SetUserVarType(name, v.Expr.GetType())
 			}
 			continue
 		}
@@ -134,82 +128,51 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 				if !semEnabled {
 					msg = "SUPER or " + msg
 				}
-				return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
+				return core.ErrSpecificAccessDenied.GenWithStackByArgs(msg)
 			}
 		}
 	}
 
-	// Check read-only system variables in SEM mode.
-	if semv2.IsEnabled() && semv2.IsReadOnlyVariable(v.Name) {
-		pm := privilege.GetPrivilegeManager(e.Ctx())
-		if !pm.RequestDynamicVerification(sessionVars.ActiveRoles, "RESTRICTED_VARIABLES_ADMIN", false) {
-			return plannererrors.ErrSpecificAccessDenied.GenWithStackByArgs("RESTRICTED_VARIABLES_ADMIN")
-		}
-	}
-
-	if sysVar.IsNoop && !vardef.EnableNoopVariables.Load() {
+	if sysVar.IsNoop && !variable.EnableNoopVariables.Load() {
 		// The variable is a noop. For compatibility we allow it to still
 		// be changed, but we append a warning since users might be expecting
 		// something that's not going to happen.
-		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrSettingNoopVariable.FastGenByArgs(sysVar.Name))
+		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrSettingNoopVariable.GenWithStackByArgs(sysVar.Name))
 	}
 	if sysVar.HasInstanceScope() && !v.IsGlobal && sessionVars.EnableLegacyInstanceScope {
-		// For backward compatibility we will change the v.IsInstance to true,
+		// For backward compatibility we will change the v.IsGlobal to true,
 		// and append a warning saying this will not be supported in future.
-		v.IsInstance = true
-		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.FastGenByArgs(sysVar.Name))
+		v.IsGlobal = true
+		sessionVars.StmtCtx.AppendWarning(exeerrors.ErrInstanceScope.GenWithStackByArgs(sysVar.Name))
 	}
 
-	if v.IsGlobal || v.IsInstance {
+	if v.IsGlobal {
 		valStr, err := e.getVarValue(ctx, v, sysVar)
 		if err != nil {
 			return err
 		}
-		if v.IsGlobal {
-			err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(ctx, name, valStr)
-			if err != nil {
-				return err
-			}
-		} else if v.IsInstance {
-			err = sessionVars.GlobalVarsAccessor.SetInstanceSysVar(ctx, name, valStr)
-			if err != nil {
-				return err
-			}
+		err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(ctx, name, valStr)
+		if err != nil {
+			return err
 		}
 		err = plugin.ForeachPlugin(plugin.Audit, func(p *plugin.Plugin) error {
 			auditPlugin := plugin.DeclareAuditManifest(p.Manifest)
 			if auditPlugin.OnGlobalVariableEvent != nil {
-				auditPlugin.OnGlobalVariableEvent(
-					context.Background(),
-					e.Ctx().GetSessionVars(),
-					name,
-					redactSysVarValue(name, valStr),
-				)
+				auditPlugin.OnGlobalVariableEvent(context.Background(), e.Ctx().GetSessionVars(), name, valStr)
 			}
 			return nil
 		})
-		showValStr := redactSysVarValue(name, valStr)
-		logstr := "set global var"
-		if v.IsInstance {
-			logstr = "set instance var"
+		showValStr := valStr
+		if name == variable.TiDBCloudStorageURI {
+			showValStr = ast.RedactURL(showValStr)
 		}
-		logutil.BgLogger().Info(logstr, zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
-		if v.IsGlobal && name == vardef.TiDBGCLifetime {
-			notifyExternalWorkloadGCLifeTime(ctx, e.Ctx(), showValStr)
-		}
-		if name == vardef.TiDBServiceScope {
+		logutil.BgLogger().Info("set global var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", showValStr))
+		if name == variable.TiDBServiceScope {
 			dom := domain.GetDomain(e.Ctx())
-			// SetInstanceSysVar has already updated vardef.ServiceScope in the sysvar hook.
-			// Read it here so InitMetaSession uses the latest canonical (case-insensitive) value.
-			serviceScope := vardef.ServiceScope.Load()
+			config.GetGlobalConfig().Instance.TiDBServiceScope = valStr
 			serverID := disttaskutil.GenerateSubtaskExecID(ctx, dom.DDL().GetID())
-			taskMgr, err := storage.GetTaskManager()
-			if err != nil {
-				return err
-			}
-			return taskMgr.WithNewSession(func(se sessionctx.Context) error {
-				return taskMgr.InitMetaSession(ctx, se, serverID, serviceScope)
-			})
+			_, err = e.Ctx().(sqlexec.SQLExecutor).ExecuteInternal(ctx,
+				`replace into mysql.dist_framework_meta(host, role, keyspace_id) values(%?, %?, DEFAULT)`, serverID, valStr)
 		}
 		return err
 	}
@@ -219,27 +182,27 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	getSnapshotTSByName := func() uint64 {
-		if name == vardef.TiDBSnapshot {
+		if name == variable.TiDBSnapshot {
 			return sessionVars.SnapshotTS
-		} else if name == vardef.TiDBTxnReadTS {
+		} else if name == variable.TiDBTxnReadTS {
 			return sessionVars.TxnReadTS.PeakTxnReadTS()
 		}
 		return 0
 	}
 	oldSnapshotTS := getSnapshotTSByName()
 	fallbackOldSnapshotTS := func() {
-		if name == vardef.TiDBSnapshot {
+		if name == variable.TiDBSnapshot {
 			sessionVars.SnapshotTS = oldSnapshotTS
-		} else if name == vardef.TiDBTxnReadTS {
+		} else if name == variable.TiDBTxnReadTS {
 			sessionVars.TxnReadTS.SetTxnReadTS(oldSnapshotTS)
 		}
 	}
 	if sessionVars.InTxn() {
-		if name == vardef.TxnIsolationOneShot ||
-			name == vardef.TiDBTxnReadTS {
+		if name == variable.TxnIsolationOneShot ||
+			name == variable.TiDBTxnReadTS {
 			return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
 		}
-		if name == vardef.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
+		if name == variable.TiDBSnapshot && sessionVars.TxnCtx.IsStaleness {
 			return errors.Trace(exeerrors.ErrCantChangeTxCharacteristics)
 		}
 	}
@@ -250,15 +213,10 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 	newSnapshotTS := getSnapshotTSByName()
 	newSnapshotIsSet := newSnapshotTS > 0 && newSnapshotTS != oldSnapshotTS
 	if newSnapshotIsSet {
-		isStaleRead := name == vardef.TiDBTxnReadTS
-		var ctxForReadTsValidator context.Context
-		if !isStaleRead {
-			ctxForReadTsValidator = context.WithValue(ctx, oracles.ValidateReadTSForTidbSnapshot{}, struct{}{})
+		if name == variable.TiDBTxnReadTS {
+			err = sessionctx.ValidateStaleReadTS(ctx, e.Ctx(), newSnapshotTS)
 		} else {
-			ctxForReadTsValidator = ctx
-		}
-		err = sessionctx.ValidateSnapshotReadTS(ctxForReadTsValidator, e.Ctx().GetStore(), newSnapshotTS, isStaleRead)
-		if name != vardef.TiDBTxnReadTS {
+			err = sessionctx.ValidateSnapshotReadTS(ctx, e.Ctx(), newSnapshotTS)
 			// Also check gc safe point for snapshot read.
 			// We don't check snapshot with gc safe point for read_ts
 			// Client-go will automatically check the snapshotTS with gc safe point. It's unnecessary to check gc safe point during set executor.
@@ -278,71 +236,16 @@ func (e *SetExecutor) setSysVariable(ctx context.Context, name string, v *expres
 		return err
 	}
 	// Clients are often noisy in setting session variables such as
-	// autocommit, timezone, etc
+	// autocommit, timezone, query cache
 	logutil.BgLogger().Debug("set session var", zap.Uint64("conn", sessionVars.ConnectionID), zap.String("name", name), zap.String("val", valStr))
 	return nil
-}
-
-func redactSysVarValue(name, value string) string {
-	switch strings.ToLower(name) {
-	case vardef.TiDBCloudStorageURI:
-		return ast.RedactURL(value)
-	case vardef.TiDBExpEmbedJinaAIAPIKey,
-		vardef.TiDBExpEmbedOpenAIAPIKey,
-		vardef.TiDBExpEmbedCohereAPIKey,
-		vardef.TiDBExpEmbedHuggingFaceAPIKey,
-		vardef.TiDBExpEmbedNvidiaNIMAPIKey,
-		vardef.TiDBExpEmbedGeminiAPIKey:
-		return redactAPIKey(value)
-	default:
-		return value
-	}
-}
-
-func redactAPIKey(value string) string {
-	if value == "" {
-		return ""
-	}
-	return "******"
-}
-
-func notifyExternalWorkloadGCLifeTime(ctx context.Context, sctx sessionctx.Context, setValue string) {
-	mgr := extworkload.GetManagerFromStore(sctx.GetStore())
-	if !extworkload.IsEnabled(mgr) || !pd.IsKeyspaceUsingKeyspaceLevelGC(mgr.Meta()) {
-		return
-	}
-
-	gcLifeTimeVal, err := variable.GetSysVar(vardef.TiDBGCLifetime).GetGlobalFromHook(ctx, sctx.GetSessionVars())
-	if err != nil {
-		logutil.BgLogger().Warn("failed to load effective external workload GC life time",
-			zap.String("name", vardef.TiDBGCLifetime),
-			zap.String("val", setValue),
-			zap.Error(err))
-		return
-	}
-	gcLifeTime, err := time.ParseDuration(gcLifeTimeVal)
-	if err != nil {
-		logutil.BgLogger().Warn("failed to parse effective external workload GC life time",
-			zap.String("name", vardef.TiDBGCLifetime),
-			zap.String("val", gcLifeTimeVal),
-			zap.Error(err))
-		return
-	}
-	if err := mgr.UpdateGCLifeTime(ctx, gcLifeTime); err != nil {
-		logutil.BgLogger().Warn("failed to update external workload GC life time",
-			zap.String("name", vardef.TiDBGCLifetime),
-			zap.String("val", gcLifeTimeVal),
-			zap.Error(err))
-	}
 }
 
 func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 	var err error
 	sessionVars := e.Ctx().GetSessionVars()
 	if co == "" {
-		if cs == mysql.UTF8MB4Charset {
-			co = sessionVars.DefaultCollationForUTF8MB4
-		} else if co, err = charset.GetDefaultCollation(cs); err != nil {
+		if co, err = charset.GetDefaultCollation(cs); err != nil {
 			return err
 		}
 	} else {
@@ -355,32 +258,32 @@ func (e *SetExecutor) setCharset(cs, co string, isSetName bool) error {
 		}
 	}
 	if isSetName {
-		for _, v := range vardef.SetNamesVariables {
+		for _, v := range variable.SetNamesVariables {
 			if err = sessionVars.SetSystemVar(v, cs); err != nil {
 				return errors.Trace(err)
 			}
 		}
-		return errors.Trace(sessionVars.SetSystemVar(vardef.CollationConnection, co))
+		return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, co))
 	}
 	// Set charset statement, see also https://dev.mysql.com/doc/refman/8.0/en/set-character-set.html.
-	for _, v := range vardef.SetCharsetVariables {
+	for _, v := range variable.SetCharsetVariables {
 		if err = sessionVars.SetSystemVar(v, cs); err != nil {
 			return errors.Trace(err)
 		}
 	}
-	csDB, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(vardef.CharsetDatabase)
+	csDB, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CharsetDatabase)
 	if err != nil {
 		return err
 	}
-	coDB, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(vardef.CollationDatabase)
+	coDB, err := sessionVars.GlobalVarsAccessor.GetGlobalSysVar(variable.CollationDatabase)
 	if err != nil {
 		return err
 	}
-	err = sessionVars.SetSystemVar(vardef.CharacterSetConnection, csDB)
+	err = sessionVars.SetSystemVar(variable.CharacterSetConnection, csDB)
 	if err != nil {
 		return errors.Trace(err)
 	}
-	return errors.Trace(sessionVars.SetSystemVar(vardef.CollationConnection, coDB))
+	return errors.Trace(sessionVars.SetSystemVar(variable.CollationConnection, coDB))
 }
 
 func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignment, sysVar *variable.SysVar) (value string, err error) {
@@ -389,12 +292,11 @@ func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignme
 		// to the compiled-in MySQL default value, use the DEFAULT keyword.
 		// See http://dev.mysql.com/doc/refman/5.7/en/set-statement.html
 		if sysVar != nil {
-			defVal := variable.GlobalSystemVariableInitialValue(sysVar.Name, sysVar.Value)
-			return defVal, nil
+			return sysVar.Value, nil
 		}
 		return e.Ctx().GetSessionVars().GetGlobalSystemVar(ctx, v.Name)
 	}
-	nativeVal, err := v.Expr.Eval(e.Ctx().GetExprCtx().GetEvalCtx(), chunk.Row{})
+	nativeVal, err := v.Expr.Eval(chunk.Row{})
 	if err != nil || nativeVal.IsNull() {
 		return "", err
 	}
@@ -411,14 +313,10 @@ func (e *SetExecutor) getVarValue(ctx context.Context, v *expression.VarAssignme
 }
 
 func (e *SetExecutor) loadSnapshotInfoSchemaIfNeeded(name string, snapshotTS uint64) error {
-	if name != vardef.TiDBSnapshot && name != vardef.TiDBTxnReadTS {
+	if name != variable.TiDBSnapshot && name != variable.TiDBTxnReadTS {
 		return nil
 	}
-	return loadSnapshotInfoSchemaIfNeeded(e.Ctx(), snapshotTS)
-}
-
-func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) error {
-	vars := sctx.GetSessionVars()
+	vars := e.Ctx().GetSessionVars()
 	if snapshotTS == 0 {
 		vars.SnapshotInfoschema = nil
 		return nil
@@ -426,12 +324,12 @@ func loadSnapshotInfoSchemaIfNeeded(sctx sessionctx.Context, snapshotTS uint64) 
 	logutil.BgLogger().Info("load snapshot info schema",
 		zap.Uint64("conn", vars.ConnectionID),
 		zap.Uint64("SnapshotTS", snapshotTS))
-	dom := domain.GetDomain(sctx)
+	dom := domain.GetDomain(e.Ctx())
 	snapInfo, err := dom.GetSnapshotInfoSchema(snapshotTS)
 	if err != nil {
 		return err
 	}
 
-	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(sctx, snapInfo)
+	vars.SnapshotInfoschema = temptable.AttachLocalTemporaryTableInfoSchema(e.Ctx(), snapInfo)
 	return nil
 }

@@ -17,13 +17,13 @@ package expression
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
 )
 
 var vecBuiltinMathCases = map[string][]vecExprBenchCase{
-	/* TODO: Because of https://github.com/pingcap/tidb/issues/5817, we don't enable it now.
+	/* TODO: Because of https://github.com/ocean2811/tidbeaff0fbc576a/issues/5817, we don't enable it now.
 	ast.Conv: {
 		{
 			retEvalType:   types.ETString,
@@ -134,9 +134,6 @@ var vecBuiltinMathCases = map[string][]vecExprBenchCase{
 			types.NewFieldTypeBuilder().SetType(mysql.TypeInt24).SetFlag(mysql.UnsignedFlag).BuildP(),
 		}, geners: []dataGenerator{nil, newRangeInt64Gener(-10, 10)}},
 		{retEvalType: types.ETDecimal, childrenTypes: []types.EvalType{types.ETDecimal, types.ETInt}},
-
-		// For issue 57651
-		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETReal, types.ETInt}, geners: []dataGenerator{newSelectRealGener([]float64{0, -0.1, 0.1, -1.1, 1.1}), newRangeInt64Gener(-1000, 1000)}},
 	},
 	ast.Rand: {
 		{retEvalType: types.ETReal, childrenTypes: []types.EvalType{types.ETInt}, geners: []dataGenerator{newDefaultGener(0, types.ETInt)}},

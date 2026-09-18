@@ -18,7 +18,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/server/internal/handshake"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server/internal/handshake"
 	"github.com/stretchr/testify/require"
 )
 

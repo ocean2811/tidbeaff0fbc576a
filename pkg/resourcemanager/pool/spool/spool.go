@@ -19,12 +19,13 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/metrics"
-	"github.com/pingcap/tidb/pkg/resourcemanager"
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool"
-	"github.com/pingcap/tidb/pkg/resourcemanager/poolmanager"
-	"github.com/pingcap/tidb/pkg/resourcemanager/util"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/metrics"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/pool"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/poolmanager"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/resourcemanager/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/sasha-s/go-deadlock"
 	"go.uber.org/zap"
@@ -160,7 +161,7 @@ func (p *Pool) RunWithConcurrency(fns chan func(), concurrency uint32) error {
 	exitCh := make(chan struct{}, 1)
 	meta := poolmanager.NewMeta(p.GenTaskID(), exitCh, fns, int32(concurrency))
 	p.taskManager.RegisterTask(meta)
-	for range conc {
+	for n := int32(0); n < conc; n++ {
 		p.run(func() {
 			runTask(meta)
 		})
@@ -196,7 +197,7 @@ func (p *Pool) checkAndAddRunningInternal(concurrency int32) (conc int32, run bo
 	}
 	// if concurrency is 1 , we must return a goroutine
 	// if concurrency is more than 1, we must return at least one goroutine.
-	result := min(n, concurrency)
+	result := mathutil.Min(n, concurrency)
 	p.running.Add(result)
 	return result, true
 }

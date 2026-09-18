@@ -1601,7 +1601,7 @@
       {
         "allValue": null,
         "current": { },
-        "datasource": "${DS_LIGHTNING}",
+        "datasource": "${DS_TEST-CLUSTER}",
         "hide": 2,
         "includeAll": false,
         "label": "K8s-cluster",
@@ -1622,7 +1622,7 @@
         "allValue": null,
         "current": {
         },
-        "datasource": "${DS_LIGHTNING}",
+        "datasource": "${DS_TEST-CLUSTER}",
         "hide": 2,
         "includeAll": false,
         "label": "tidb_cluster",

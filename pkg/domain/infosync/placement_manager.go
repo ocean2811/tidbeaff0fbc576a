@@ -15,13 +15,17 @@
 package infosync
 
 import (
+	"bytes"
 	"context"
-	"fmt"
-	"sort"
+	"encoding/json"
+	"path"
 	"sync"
 
-	"github.com/pingcap/tidb/pkg/ddl/placement"
-	pd "github.com/tikv/pd/client/http"
+	"github.com/pingcap/log"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/placement"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/pdapi"
+	clientv3 "go.etcd.io/etcd/client/v3"
+	"go.uber.org/zap"
 )
 
 // PlacementManager manages placement settings
@@ -36,30 +40,27 @@ type PlacementManager interface {
 
 // PDPlacementManager manages placement with pd
 type PDPlacementManager struct {
-	pdHTTPCli pd.Client
+	etcdCli *clientv3.Client
 }
 
 // GetRuleBundle is used to get one specific rule bundle from PD.
 func (m *PDPlacementManager) GetRuleBundle(ctx context.Context, name string) (*placement.Bundle, error) {
-	groupBundle, err := m.pdHTTPCli.GetPlacementRuleBundleByGroup(ctx, name)
-	if err != nil {
-		return nil, err
+	bundle := &placement.Bundle{ID: name}
+	res, err := doRequest(ctx, "GetPlacementRule", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "placement-rule", name), "GET", nil)
+	if err == nil && res != nil {
+		err = json.Unmarshal(res, bundle)
 	}
-	groupBundle.ID = name
-	return (*placement.Bundle)(groupBundle), err
+	return bundle, err
 }
 
 // GetAllRuleBundles is used to get all rule bundles from PD. It is used to load full rules from PD while fullload infoschema.
 func (m *PDPlacementManager) GetAllRuleBundles(ctx context.Context) ([]*placement.Bundle, error) {
-	bundles, err := m.pdHTTPCli.GetAllPlacementRuleBundles(ctx)
-	if err != nil {
-		return nil, err
+	var bundles []*placement.Bundle
+	res, err := doRequest(ctx, "GetAllPlacementRules", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "placement-rule"), "GET", nil)
+	if err == nil && res != nil {
+		err = json.Unmarshal(res, &bundles)
 	}
-	rules := make([]*placement.Bundle, 0, len(bundles))
-	for _, bundle := range bundles {
-		rules = append(rules, (*placement.Bundle)(bundle))
-	}
-	return rules, nil
+	return bundles, err
 }
 
 // PutRuleBundles is used to post specific rule bundles to PD.
@@ -67,11 +68,15 @@ func (m *PDPlacementManager) PutRuleBundles(ctx context.Context, bundles []*plac
 	if len(bundles) == 0 {
 		return nil
 	}
-	ruleBundles := make([]*pd.GroupBundle, 0, len(bundles))
-	for _, bundle := range bundles {
-		ruleBundles = append(ruleBundles, (*pd.GroupBundle)(bundle))
+
+	b, err := json.Marshal(bundles)
+	if err != nil {
+		return err
 	}
-	return m.pdHTTPCli.SetPlacementRuleBundles(ctx, ruleBundles, true)
+
+	log.Debug("Put placement rule bundles", zap.String("rules", string(b)))
+	_, err = doRequest(ctx, "PutPlacementRules", m.etcdCli.Endpoints(), path.Join(pdapi.Config, "placement-rule")+"?partial=true", "POST", bytes.NewReader(b))
+	return err
 }
 
 type mockPlacementManager struct {
@@ -101,60 +106,6 @@ func (m *mockPlacementManager) GetAllRuleBundles(_ context.Context) ([]*placemen
 	return bundles, nil
 }
 
-type keyRange struct {
-	start string
-	end   string
-}
-
-// CheckBundle check that the rules don't overlap without explicit Override
-// Exported for testing reasons.
-// Tries to be a simpler version of PDs
-// prepareRulesForApply + checkApplyRules.
-// And additionally checks for key overlaps.
-func CheckBundle(bundle *placement.Bundle) error {
-	keys := make([]keyRange, 0, len(bundle.Rules))
-	for _, rule := range bundle.Rules {
-		if rule.Role == pd.Leader {
-			if rule.Override {
-				// PD would override the previous rules,
-				// not only the overlapping key ranges.
-				keys = keys[:0]
-			}
-			keys = append(keys, keyRange{
-				start: rule.StartKeyHex,
-				end:   rule.EndKeyHex,
-			})
-		}
-	}
-	if len(keys) == 0 {
-		return nil
-	}
-	// Could use pd's placement.sortRules() instead.
-	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].start == keys[j].start {
-			return keys[i].end < keys[j].end
-		}
-		return keys[i].start < keys[j].start
-	})
-
-	for i := 1; i < len(keys); i++ {
-		if keys[i].start < keys[i-1].end {
-			return fmt.Errorf(`ERROR 8243 (HY000): "[PD:placement:ErrBuildRuleList]build rule list failed, multiple leader replicas for range {%s, %s}`, keys[i-1].start, keys[i].end)
-		}
-	}
-	return nil
-}
-
-func checkBundles(bundles map[string]*placement.Bundle) error {
-	// Check that no bundles have leaders overlapping ranges
-	for k := range bundles {
-		if err := CheckBundle(bundles[k]); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*placement.Bundle) error {
 	m.Lock()
 	defer m.Unlock()
@@ -171,5 +122,5 @@ func (m *mockPlacementManager) PutRuleBundles(_ context.Context, bundles []*plac
 		}
 	}
 
-	return checkBundles(m.bundles)
+	return nil
 }

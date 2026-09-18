@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 go_library(
     name = "benchraw_lib",
     srcs = ["main.go"],
-    importpath = "github.com/pingcap/tidb/cmd/benchraw",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/cmd/benchraw",
     visibility = ["//visibility:private"],
     deps = [
         "//pkg/parser/terror",

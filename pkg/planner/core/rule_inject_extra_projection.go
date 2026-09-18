@@ -15,17 +15,13 @@
 package core
 
 import (
-	"slices"
-
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/expression"
-	"github.com/pingcap/tidb/pkg/expression/aggregation"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/planner/core/base"
-	"github.com/pingcap/tidb/pkg/planner/core/operator/physicalop"
-	"github.com/pingcap/tidb/pkg/planner/util"
-	"github.com/pingcap/tidb/pkg/planner/util/coreusage"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/expression/aggregation"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/core/internal"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/planner/util"
 )
 
 // InjectExtraProjection is used to extract the expressions of specific
@@ -36,7 +32,7 @@ import (
 // 1. In postOptimize.
 // 2. TiDB can be used as a coprocessor, when a plan tree been pushed down to
 // TiDB, we need to inject extra projections for the plan tree as well.
-func InjectExtraProjection(plan base.PhysicalPlan) base.PhysicalPlan {
+func InjectExtraProjection(plan PhysicalPlan) PhysicalPlan {
 	failpoint.Inject("DisableProjectionPostOptimization", func(val failpoint.Value) {
 		if val.(bool) {
 			failpoint.Return(plan)
@@ -54,59 +50,59 @@ func NewProjInjector() *projInjector {
 	return &projInjector{}
 }
 
-func (pe *projInjector) inject(plan base.PhysicalPlan) base.PhysicalPlan {
+func (pe *projInjector) inject(plan PhysicalPlan) PhysicalPlan {
 	for i, child := range plan.Children() {
 		plan.Children()[i] = pe.inject(child)
 	}
 
-	if tr, ok := plan.(*physicalop.PhysicalTableReader); ok && tr.StoreType == kv.TiFlash {
-		tr.TablePlan = pe.inject(tr.TablePlan)
-		tr.TablePlans = physicalop.FlattenListPushDownPlan(tr.TablePlan)
+	if tr, ok := plan.(*PhysicalTableReader); ok && tr.StoreType == kv.TiFlash {
+		tr.tablePlan = pe.inject(tr.tablePlan)
+		tr.TablePlans = flattenPushDownPlan(tr.tablePlan)
 	}
 
 	switch p := plan.(type) {
-	case *physicalop.PhysicalHashAgg:
+	case *PhysicalHashAgg:
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
-	case *physicalop.PhysicalStreamAgg:
+	case *PhysicalStreamAgg:
 		plan = InjectProjBelowAgg(plan, p.AggFuncs, p.GroupByItems)
-	case *physicalop.PhysicalSort:
+	case *PhysicalSort:
 		plan = InjectProjBelowSort(p, p.ByItems)
-	case *physicalop.PhysicalTopN:
+	case *PhysicalTopN:
 		plan = InjectProjBelowSort(p, p.ByItems)
-	case *physicalop.NominalSort:
+	case *NominalSort:
 		plan = TurnNominalSortIntoProj(p, p.OnlyColumn, p.ByItems)
-	case *physicalop.PhysicalUnionAll:
+	case *PhysicalUnionAll:
 		plan = injectProjBelowUnion(p)
 	}
 	return plan
 }
 
-func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalUnionAll {
-	if !un.Mpp {
+func injectProjBelowUnion(un *PhysicalUnionAll) *PhysicalUnionAll {
+	if !un.mpp {
 		return un
 	}
-	for i, ch := range un.Children() {
+	for i, ch := range un.children {
 		exprs := make([]expression.Expression, len(ch.Schema().Columns))
 		needChange := false
-		for i, dstCol := range un.Schema().Columns {
+		for i, dstCol := range un.schema.Columns {
 			dstType := dstCol.RetType
 			srcCol := ch.Schema().Columns[i]
 			srcCol.Index = i
 			srcType := srcCol.RetType
 			if !srcType.Equal(dstType) || !(mysql.HasNotNullFlag(dstType.GetFlag()) == mysql.HasNotNullFlag(srcType.GetFlag())) {
-				exprs[i] = expression.BuildCastFunction4Union(un.SCtx().GetExprCtx(), srcCol, dstType)
+				exprs[i] = expression.BuildCastFunction4Union(un.SCtx(), srcCol, dstType)
 				needChange = true
 			} else {
 				exprs[i] = srcCol
 			}
 		}
 		if needChange {
-			proj := physicalop.PhysicalProjection{
+			proj := PhysicalProjection{
 				Exprs: exprs,
 			}.Init(un.SCtx(), ch.StatsInfo(), 0)
-			proj.SetSchema(un.Schema().Clone())
+			proj.SetSchema(un.schema.Clone())
 			proj.SetChildren(ch)
-			un.Children()[i] = proj
+			un.children[i] = proj
 		}
 	}
 	return un
@@ -116,10 +112,10 @@ func injectProjBelowUnion(un *physicalop.PhysicalUnionAll) *physicalop.PhysicalU
 // scalar functions in aggregation may speed up by vectorized evaluation in
 // the `proj`. If all the args of `aggFuncs`, and all the item of `groupByItems`
 // are columns or constants, we do not need to build the `proj`.
-func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) base.PhysicalPlan {
+func InjectProjBelowAgg(aggPlan PhysicalPlan, aggFuncs []*aggregation.AggFuncDesc, groupByItems []expression.Expression) PhysicalPlan {
 	hasScalarFunc := false
-	exprCtx := aggPlan.SCtx().GetExprCtx()
-	coreusage.WrapCastForAggFuncs(exprCtx, aggFuncs)
+
+	internal.WrapCastForAggFuncs(aggPlan.SCtx(), aggFuncs)
 	for i := 0; !hasScalarFunc && i < len(aggFuncs); i++ {
 		for _, arg := range aggFuncs[i].Args {
 			_, isScalarFunc := arg.(*expression.ScalarFunction)
@@ -142,7 +138,6 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 	projExprs := make([]expression.Expression, 0, cap(projSchemaCols))
 	cursor := 0
 
-	ectx := exprCtx.GetEvalCtx()
 	for _, f := range aggFuncs {
 		for i, arg := range f.Args {
 			if _, isCnst := arg.(*expression.Constant); isCnst {
@@ -151,7 +146,7 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 			projExprs = append(projExprs, arg)
 			newArg := &expression.Column{
 				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  arg.GetType(ectx),
+				RetType:  arg.GetType(),
 				Index:    cursor,
 			}
 			projSchemaCols = append(projSchemaCols, newArg)
@@ -159,57 +154,42 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 			cursor++
 		}
 		for _, byItem := range f.OrderByItems {
-			bi := byItem.Expr
-			if _, isCnst := bi.(*expression.Constant); isCnst {
+			if _, isCnst := byItem.Expr.(*expression.Constant); isCnst {
 				continue
 			}
-			idx := slices.IndexFunc(projExprs, func(a expression.Expression) bool {
-				return a.Equal(ectx, bi)
-			})
-			if idx < 0 {
-				projExprs = append(projExprs, bi)
-				newArg := &expression.Column{
-					UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
-					RetType:  bi.GetType(ectx),
-					Index:    cursor,
-				}
-				projSchemaCols = append(projSchemaCols, newArg)
-				byItem.Expr = newArg
-				cursor++
-			} else {
-				byItem.Expr = projSchemaCols[idx]
+			projExprs = append(projExprs, byItem.Expr)
+			newArg := &expression.Column{
+				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+				RetType:  byItem.Expr.GetType(),
+				Index:    cursor,
 			}
+			projSchemaCols = append(projSchemaCols, newArg)
+			byItem.Expr = newArg
+			cursor++
 		}
 	}
 
 	for i, item := range groupByItems {
-		it := item
-		if _, isCnst := it.(*expression.Constant); isCnst {
+		if _, isCnst := item.(*expression.Constant); isCnst {
 			continue
 		}
-		idx := slices.IndexFunc(projExprs, func(a expression.Expression) bool {
-			return a.Equal(ectx, it)
-		})
-		if idx < 0 {
-			projExprs = append(projExprs, it)
-			newArg := &expression.Column{
-				UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
-				RetType:  item.GetType(ectx),
-				Index:    cursor,
-			}
-			projSchemaCols = append(projSchemaCols, newArg)
-			groupByItems[i] = newArg
-			cursor++
-		} else {
-			groupByItems[i] = projSchemaCols[idx]
+		projExprs = append(projExprs, item)
+		newArg := &expression.Column{
+			UniqueID: aggPlan.SCtx().GetSessionVars().AllocPlanColumnID(),
+			RetType:  item.GetType(),
+			Index:    cursor,
 		}
+		projSchemaCols = append(projSchemaCols, newArg)
+		groupByItems[i] = newArg
+		cursor++
 	}
 
 	child := aggPlan.Children()[0]
 	prop := aggPlan.GetChildReqProps(0).CloneEssentialFields()
-	proj := physicalop.PhysicalProjection{
-		Exprs: projExprs,
-	}.Init(aggPlan.SCtx(), child.StatsInfo().ScaleByExpectCnt(aggPlan.SCtx().GetSessionVars(), prop.ExpectedCnt), aggPlan.QueryBlockOffset(), prop)
+	proj := PhysicalProjection{
+		Exprs:                projExprs,
+		AvoidColumnEvaluator: false,
+	}.Init(aggPlan.SCtx(), child.StatsInfo().ScaleByExpectCnt(prop.ExpectedCnt), aggPlan.SelectBlockOffset(), prop)
 	proj.SetSchema(expression.NewSchema(projSchemaCols...))
 	proj.SetChildren(child)
 
@@ -224,7 +204,7 @@ func InjectProjBelowAgg(aggPlan base.PhysicalPlan, aggFuncs []*aggregation.AggFu
 // PhysicalTopN, some extra columns will be added into the schema of the
 // Projection, thus we need to add another Projection upon them to prune the
 // redundant columns.
-func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base.PhysicalPlan {
+func InjectProjBelowSort(p PhysicalPlan, orderByItems []*util.ByItems) PhysicalPlan {
 	hasScalarFunc, numOrderByItems := false, len(orderByItems)
 	for i := 0; !hasScalarFunc && i < numOrderByItems; i++ {
 		_, isScalarFunc := orderByItems[i].Expr.(*expression.ScalarFunction)
@@ -240,9 +220,10 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 		col.Index = i
 		topProjExprs = append(topProjExprs, col)
 	}
-	topProj := physicalop.PhysicalProjection{
-		Exprs: topProjExprs,
-	}.Init(p.SCtx(), p.StatsInfo(), p.QueryBlockOffset(), nil)
+	topProj := PhysicalProjection{
+		Exprs:                topProjExprs,
+		AvoidColumnEvaluator: false,
+	}.Init(p.SCtx(), p.StatsInfo(), p.SelectBlockOffset(), nil)
 	topProj.SetSchema(p.Schema().Clone())
 	topProj.SetChildren(p)
 
@@ -264,7 +245,7 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 		bottomProjExprs = append(bottomProjExprs, itemExpr)
 		newArg := &expression.Column{
 			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  itemExpr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
+			RetType:  itemExpr.GetType(),
 			Index:    len(bottomProjSchemaCols),
 		}
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)
@@ -272,14 +253,15 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 	}
 
 	childProp := p.GetChildReqProps(0).CloneEssentialFields()
-	bottomProj := physicalop.PhysicalProjection{
-		Exprs: bottomProjExprs,
-	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
+	bottomProj := PhysicalProjection{
+		Exprs:                bottomProjExprs,
+		AvoidColumnEvaluator: false,
+	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
 	p.SetChildren(bottomProj)
 
-	if origChildProj, isChildProj := childPlan.(*physicalop.PhysicalProjection); isChildProj {
+	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
 	refine4NeighbourProj(topProj, bottomProj)
@@ -289,7 +271,7 @@ func InjectProjBelowSort(p base.PhysicalPlan, orderByItems []*util.ByItems) base
 
 // TurnNominalSortIntoProj will turn nominal sort into two projections. This is to check if the scalar functions will
 // overflow.
-func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems []*util.ByItems) base.PhysicalPlan {
+func TurnNominalSortIntoProj(p PhysicalPlan, onlyColumn bool, orderByItems []*util.ByItems) PhysicalPlan {
 	if onlyColumn {
 		return p.Children()[0]
 	}
@@ -314,16 +296,17 @@ func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems 
 		bottomProjExprs = append(bottomProjExprs, itemExpr)
 		newArg := &expression.Column{
 			UniqueID: p.SCtx().GetSessionVars().AllocPlanColumnID(),
-			RetType:  itemExpr.GetType(p.SCtx().GetExprCtx().GetEvalCtx()),
+			RetType:  itemExpr.GetType(),
 			Index:    len(bottomProjSchemaCols),
 		}
 		bottomProjSchemaCols = append(bottomProjSchemaCols, newArg)
 	}
 
 	childProp := p.GetChildReqProps(0).CloneEssentialFields()
-	bottomProj := physicalop.PhysicalProjection{
-		Exprs: bottomProjExprs,
-	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
+	bottomProj := PhysicalProjection{
+		Exprs:                bottomProjExprs,
+		AvoidColumnEvaluator: false,
+	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
 	bottomProj.SetSchema(expression.NewSchema(bottomProjSchemaCols...))
 	bottomProj.SetChildren(childPlan)
 
@@ -333,13 +316,14 @@ func TurnNominalSortIntoProj(p base.PhysicalPlan, onlyColumn bool, orderByItems 
 		col.Index = i
 		topProjExprs = append(topProjExprs, col)
 	}
-	topProj := physicalop.PhysicalProjection{
-		Exprs: topProjExprs,
-	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(p.SCtx().GetSessionVars(), childProp.ExpectedCnt), p.QueryBlockOffset(), childProp)
+	topProj := PhysicalProjection{
+		Exprs:                topProjExprs,
+		AvoidColumnEvaluator: false,
+	}.Init(p.SCtx(), childPlan.StatsInfo().ScaleByExpectCnt(childProp.ExpectedCnt), p.SelectBlockOffset(), childProp)
 	topProj.SetSchema(childPlan.Schema().Clone())
 	topProj.SetChildren(bottomProj)
 
-	if origChildProj, isChildProj := childPlan.(*physicalop.PhysicalProjection); isChildProj {
+	if origChildProj, isChildProj := childPlan.(*PhysicalProjection); isChildProj {
 		refine4NeighbourProj(bottomProj, origChildProj)
 	}
 	refine4NeighbourProj(topProj, bottomProj)

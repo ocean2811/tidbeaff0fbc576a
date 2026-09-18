@@ -37,7 +37,7 @@ This is particularly problematic in a DBaaS scenario such as TiDB Cloud where th
 The design of Security Enhanced Mode (SEM) takes the approach of:
 
 1. Restricting `SUPER` to a set of capabilities that are safe for end users.
-2. Implementation of dynamic privileges ([issue #22439](https://github.com/pingcap/tidb/issues/22439)).
+2. Implementation of dynamic privileges ([issue #22439](https://github.com/ocean2811/tidbeaff0fbc576a/issues/22439)).
 
 This approach was requested by product management based on the broad "in the wild" association of `SUPER` as "the MySQL admin privilege". Thus, proposals to create a new lesser-`SUPER` privilege have already been discussed and rejected.
 
@@ -181,9 +181,9 @@ It is not expected that any user scenarios are affected by `SEM`, but see "Impac
 
 We will need to consider the impact on tools. When SEM is disabled, no impact is expected. When SEM is enabled, it should be possible to make recommendations to the tools team so that they can still access meta data required to operate in DBaaS environment:
 
-* Lightning and BR will not work currently with SEM + https://github.com/pingcap/tidb/pull/21988
+* Lightning and BR will not work currently with SEM + https://github.com/ocean2811/tidbeaff0fbc576a/pull/21988
 * In 5.0 the recommended method for BR/Lightning to get TiKV GC stats should change.
-* There is one PR still pending for obtaining statistics: https://github.com/pingcap/tidb/pull/22286 
+* There is one PR still pending for obtaining statistics: https://github.com/ocean2811/tidbeaff0fbc576a/pull/22286 
 
 ### Benchmark Tests
 
@@ -195,8 +195,8 @@ Documentation is critically impacted by SEM, since it should be possible for a m
 
 Supporting PRs will be required to modify both documentation and functionality so that system variables and/or tables that are hidden by SEM are not required. For example: 
 
-* https://github.com/pingcap/tidb/pull/22286
-* https://github.com/pingcap/tidb/pull/21988
+* https://github.com/ocean2811/tidbeaff0fbc576a/pull/22286
+* https://github.com/ocean2811/tidbeaff0fbc576a/pull/21988
 * https://github.com/pingcap/docs/pull/4552
 
 * A further change to move the `new_collation_enabled` variable from mysql.tidb to a status variable has been identified, as it appears on several manual pages. No PR has been created yet.

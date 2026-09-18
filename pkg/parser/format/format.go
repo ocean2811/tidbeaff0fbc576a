@@ -21,7 +21,6 @@ import (
 	"bytes"
 	"fmt"
 	"io"
-	"slices"
 	"strings"
 )
 
@@ -35,7 +34,7 @@ const (
 // Formatter is an io.Writer extended formatter by a fmt.Printf like function Format.
 type Formatter interface {
 	io.Writer
-	Format(format string, args ...any) (n int, errno error)
+	Format(format string, args ...interface{}) (n int, errno error)
 }
 
 type indentFormatter struct {
@@ -83,9 +82,9 @@ func IndentFormatter(w io.Writer, indent string) Formatter {
 	return &indentFormatter{w, []byte(indent), 0, stBOL}
 }
 
-func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, errno error) {
+func (f *indentFormatter) format(flat bool, format string, args ...interface{}) (n int, errno error) {
 	var buf = make([]byte, 0)
-	for i := range len(format) {
+	for i := 0; i < len(format); i++ {
 		c := format[i]
 		switch f.state {
 		case st0:
@@ -114,7 +113,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, 
 				f.state = stBOLPERC
 			default:
 				if !flat {
-					for range f.indentLevel {
+					for i := 0; i < f.indentLevel; i++ {
 						buf = append(buf, f.indent...)
 					}
 				}
@@ -131,7 +130,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, 
 				f.state = stBOL
 			default:
 				if !flat {
-					for range f.indentLevel {
+					for i := 0; i < f.indentLevel; i++ {
 						buf = append(buf, f.indent...)
 					}
 				}
@@ -162,7 +161,7 @@ func (f *indentFormatter) format(flat bool, format string, args ...any) (n int, 
 }
 
 // Format implements Format interface.
-func (f *indentFormatter) Format(format string, args ...any) (n int, errno error) {
+func (f *indentFormatter) Format(format string, args ...interface{}) (n int, errno error) {
 	return f.format(false, format, args...)
 }
 
@@ -188,7 +187,7 @@ func FlatFormatter(w io.Writer) Formatter {
 }
 
 // Format implements Format interface.
-func (f *flatFormatter) Format(format string, args ...any) (n int, errno error) {
+func (f *flatFormatter) Format(format string, args ...interface{}) (n int, errno error) {
 	return (*indentFormatter)(f).format(true, format, args...)
 }
 
@@ -240,13 +239,7 @@ const (
 	RestoreWithoutSchemaName
 	RestoreWithoutTableName
 	RestoreForNonPrepPlanCache
-
-	RestoreBracketAroundBetweenExpr
-	// RestoreSkipRedundantParentheses lets expression Restore omit parentheses
-	// that do not affect SQL semantics under the current restore context. It is
-	// intended for canonicalization paths such as binding normalization; default
-	// SQL restore keeps user-written parentheses for stable round-tripping.
-	RestoreSkipRedundantParentheses
+	RestoreWithRedacted
 )
 
 const (
@@ -331,18 +324,6 @@ func (rf RestoreFlags) HasStringWithoutDefaultCharset() bool {
 	return rf.has(RestoreStringWithoutDefaultCharset)
 }
 
-// HasRestoreBracketAroundBetweenExpr returns a boolean indicating
-// whether `rf` has `RestoreBracketAroundBetweenExpr` flag.
-func (rf RestoreFlags) HasRestoreBracketAroundBetweenExpr() bool {
-	return rf.has(RestoreBracketAroundBetweenExpr)
-}
-
-// HasRestoreSkipRedundantParentheses returns a boolean indicating whether
-// `rf` has `RestoreSkipRedundantParentheses` flag.
-func (rf RestoreFlags) HasRestoreSkipRedundantParentheses() bool {
-	return rf.has(RestoreSkipRedundantParentheses)
-}
-
 // HasStringWithoutCharset returns a boolean indicating whether `rf` has `RestoreStringWithoutCharset` flag.
 func (rf RestoreFlags) HasStringWithoutCharset() bool {
 	return rf.has(RestoreStringWithoutCharset)
@@ -369,6 +350,13 @@ func (rf RestoreFlags) HasRestoreForNonPrepPlanCache() bool {
 	return rf.has(RestoreForNonPrepPlanCache)
 }
 
+// HasRestoreWithRedacted returns a boolean indicating
+// whether to force redact string.
+// eg: used for restoring `set global tidb_cloud_storgae_uri` for SecureText().
+func (rf RestoreFlags) HasRestoreWithRedacted() bool {
+	return rf.has(RestoreWithRedacted)
+}
+
 // RestoreWriter is the interface for `Restore` to write.
 type RestoreWriter interface {
 	io.Writer
@@ -380,29 +368,6 @@ type RestoreCtx struct {
 	Flags     RestoreFlags
 	In        RestoreWriter
 	DefaultDB string
-	// ParentBinaryOp stores the parent opcode.Op as an int; 0 means no parent.
-	// Expression Restore callers set it while restoring a child so parentheses
-	// removal can compare the child expression's precedence with the surrounding
-	// operator. Callers must restore the previous value before returning.
-	ParentBinaryOp int
-	// ParentBinarySide records whether the current child is on the left or right
-	// side of ParentBinaryOp. It is interpreted by expression restore using the
-	// internal left/right constants in ast/expressions.go and is meaningful only
-	// together with ParentBinaryOp.
-	//
-	// Examples:
-	// - In `(a + b) * c`, the `(a + b)` child is the left side of `*`, so `+`
-	//   must keep its parentheses.
-	// - In `a + (b * c)`, the `(b * c)` child is the right side of `+`, so `*`
-	//   can drop its parentheses because it binds tighter.
-	// - In `a - (b - c)`, the right-side marker makes the same-precedence `-`
-	//   child keep parentheses because subtraction is not associative.
-	//
-	// Callers must restore the previous value before returning.
-	ParentBinarySide int
-	// InUnaryOperation marks that a child expression is being restored as a unary
-	// operand. Callers must restore the previous value before returning.
-	InUnaryOperation bool
 	CTERestorer
 }
 
@@ -438,14 +403,6 @@ func (ctx *RestoreCtx) WriteWithSpecialComments(featureID string, fn func() erro
 	}
 	ctx.WritePlain(" */")
 	return nil
-}
-
-// WriteKeyWordWithSpecialComments writes a keyword with a special comment wrapped.
-func (ctx *RestoreCtx) WriteKeyWordWithSpecialComments(featureID string, keyWord string) {
-	_ = ctx.WriteWithSpecialComments(featureID, func() error {
-		ctx.WriteKeyWord(keyWord)
-		return nil
-	})
 }
 
 // WriteString writes the string into writer
@@ -499,7 +456,7 @@ func (ctx *RestoreCtx) WritePlain(plainText string) {
 }
 
 // WritePlainf write the plain text into writer without any handling.
-func (ctx *RestoreCtx) WritePlainf(format string, a ...any) {
+func (ctx *RestoreCtx) WritePlainf(format string, a ...interface{}) {
 	fmt.Fprintf(ctx.In, format, a...)
 }
 
@@ -510,7 +467,12 @@ type CTERestorer struct {
 
 // IsCTETableName returns true if the given tableName comes from CTE.
 func (c *CTERestorer) IsCTETableName(nameL string) bool {
-	return slices.Contains(c.CTENames, nameL)
+	for _, n := range c.CTENames {
+		if n == nameL {
+			return true
+		}
+	}
+	return false
 }
 
 // RecordCTEName records the CTE name.

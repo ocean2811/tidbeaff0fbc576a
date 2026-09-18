@@ -18,43 +18,32 @@ import (
 	"context"
 	"fmt"
 	"math"
-	"math/rand/v2"
-	"slices"
 	"sort"
-	"sync"
 	"testing"
-	"time"
 
 	"github.com/pingcap/kvproto/pkg/metapb"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/testkit/testflag"
-	"github.com/pingcap/tidb/pkg/ttl/cache"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/helper"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/cache"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 	"github.com/stretchr/testify/require"
 	"github.com/tikv/client-go/v2/tikv"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/clients/router"
-	"github.com/tikv/pd/client/opt"
-	"github.com/tikv/pd/client/pkg/caller"
-	"go.uber.org/zap"
 )
 
-func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Region {
+func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *pd.Region {
 	leader := &metapb.Peer{
 		Id:      regionID,
 		StoreId: 1,
 		Role:    metapb.PeerRole_Voter,
 	}
 
-	return &router.Region{
+	return &pd.Region{
 		Meta: &metapb.Region{
 			Id:       regionID,
 			StartKey: startKey,
@@ -66,21 +55,15 @@ func newMockRegion(regionID uint64, startKey []byte, endKey []byte) *router.Regi
 }
 
 type mockPDClient struct {
-	t  *testing.T
-	mu sync.Mutex
+	t *testing.T
 	pd.Client
-
-	nextRegionID  uint64
-	regions       []*router.Region
+	regions       []*pd.Region
 	regionsSorted bool
 }
 
-func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int, _ ...opt.GetRegionOption) ([]*router.Region, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
+func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit int) ([]*pd.Region, error) {
 	if len(c.regions) == 0 {
-		return []*router.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
+		return []*pd.Region{newMockRegion(1, []byte{}, []byte{0xFF, 0xFF})}, nil
 	}
 
 	if !c.regionsSorted {
@@ -90,11 +73,11 @@ func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit 
 		c.regionsSorted = true
 	}
 
-	regions := []*router.Region{newMockRegion(1, []byte{}, c.regions[0].Meta.StartKey)}
+	regions := []*pd.Region{newMockRegion(1, []byte{}, c.regions[0].Meta.StartKey)}
 	regions = append(regions, c.regions...)
 	regions = append(regions, newMockRegion(2, c.regions[len(c.regions)-1].Meta.EndKey, []byte{0xFF, 0xFF, 0xFF}))
 
-	result := make([]*router.Region, 0)
+	result := make([]*pd.Region, 0)
 	for _, r := range regions {
 		if kv.Key(r.Meta.StartKey).Cmp(endKey) >= 0 {
 			continue
@@ -113,161 +96,28 @@ func (c *mockPDClient) ScanRegions(_ context.Context, key, endKey []byte, limit 
 	return result, nil
 }
 
-func (c *mockPDClient) GetRegionByID(ctx context.Context, regionID uint64, opts ...opt.GetRegionOption) (*router.Region, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for _, r := range c.regions {
-		if r.Meta.Id == regionID {
-			return r, nil
-		}
-	}
-	return nil, fmt.Errorf("region %d not found", regionID)
-}
-
-func (c *mockPDClient) GetRegion(ctx context.Context, key []byte, _ ...opt.GetRegionOption) (*router.Region, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	for _, r := range c.regions {
-		if kv.Key(r.Meta.StartKey).Cmp(key) <= 0 && kv.Key(r.Meta.EndKey).Cmp(key) > 0 {
-			return r, nil
-		}
-	}
-
-	return nil, fmt.Errorf("region not found for key %s", key)
-}
-
-func (c *mockPDClient) BatchScanRegions(ctx context.Context, ranges []router.KeyRange, limit int, opts ...opt.GetRegionOption) ([]*router.Region, error) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	logutil.BgLogger().Info("BatchScanRegions", zap.Any("ranges", ranges))
-
-	var reg []*router.Region
-	for _, r := range c.regions {
-		for _, kr := range ranges {
-			if kv.Key(r.Meta.StartKey).Cmp(kr.EndKey) < 0 && kv.Key(r.Meta.EndKey).Cmp(kr.StartKey) > 0 {
-				reg = append(reg, r)
-				break
-			}
-		}
-	}
-
-	return reg, nil
-}
-
-func (c *mockPDClient) GetStore(_ context.Context, storeID uint64, _ ...opt.GetStoreOption) (*metapb.Store, error) {
+func (c *mockPDClient) GetStore(_ context.Context, storeID uint64) (*metapb.Store, error) {
 	return &metapb.Store{
 		Id:      storeID,
 		Address: fmt.Sprintf("127.0.0.%d", storeID),
 	}, nil
 }
 
-func (c *mockPDClient) GetClusterID(_ context.Context) uint64 {
-	return 1
-}
-
-func (c *mockPDClient) WithCallerComponent(_ caller.Component) pd.Client {
-	return c
-}
-
-func (c *mockPDClient) GetAllStores(ctx context.Context, _ ...opt.GetStoreOption) ([]*metapb.Store, error) {
-	return []*metapb.Store{
-		{
-			Id:      1,
-			Address: "",
-			State:   metapb.StoreState_Up,
-		},
-	}, nil
-}
-
-func (c *mockPDClient) addRegion(key, endKey []byte) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	require.True(c.t, kv.Key(endKey).Cmp(key) > 0)
-	if len(c.regions) > 0 {
-		lastRegion := c.regions[len(c.regions)-1]
-		require.True(c.t, kv.Key(endKey).Cmp(lastRegion.Meta.EndKey) >= 0)
-	}
-
-	regionID := c.nextRegionID
-	c.nextRegionID++
-	leader := &metapb.Peer{
-		Id:      regionID,
-		StoreId: 1,
-		Role:    metapb.PeerRole_Voter,
-	}
-
-	c.regions = append(c.regions, &router.Region{
-		Meta: &metapb.Region{
-			Id:       regionID,
-			StartKey: key,
-			EndKey:   endKey,
-			Peers:    []*metapb.Peer{leader},
-			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: 1,
-				Version: 1,
-			},
-		},
-		Leader: leader,
-	})
-
-	c.regionsSorted = false
-}
-
-// randomlyMergeRegions merges two region, and returned whether it has merged
-func (c *mockPDClient) randomlyMergeRegions() int {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if len(c.regions) < 2 {
-		return len(c.regions)
-	}
-
-	// Randomly merge two regions
-	if !c.regionsSorted {
-		sort.Slice(c.regions, func(i, j int) bool {
-			return kv.Key(c.regions[i].Meta.StartKey).Cmp(c.regions[j].Meta.StartKey) < 0
-		})
-		c.regionsSorted = true
-	}
-	r1Idx := rand.IntN(len(c.regions) - 1)
-	r2Idx := r1Idx + 1
-
-	newRegion := &router.Region{
-		Meta: &metapb.Region{
-			Id:       c.regions[r1Idx].Meta.Id,
-			StartKey: c.regions[r1Idx].Meta.StartKey,
-			EndKey:   c.regions[r2Idx].Meta.EndKey,
-			Peers:    c.regions[r1Idx].Meta.Peers,
-			RegionEpoch: &metapb.RegionEpoch{
-				ConfVer: c.regions[r1Idx].Meta.RegionEpoch.ConfVer,
-				Version: max(c.regions[r1Idx].Meta.RegionEpoch.Version,
-					c.regions[r2Idx].Meta.RegionEpoch.Version) + 1,
-			},
-		},
-		Leader: c.regions[r1Idx].Leader,
-	}
-	c.regions = slices.Delete(c.regions, r1Idx, r1Idx+2)
-	c.regions = append(c.regions, newRegion)
-	c.regionsSorted = false
-	return len(c.regions)
-}
-
 type mockTiKVStore struct {
 	t *testing.T
 	helper.Storage
-	pdClient *mockPDClient
-	cache    *tikv.RegionCache
+	pdClient     *mockPDClient
+	cache        *tikv.RegionCache
+	nextRegionID uint64
 }
 
 func newMockTiKVStore(t *testing.T) *mockTiKVStore {
-	pdClient := &mockPDClient{t: t, nextRegionID: 1000}
+	pdClient := &mockPDClient{t: t}
 	s := &mockTiKVStore{
-		t:        t,
-		pdClient: pdClient,
-		cache:    tikv.NewRegionCache(pdClient),
+		t:            t,
+		pdClient:     pdClient,
+		cache:        tikv.NewRegionCache(pdClient),
+		nextRegionID: 1000,
 	}
 	s.refreshCache()
 	t.Cleanup(func() {
@@ -279,29 +129,47 @@ func newMockTiKVStore(t *testing.T) *mockTiKVStore {
 func (s *mockTiKVStore) addRegionBeginWithTablePrefix(tableID int64, handle kv.Handle) *mockTiKVStore {
 	start := tablecodec.GenTablePrefix(tableID)
 	end := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
-	s.pdClient.addRegion(start, end)
-	s.refreshCache()
-	return s
+	return s.addRegion(start, end)
 }
 
 func (s *mockTiKVStore) addRegionEndWithTablePrefix(handle kv.Handle, tableID int64) *mockTiKVStore {
 	start := tablecodec.EncodeRowKeyWithHandle(tableID, handle)
 	end := tablecodec.GenTablePrefix(tableID + 1)
-	s.pdClient.addRegion(start, end)
-	s.refreshCache()
-	return s
+	return s.addRegion(start, end)
 }
 
 func (s *mockTiKVStore) addRegionWithTablePrefix(tableID int64, start kv.Handle, end kv.Handle) *mockTiKVStore {
 	startKey := tablecodec.EncodeRowKeyWithHandle(tableID, start)
 	endKey := tablecodec.EncodeRowKeyWithHandle(tableID, end)
-	s.pdClient.addRegion(startKey, endKey)
-	s.refreshCache()
-	return s
+	return s.addRegion(startKey, endKey)
 }
 
-func (s *mockTiKVStore) addRegion(start, end []byte) *mockTiKVStore {
-	s.pdClient.addRegion(start, end)
+func (s *mockTiKVStore) addRegion(key, endKey []byte) *mockTiKVStore {
+	require.True(s.t, kv.Key(endKey).Cmp(key) > 0)
+	if len(s.pdClient.regions) > 0 {
+		lastRegion := s.pdClient.regions[len(s.pdClient.regions)-1]
+		require.True(s.t, kv.Key(endKey).Cmp(lastRegion.Meta.EndKey) >= 0)
+	}
+
+	regionID := s.nextRegionID
+	s.nextRegionID++
+	leader := &metapb.Peer{
+		Id:      regionID,
+		StoreId: 1,
+		Role:    metapb.PeerRole_Voter,
+	}
+
+	s.pdClient.regions = append(s.pdClient.regions, &pd.Region{
+		Meta: &metapb.Region{
+			Id:       regionID,
+			StartKey: key,
+			EndKey:   endKey,
+			Peers:    []*metapb.Peer{leader},
+		},
+		Leader: leader,
+	})
+
+	s.pdClient.regionsSorted = false
 	s.refreshCache()
 	return s
 }
@@ -317,7 +185,7 @@ func (s *mockTiKVStore) refreshCache() {
 
 func (s *mockTiKVStore) batchAddIntHandleRegions(tblID int64, regionCnt, regionSize int,
 	offset int64) (end kv.IntHandle) {
-	for i := range regionCnt {
+	for i := 0; i < regionCnt; i++ {
 		start := kv.IntHandle(offset + int64(i*regionSize))
 		end = kv.IntHandle(start.IntValue() + int64(regionSize))
 		s.addRegionWithTablePrefix(tblID, start, end)
@@ -325,8 +193,6 @@ func (s *mockTiKVStore) batchAddIntHandleRegions(tblID int64, regionCnt, regionS
 	return
 }
 
-// clearRegions is **not** thread-safe, it is only used in test cases to reset the region cache.
-// A more suggested way is to create a new mockTiKVStore instance for each test case.
 func (s *mockTiKVStore) clearRegions() {
 	s.pdClient.regions = nil
 	s.cache.Close()
@@ -338,18 +204,12 @@ func (s *mockTiKVStore) GetRegionCache() *tikv.RegionCache {
 	return s.cache
 }
 
-func (s *mockTiKVStore) randomlyMergeRegions() int {
-	ret := s.pdClient.randomlyMergeRegions()
-	s.refreshCache()
-	return ret
-}
-
 func bytesHandle(t *testing.T, data []byte) kv.Handle {
 	return commonHandle(t, types.NewBytesDatum(data))
 }
 
 func commonHandle(t *testing.T, d ...types.Datum) kv.Handle {
-	encoded, err := codec.EncodeKey(time.UTC, nil, d...)
+	encoded, err := codec.EncodeKey(nil, nil, d...)
 	require.NoError(t, err)
 	h, err := kv.NewCommonHandle(encoded)
 	require.NoError(t, err)
@@ -376,30 +236,30 @@ func create2PKTTLTable(t *testing.T, tk *testkit.TestKit, name string, option st
 
 func createTTLTableWithSQL(t *testing.T, tk *testkit.TestKit, name string, sql string) *cache.PhysicalTable {
 	tk.MustExec(sql)
-	is, ok := tk.Session().GetLatestInfoSchema().(infoschema.InfoSchema)
+	is, ok := tk.Session().GetDomainInfoSchema().(infoschema.InfoSchema)
 	require.True(t, ok)
-	tbl, err := is.TableByName(context.Background(), ast.NewCIStr("test"), ast.NewCIStr(name))
+	tbl, err := is.TableByName(model.NewCIStr("test"), model.NewCIStr(name))
 	require.NoError(t, err)
-	ttlTbl, err := cache.NewPhysicalTable(ast.NewCIStr("test"), tbl.Meta(), ast.NewCIStr(""))
+	ttlTbl, err := cache.NewPhysicalTable(model.NewCIStr("test"), tbl.Meta(), model.NewCIStr(""))
 	require.NoError(t, err)
 	return ttlTbl
 }
 
-func checkRange(t *testing.T, r cache.ScanRange, start, end types.Datum, msgAndArgs ...any) {
+func checkRange(t *testing.T, r cache.ScanRange, start, end types.Datum) {
 	if start.IsNull() {
-		require.Nil(t, r.Start, msgAndArgs...)
+		require.Nil(t, r.Start)
 	} else {
-		require.Equal(t, 1, len(r.Start), msgAndArgs...)
-		require.Equal(t, start.Kind(), r.Start[0].Kind(), msgAndArgs...)
-		require.Equal(t, start.GetValue(), r.Start[0].GetValue(), msgAndArgs...)
+		require.Equal(t, 1, len(r.Start))
+		require.Equal(t, start.Kind(), r.Start[0].Kind())
+		require.Equal(t, start.GetValue(), r.Start[0].GetValue())
 	}
 
 	if end.IsNull() {
-		require.Nil(t, r.End, msgAndArgs...)
+		require.Nil(t, r.End)
 	} else {
-		require.Equal(t, 1, len(r.End), msgAndArgs...)
-		require.Equal(t, end.Kind(), r.End[0].Kind(), msgAndArgs...)
-		require.Equal(t, end.GetValue(), r.End[0].GetValue(), msgAndArgs...)
+		require.Equal(t, 1, len(r.End))
+		require.Equal(t, end.Kind(), r.End[0].Kind())
+		require.Equal(t, end.GetValue(), r.End[0].GetValue())
 	}
 }
 
@@ -651,135 +511,47 @@ func TestSplitTTLScanRangesWithBytes(t *testing.T) {
 		createTTLTable(t, tk, "t3", "varchar(32) CHARACTER SET BINARY"),
 		createTTLTable(t, tk, "t4", "bit(32)"),
 		create2PKTTLTable(t, tk, "t5", "binary(32)"),
-		createTTLTable(t, tk, "t6", "varbinary(32)"),
-		createTTLTable(t, tk, "t7", "char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin"),
-		createTTLTable(t, tk, "t8", "char(32) CHARACTER SET utf8 COLLATE utf8_bin"),
-		create2PKTTLTable(t, tk, "t9", "char(32) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_bin"),
-	}
-
-	cases := []struct {
-		name           string
-		regionEdges    []kv.Handle
-		splitCnt       int
-		binaryExpected [][]types.Datum
-		stringExpected [][]types.Datum
-	}{
-		{
-			name: "2 regions with binary split",
-			regionEdges: []kv.Handle{
-				bytesHandle(t, []byte{1, 2, 3}),
-			},
-			splitCnt: 4,
-			binaryExpected: [][]types.Datum{
-				{types.Datum{}, types.NewBytesDatum([]byte{1, 2, 3})},
-				{types.NewBytesDatum([]byte{1, 2, 3}), types.Datum{}},
-			},
-			stringExpected: [][]types.Datum{
-				{types.Datum{}, types.Datum{}},
-			},
-		},
-		{
-			name: "6 regions with binary split",
-			regionEdges: []kv.Handle{
-				bytesHandle(t, []byte{1, 2, 3}),
-				bytesHandle(t, []byte{1, 2, 3, 4}),
-				bytesHandle(t, []byte{1, 2, 3, 4, 5}),
-				bytesHandle(t, []byte{1, 2, 4}),
-				bytesHandle(t, []byte{1, 2, 5}),
-			},
-			splitCnt: 4,
-			binaryExpected: [][]types.Datum{
-				{types.Datum{}, types.NewBytesDatum([]byte{1, 2, 3, 4})},
-				{types.NewBytesDatum([]byte{1, 2, 3, 4}), types.NewBytesDatum([]byte{1, 2, 4})},
-				{types.NewBytesDatum([]byte{1, 2, 4}), types.NewBytesDatum([]byte{1, 2, 5})},
-				{types.NewBytesDatum([]byte{1, 2, 5}), types.Datum{}},
-			},
-			stringExpected: [][]types.Datum{
-				{types.Datum{}, types.Datum{}},
-			},
-		},
-		{
-			name: "2 regions with utf8 split",
-			regionEdges: []kv.Handle{
-				bytesHandle(t, []byte("中文")),
-			},
-			splitCnt: 4,
-			binaryExpected: [][]types.Datum{
-				{types.Datum{}, types.NewBytesDatum([]byte("中文"))},
-				{types.NewBytesDatum([]byte("中文")), types.Datum{}},
-			},
-			stringExpected: [][]types.Datum{
-				{types.Datum{}, types.Datum{}},
-			},
-		},
-		{
-			name: "several regions with mixed split",
-			regionEdges: []kv.Handle{
-				bytesHandle(t, []byte("abc")),
-				bytesHandle(t, []byte("ab\x7f0")),
-				bytesHandle(t, []byte("ab\xff0")),
-				bytesHandle(t, []byte("ac\x001")),
-				bytesHandle(t, []byte("ad\x0a1")),
-				bytesHandle(t, []byte("ad23")),
-				bytesHandle(t, []byte("ad230\xff")),
-				bytesHandle(t, []byte("befh")),
-				bytesHandle(t, []byte("中文")),
-			},
-			splitCnt: 10,
-			binaryExpected: [][]types.Datum{
-				{types.Datum{}, types.NewBytesDatum([]byte("abc"))},
-				{types.NewBytesDatum([]byte("abc")), types.NewBytesDatum([]byte("ab\x7f0"))},
-				{types.NewBytesDatum([]byte("ab\x7f0")), types.NewBytesDatum([]byte("ab\xff0"))},
-				{types.NewBytesDatum([]byte("ab\xff0")), types.NewBytesDatum([]byte("ac\x001"))},
-				{types.NewBytesDatum([]byte("ac\x001")), types.NewBytesDatum([]byte("ad\x0a1"))},
-				{types.NewBytesDatum([]byte("ad\x0a1")), types.NewBytesDatum([]byte("ad23"))},
-				{types.NewBytesDatum([]byte("ad23")), types.NewBytesDatum([]byte("ad230\xff"))},
-				{types.NewBytesDatum([]byte("ad230\xff")), types.NewBytesDatum([]byte("befh"))},
-				{types.NewBytesDatum([]byte("befh")), types.NewBytesDatum([]byte("中文"))},
-				{types.NewBytesDatum([]byte("中文")), types.Datum{}},
-			},
-			stringExpected: [][]types.Datum{
-				{types.Datum{}, types.NewStringDatum("abc")},
-				{types.NewStringDatum("abc"), types.NewStringDatum("ac")},
-				{types.NewStringDatum("ac"), types.NewStringDatum("ad\n1")},
-				{types.NewStringDatum("ad\n1"), types.NewStringDatum("ad23")},
-				{types.NewStringDatum("ad23"), types.NewStringDatum("ad230")},
-				{types.NewStringDatum("ad230"), types.NewStringDatum("befh")},
-				{types.NewStringDatum("befh"), types.Datum{}},
-			},
-		},
 	}
 
 	tikvStore := newMockTiKVStore(t)
 	for _, tbl := range tbls {
-		for _, c := range cases {
-			tikvStore.clearRegions()
-			require.Greater(t, len(c.regionEdges), 0)
-			for i, edge := range c.regionEdges {
-				if i == 0 {
-					tikvStore.addRegionBeginWithTablePrefix(tbl.ID, edge)
-				} else {
-					tikvStore.addRegionWithTablePrefix(tbl.ID, c.regionEdges[i-1], edge)
-				}
-			}
-			tikvStore.addRegionEndWithTablePrefix(c.regionEdges[len(c.regionEdges)-1], tbl.ID)
-			ranges, err := tbl.SplitScanRanges(context.TODO(), tikvStore, c.splitCnt)
-			require.NoError(t, err)
+		// test only one region
+		tikvStore.clearRegions()
+		ranges, err := tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
-			keyTp := tbl.KeyColumnTypes[0]
-			var expected [][]types.Datum
-			if keyTp.GetType() == mysql.TypeBit || mysql.HasBinaryFlag(keyTp.GetFlag()) {
-				expected = c.binaryExpected
-			} else {
-				expected = c.stringExpected
-			}
+		// test share regions with other table
+		tikvStore.clearRegions()
+		tikvStore.addRegion(
+			tablecodec.GenTablePrefix(tbl.ID-1),
+			tablecodec.GenTablePrefix(tbl.ID+1),
+		)
+		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
+		require.NoError(t, err)
+		require.Equal(t, 1, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.Datum{})
 
-			require.Equal(t, len(expected), len(ranges), "tbl: %s, case: %s", tbl.Name, c.name)
-			for i, r := range ranges {
-				checkRange(t, r, expected[i][0], expected[i][1],
-					"tbl: %s, case: %s, i: %d", tbl.Name, c.name, i)
-			}
-		}
+		// test one table has multiple regions
+		tikvStore.clearRegions()
+		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, bytesHandle(t, []byte{1, 2, 3}))
+		tikvStore.addRegionWithTablePrefix(
+			tbl.ID, bytesHandle(t, []byte{1, 2, 3}), bytesHandle(t, []byte{1, 2, 3, 4}))
+		tikvStore.addRegionWithTablePrefix(
+			tbl.ID, bytesHandle(t, []byte{1, 2, 3, 4}), bytesHandle(t, []byte{1, 2, 3, 4, 5}))
+		tikvStore.addRegionWithTablePrefix(
+			tbl.ID, bytesHandle(t, []byte{1, 2, 3, 4, 5}), bytesHandle(t, []byte{1, 2, 4}))
+		tikvStore.addRegionWithTablePrefix(
+			tbl.ID, bytesHandle(t, []byte{1, 2, 4}), bytesHandle(t, []byte{1, 2, 5}))
+		tikvStore.addRegionEndWithTablePrefix(bytesHandle(t, []byte{1, 2, 5}), tbl.ID)
+		ranges, err = tbl.SplitScanRanges(context.TODO(), tikvStore, 4)
+		require.NoError(t, err)
+		require.Equal(t, 4, len(ranges))
+		checkRange(t, ranges[0], types.Datum{}, types.NewBytesDatum([]byte{1, 2, 3, 4}))
+		checkRange(t, ranges[1], types.NewBytesDatum([]byte{1, 2, 3, 4}), types.NewBytesDatum([]byte{1, 2, 4}))
+		checkRange(t, ranges[2], types.NewBytesDatum([]byte{1, 2, 4}), types.NewBytesDatum([]byte{1, 2, 5}))
+		checkRange(t, ranges[3], types.NewBytesDatum([]byte{1, 2, 5}), types.Datum{})
 	}
 }
 
@@ -788,12 +560,10 @@ func TestNoTTLSplitSupportTables(t *testing.T) {
 	tk := testkit.NewTestKit(t, store)
 
 	tbls := []*cache.PhysicalTable{
-		createTTLTable(t, tk, "t1", "decimal(32, 2)"),
-		createTTLTable(t, tk, "t2", "date"),
-		createTTLTable(t, tk, "t3", "datetime"),
-		createTTLTable(t, tk, "t4", "timestamp"),
-		createTTLTable(t, tk, "t5", "varchar(32) character set utf8mb4 collate utf8mb4_general_ci"),
-		createTTLTable(t, tk, "t6", "varchar(32) character set utf8mb4 collate utf8mb4_0900_ai_ci"),
+		createTTLTable(t, tk, "t1", "char(32)  CHARACTER SET UTF8MB4"),
+		createTTLTable(t, tk, "t2", "varchar(32) CHARACTER SET UTF8MB4"),
+		createTTLTable(t, tk, "t4", "decimal(32, 2)"),
+		create2PKTTLTable(t, tk, "t5", "char(32)  CHARACTER SET UTF8MB4"),
 	}
 
 	tikvStore := newMockTiKVStore(t)
@@ -831,7 +601,7 @@ func TestNoTTLSplitSupportTables(t *testing.T) {
 func TestGetNextBytesHandleDatum(t *testing.T) {
 	tblID := int64(7)
 	buildHandleBytes := func(data []byte) []byte {
-		handleBytes, err := codec.EncodeKey(time.UTC, nil, types.NewBytesDatum(data))
+		handleBytes, err := codec.EncodeKey(nil, nil, types.NewBytesDatum(data))
 		require.NoError(t, err)
 		return handleBytes
 	}
@@ -846,7 +616,7 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 
 	binaryDataStartPos := len(tablecodec.GenTableRecordPrefix(tblID)) + 1
 	cases := []struct {
-		key    any
+		key    interface{}
 		result []byte
 		isNull bool
 	}{
@@ -999,7 +769,16 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 			result: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9},
 		},
 		{
-			// recordPrefix + bytesFlag + [1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 246]
+			// recordPrefix + bytesFlag + [1, 2, 3, 4, 5, 6, 7, 8, 255, 9, 0, 0, 0, 0, 0, 0, 0]
+			key: func() []byte {
+				bs := buildBytesRowKey([]byte{1, 2, 3, 4, 5, 6, 7, 8, 9})
+				bs = bs[:len(bs)-1]
+				return bs
+			},
+			result: []byte{1, 2, 3, 4, 5, 6, 7, 8, 9},
+		},
+		{
+			// recordPrefix + bytesFlag + [1, 2, 3, 4, 5, 6, 7, 8, 255, 0, 0, 0, 0, 0, 0, 0, 0, 0]
 			key: func() []byte {
 				bs := buildBytesRowKey([]byte{1, 2, 3, 4, 5, 6, 7, 8})
 				bs = bs[:len(bs)-1]
@@ -1043,55 +822,10 @@ func TestGetNextBytesHandleDatum(t *testing.T) {
 	}
 }
 
-func TestGetASCIIPrefixDatumFromBytes(t *testing.T) {
-	cases := []struct {
-		bytes    []byte
-		expected string
-	}{
-		{bytes: nil, expected: ""},
-		{bytes: []byte{}, expected: ""},
-		{bytes: []byte{0}, expected: ""},
-		{bytes: []byte{1}, expected: ""},
-		{bytes: []byte{8}, expected: ""},
-		{bytes: []byte{9}, expected: "\t"},
-		{bytes: []byte{10}, expected: "\n"},
-		{bytes: []byte{11}, expected: ""},
-		{bytes: []byte{12}, expected: ""},
-		{bytes: []byte{13}, expected: "\r"},
-		{bytes: []byte{14}, expected: ""},
-		{bytes: []byte{0x19}, expected: ""},
-		{bytes: []byte{0x20}, expected: " "},
-		{bytes: []byte{0x21}, expected: "!"},
-		{bytes: []byte{0x7D}, expected: "}"},
-		{bytes: []byte{0x7E}, expected: "~"},
-		{bytes: []byte{0x7F}, expected: ""},
-		{bytes: []byte{0xFF}, expected: ""},
-		{bytes: []byte{0x0, 'a', 'b'}, expected: ""},
-		{bytes: []byte{0xFF, 'a', 'b'}, expected: ""},
-		{bytes: []byte{'0', '1', 0x0, 'a', 'b'}, expected: "01"},
-		{bytes: []byte{'0', '1', 0x15, 'a', 'b'}, expected: "01"},
-		{bytes: []byte{'0', '1', 0xFF, 'a', 'b'}, expected: "01"},
-		{bytes: []byte{'a', 'b', 0x0}, expected: "ab"},
-		{bytes: []byte{'a', 'b', 0x15}, expected: "ab"},
-		{bytes: []byte{'a', 'b', 0xFF}, expected: "ab"},
-		{bytes: []byte("ab\rcd\tef\nAB!~GH()tt ;;"), expected: "ab\rcd\tef\nAB!~GH()tt ;;"},
-		{bytes: []byte("中文"), expected: ""},
-		{bytes: []byte("cn中文"), expected: "cn"},
-		{bytes: []byte("😀"), expected: ""},
-		{bytes: []byte("emoji😀"), expected: "emoji"},
-	}
-
-	for i, c := range cases {
-		d := cache.GetASCIIPrefixDatumFromBytes(c.bytes)
-		require.Equalf(t, types.KindString, d.Kind(), "i: %d", i)
-		require.Equalf(t, c.expected, d.GetString(), "i: %d, bs: %v", i, c.bytes)
-	}
-}
-
 func TestGetNextIntHandle(t *testing.T) {
 	tblID := int64(7)
 	cases := []struct {
-		key    any
+		key    interface{}
 		result int64
 		isNull bool
 	}{
@@ -1196,7 +930,7 @@ func TestGetNextIntHandle(t *testing.T) {
 
 func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
 	encode := func(tblID int64, d ...types.Datum) kv.Key {
-		encoded, err := codec.EncodeKey(time.UTC, nil, d...)
+		encoded, err := codec.EncodeKey(nil, nil, d...)
 		require.NoError(t, err)
 		h, err := kv.NewCommonHandle(encoded)
 		require.NoError(t, err)
@@ -1392,76 +1126,5 @@ func TestGetNextIntDatumFromCommonHandle(t *testing.T) {
 
 		d := cache.GetNextIntDatumFromCommonHandle(c.key, tablecodec.GenTableRecordPrefix(tblID), c.unsigned)
 		require.Equal(t, c.d, d)
-	}
-}
-
-func TestMergeRegion(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	tikvStore := newMockTiKVStore(t)
-	tbl := create2PKTTLTable(t, tk, "t1", "int")
-	startKey, endKey := tablecodec.GetTableHandleKeyRange(tbl.ID)
-
-	tikvStore.clearRegions()
-	// create a table with 102 regions
-	tikvStore.addRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(0))
-	end := tikvStore.batchAddIntHandleRegions(tbl.ID, 100, 1000000, 0)
-	tikvStore.addRegionEndWithTablePrefix(end, tbl.ID)
-
-	regionCount := 102
-	for regionCount >= 2 {
-		regionCount--
-		require.Equal(t, regionCount, tikvStore.randomlyMergeRegions())
-		regionIDs, err := tikvStore.GetRegionCache().ListRegionIDsInKeyRange(
-			tikv.NewBackofferWithVars(context.Background(), 20000, nil), startKey, endKey)
-		require.NoError(t, err)
-		require.Equal(t, regionCount, len(regionIDs))
-	}
-}
-
-func TestRegionDisappearDuringSplitRange(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	testStartTime := time.Now()
-	testDuration := 5 * time.Second
-	if testflag.Long() {
-		testDuration = 5 * time.Minute
-	}
-
-	i := 0
-	for time.Since(testStartTime) < testDuration {
-		i++
-
-		tikvStore := newMockTiKVStore(t)
-		tbl := create2PKTTLTable(t, tk, fmt.Sprintf("t%d", i), "int")
-		tikvStore.clearRegions()
-		// create a table with 100 regions
-		tikvStore.addRegionBeginWithTablePrefix(tbl.ID, kv.IntHandle(0))
-		end := tikvStore.batchAddIntHandleRegions(tbl.ID, 100, 100, 0)
-		tikvStore.addRegionEndWithTablePrefix(end, tbl.ID)
-
-		mergeStopCh := make(chan struct{})
-		// merge regions while splitting ranges
-		go func() {
-			for tikvStore.randomlyMergeRegions() >= 2 {
-			}
-			close(mergeStopCh)
-		}()
-
-	loop:
-		for {
-			select {
-			case <-mergeStopCh:
-				// merging finished
-				break loop
-			default:
-				_, err := tbl.SplitScanRanges(context.TODO(), tikvStore, 16)
-				require.NoError(t, err)
-			}
-		}
-
-		tikvStore.cache.Close()
 	}
 }

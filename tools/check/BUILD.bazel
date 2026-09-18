@@ -2,21 +2,34 @@ load("@io_bazel_rules_go//go:def.bzl", "go_binary", "go_library")
 
 go_library(
     name = "ut_lib",
-    srcs = [
-        "longtests.go",
-        "ut.go",
-    ],
-    importpath = "github.com/pingcap/tidb/tools/check",
+    srcs = ["ut.go"],
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/tools/check",
     visibility = ["//visibility:private"],
     deps = [
-        "@org_golang_x_sync//errgroup",
+        "@org_golang_x_tools//cover",
+        "@org_uber_go_automaxprocs//:automaxprocs",
+    ],
+)
+
+go_library(
+    name = "xprog_lib",
+    srcs = ["xprog.go"],
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/tools/check",
+    visibility = ["//visibility:private"],
+    deps = [
         "@org_golang_x_tools//cover",
         "@org_uber_go_automaxprocs//:automaxprocs",
     ],
 )
 
 go_binary(
-    name = "ut-server",
+    name = "ut",
     embed = [":ut_lib"],
+    visibility = ["//visibility:public"],
+)
+
+go_binary(
+    name = "xprog",
+    embed = [":xprog_lib"],
     visibility = ["//visibility:public"],
 )

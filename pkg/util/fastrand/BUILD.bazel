@@ -2,11 +2,8 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 
 go_library(
     name = "fastrand",
-    srcs = [
-        "random.go",
-        "runtime.go",
-    ],
-    importpath = "github.com/pingcap/tidb/pkg/util/fastrand",
+    srcs = ["random.go"],
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/fastrand",
     visibility = ["//visibility:public"],
 )
 

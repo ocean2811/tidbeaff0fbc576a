@@ -1,4 +1,4 @@
-// Copyright 2025 PingCAP, Inc.
+// Copyright 2016 PingCAP, Inc.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -16,531 +16,148 @@ package executor_test
 
 import (
 	"context"
+	"fmt"
 	"strconv"
-	"sync"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/errno"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/testkit"
-	"github.com/pingcap/tidb/pkg/util/dbterror/plannererrors"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/server"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/globalconn"
 	"github.com/stretchr/testify/require"
 )
 
-func TestRefreshTableStats(t *testing.T) {
+func TestKillStmt(t *testing.T) {
 	store, dom := testkit.CreateMockStoreAndDomain(t)
+	sv := server.CreateMockServer(t, store)
+	sv.SetDomain(dom)
+	defer sv.Close()
 
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (a int, b int, index idx(a))")
-	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
-	tk.MustExec("create table t2 (a int, b int, index idx(a))")
-	tk.MustExec("insert into t2 values (1,1), (2,2), (3,3)")
-	tk.MustExec("analyze table t1, t2 all columns with 1 topn, 2 buckets")
+	conn1 := server.CreateMockConn(t, sv)
+	tk := testkit.NewTestKitWithSession(t, store, conn1.Context().Session)
 
-	is := dom.InfoSchema()
-	handle := dom.StatsHandle()
-	ctx := context.Background()
-	tbl1, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
-	require.NoError(t, err)
-	tbl2, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t2"))
-	require.NoError(t, err)
-	tbl1Meta := tbl1.Meta()
-	tbl1Stats := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	tbl2Meta := tbl2.Meta()
-	tbl2Stats := handle.GetPhysicalTableStats(tbl2Meta.ID, tbl2Meta)
-	tk.MustExec("refresh stats t1, test.t1")
-	tbl1StatsUpdated := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	tbl2StatsUpdated := handle.GetPhysicalTableStats(tbl2Meta.ID, tbl2Meta)
-	require.NotSame(t, tbl1Stats, tbl1StatsUpdated)
-	require.Nil(t, tbl1StatsUpdated.GetIdx(1), "index stats shouldn't be loaded in lite mode")
-	require.Same(t, tbl2Stats, tbl2StatsUpdated)
-	tk.MustExec("REFRESH STATS *.* FULL")
-	tbl1StatsUpdated = handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	require.NotNil(t, tbl1StatsUpdated.GetIdx(1), "index stats should be loaded in full mode")
-	tbl2StatsUpdated = handle.GetPhysicalTableStats(tbl2Meta.ID, tbl2Meta)
-	require.NotSame(t, tbl2Stats, tbl2StatsUpdated)
-	require.NotNil(t, tbl2StatsUpdated.GetIdx(1), "index stats should be loaded in full mode")
-}
-
-func TestRefreshStatsWarningsForMissingObjects(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t")
-	tk.MustExec("create table t (a int, b int)")
-	tk.MustExec("analyze table t all columns")
-
-	vars := tk.Session().GetSessionVars()
-
-	vars.StmtCtx.SetWarnings(nil)
-	tk.MustExec("refresh stats missing_db.*")
-	warnings := vars.StmtCtx.GetWarnings()
-	require.Len(t, warnings, 1)
-	require.Equal(t, infoschema.ErrDatabaseNotExists.FastGenByArgs("missing_db").Error(), warnings[0].Err.Error())
-
-	vars.StmtCtx.SetWarnings(nil)
-	tk.MustExec("refresh stats test.t_missing, test.t")
-	warnings = vars.StmtCtx.GetWarnings()
-	require.Len(t, warnings, 1)
-	require.Equal(t, infoschema.ErrTableNotExists.FastGenByArgs("test", "t_missing").Error(), warnings[0].Err.Error())
-
-	vars.StmtCtx.SetWarnings(nil)
-	tk.MustExec("refresh stats t, t1")
-	warnings = vars.StmtCtx.GetWarnings()
-	require.Len(t, warnings, 1)
-	require.Equal(t, infoschema.ErrTableNotExists.FastGenByArgs("test", "t1").Error(), warnings[0].Err.Error())
-
-	vars.StmtCtx.SetWarnings(nil)
-	tk.MustExec("refresh stats t")
-	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
-}
-
-func TestRefreshAllNonExistentTables(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1")
-	tk.MustExec("create table t1 (a int, b int, index idx(a))")
-	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
-	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
-
-	is := dom.InfoSchema()
-	handle := dom.StatsHandle()
-	ctx := context.Background()
-	tbl1, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
-	require.NoError(t, err)
-	tbl1Meta := tbl1.Meta()
-	tbl1Stats := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	tk.MustExec("refresh stats missing_db.*, t2")
-	tbl1StatsUpdated := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	require.Same(t, tbl1Stats, tbl1StatsUpdated)
-}
-
-func TestRefreshStatsNoTables(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	tk.MustExec("refresh stats *.*")
-}
-
-func TestRefreshStatsRequiresDefaultDB(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustGetDBError("refresh stats t1", plannererrors.ErrNoDB)
-}
-
-func TestRefreshStatsWhenDatabaseIsEmpty(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-
-	vars := tk.Session().GetSessionVars()
-	vars.StmtCtx.SetWarnings(nil)
-	tk.MustExec("refresh stats test.*")
-	require.Len(t, vars.StmtCtx.GetWarnings(), 0)
-}
-
-func TestRefreshStatsPrivilegeChecks(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t_refresh_priv")
-	tk.MustExec("create table t_refresh_priv (a int)")
-
-	t.Run("table scope requires select", func(t *testing.T) {
-		tk.MustExec("drop user if exists 'refresh_reader'@'%'")
-		tk.MustExec("create user 'refresh_reader'@'%'")
-
-		tkUser := testkit.NewTestKit(t, store)
-		require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "refresh_reader", Hostname: "%"}, nil, nil, nil))
-		tkUser.MustGetErrCode("refresh stats test.t_refresh_priv", errno.ErrTableaccessDenied)
-
-		tk.MustExec("grant select on test.t_refresh_priv to 'refresh_reader'@'%'")
-		tkUser.MustExec("refresh stats test.t_refresh_priv")
-	})
-
-	t.Run("database scope requires select", func(t *testing.T) {
-		tk.MustExec("drop user if exists 'refresh_db_reader'@'%'")
-		tk.MustExec("create user 'refresh_db_reader'@'%'")
-
-		tkUser := testkit.NewTestKit(t, store)
-		require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "refresh_db_reader", Hostname: "%"}, nil, nil, nil))
-		tkUser.MustGetErrCode("refresh stats test.*", errno.ErrDBaccessDenied)
-
-		tk.MustExec("grant select on test.* to 'refresh_db_reader'@'%'")
-		tkUser.MustExec("refresh stats test.*")
-	})
-
-	t.Run("global scope requires global select", func(t *testing.T) {
-		tk.MustExec("drop user if exists 'refresh_global_reader'@'%'")
-		tk.MustExec("create user 'refresh_global_reader'@'%'")
-
-		tkUser := testkit.NewTestKit(t, store)
-		require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "refresh_global_reader", Hostname: "%"}, nil, nil, nil))
-		tkUser.MustGetErrCode("refresh stats *.*", errno.ErrPrivilegeCheckFail)
-
-		tk.MustExec("grant select on *.* to 'refresh_global_reader'@'%'")
-		tkUser.MustExec("refresh stats *.*")
-	})
-}
-
-func TestRefreshStatsWithRestoreAdmin(t *testing.T) {
-	store := testkit.CreateMockStore(t)
-	tk := testkit.NewTestKit(t, store)
-
-	const user = "restore_admin_tester"
-	defer tk.MustExec("drop user if exists '" + user + "'@'%'")
-
-	tk.MustExec("drop user if exists '" + user + "'@'%'")
-	tk.MustExec("create user '" + user + "'@'%'")
-
-	tkUser := testkit.NewTestKit(t, store)
-	require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: user, Hostname: "%"}, nil, nil, nil))
-	tkUser.MustGetErrCode("refresh stats *.*", errno.ErrPrivilegeCheckFail)
-
-	tk.MustExec("grant restore_admin on *.* to '" + user + "'@'%'")
-	tkUser.MustExec("refresh stats *.*")
-}
-
-// TestRefreshStatsWithFullMode verifies that running "refresh stats ... full" loads and updates
-// index statistics even when lite-init-stats is enabled, ensuring a full refresh keeps index
-// statistics resident in memory as users expect after explicitly requesting full mode.
-func TestRefreshStatsWithFullMode(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
-
-	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (a int, b int, index idx(a))")
-	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
-	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
-
-	is := dom.InfoSchema()
-	handle := dom.StatsHandle()
-	ctx := context.Background()
-	tbl1, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
-	require.NoError(t, err)
-	tbl1Meta := tbl1.Meta()
-	statsBeforeRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	tk.MustExec("refresh stats t1")
-	statsAfterDefaultRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	require.NotSame(t, statsBeforeRefresh, statsAfterDefaultRefresh)
-	require.Nil(t, statsAfterDefaultRefresh.GetIdx(1), "index stats should not be loaded in lite mode")
-
-	tk.MustExec("select * from t1 where a = 1")
-	statsAfterSelect := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	require.NotSame(t, statsBeforeRefresh, statsAfterSelect, "stats versuon should not be changed after select")
-	require.NotNil(t, statsAfterSelect.GetIdx(1), "index stats will be loaded after select")
-
-	tk.MustExec("refresh stats t1")
-	statsAfterDefaultRefresh = handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	require.NotSame(t, statsBeforeRefresh, statsAfterDefaultRefresh)
-	require.Nil(t, statsAfterDefaultRefresh.GetIdx(1), "index stats should be removed in lite mode")
-
-	// Issue a full refresh to ensure the index stats are loaded.
-	tk.MustExec("refresh stats t1 full")
-	statsAfterFullRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	require.NotSame(t, statsAfterDefaultRefresh, statsAfterFullRefresh)
-	require.NotNil(t, statsAfterFullRefresh.GetIdx(1), "index stats should be loaded in full mode")
-	require.Len(t, statsAfterFullRefresh.GetIdx(1).Buckets, 1, "buckets should be loaded in full mode")
-	indexVersionAfterFullRefresh := statsAfterFullRefresh.GetIdx(1).LastUpdateVersion
-
-	// Insert additional data and run ANALYZE again.
-	tk.MustExec("insert into t1 values (4,4), (5,5)")
-	// Analyze loads statistics based on the current state of the in-memory stats (all statistics have been loaded) while running in lite mode.
-	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
-	statsAfterAnalyze := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	require.NoError(t, err)
-	require.NotNil(t, statsAfterAnalyze, "analyze loads statistics from the current in-memory data when running in lite mode")
-	require.NotSame(t, statsAfterFullRefresh, statsAfterAnalyze)
-	indexVersionAfterAnalyze := statsAfterAnalyze.GetIdx(1).LastUpdateVersion
-	require.Len(t, statsAfterAnalyze.GetIdx(1).Buckets, 2, "buckets should be loaded in full mode")
-	require.Greater(t, indexVersionAfterAnalyze, indexVersionAfterFullRefresh, "index stats should be updated")
-
-	// Manually load it again to check it works well.
-	statsAfterLoad, err := handle.TableStatsFromStorage(tbl1Meta, tbl1Meta.ID, false, 0)
-	require.NoError(t, err)
-	require.NotNil(t, statsAfterLoad)
-	require.NotSame(t, statsAfterAnalyze, statsAfterLoad)
-	indexVersionAfterLoad := statsAfterLoad.GetIdx(1).LastUpdateVersion
-	require.Len(t, statsAfterLoad.GetIdx(1).Buckets, 2, "nothing should be changed")
-	require.Equal(t, indexVersionAfterLoad, indexVersionAfterAnalyze, "nothing should be changed")
-}
-
-// TestRefreshStatsWithLiteMode verifies that running "refresh stats ...  lite" omits index stats,
-// while a subsequent loading operation repopulates them. Typically, users wouldn’t expect to run a lite refresh
-// with lite-init-stats=false, so we shouldn’t persist this behavior after the lite refresh stats.
-func TestRefreshStatsWithLiteMode(t *testing.T) {
-	oriVal := config.GetGlobalConfig().Performance.LiteInitStats
-	config.GetGlobalConfig().Performance.LiteInitStats = false
+	originCfg := config.GetGlobalConfig()
+	newCfg := *originCfg
+	newCfg.EnableGlobalKill = false
+	config.StoreGlobalConfig(&newCfg)
 	defer func() {
-		config.GetGlobalConfig().Performance.LiteInitStats = oriVal
+		config.StoreGlobalConfig(originCfg)
 	}()
 
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+	connID := conn1.ID()
 
-	tk := testkit.NewTestKit(t, store)
 	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2")
-	tk.MustExec("create table t1 (a int, b int, index idx(a))")
-	tk.MustExec("insert into t1 values (1,1), (2,2), (3,3)")
-	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
+	tk.MustExec(fmt.Sprintf("kill %d", connID))
+	result := tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead"))
 
-	is := dom.InfoSchema()
-	handle := dom.StatsHandle()
-	ctx := context.Background()
-	tbl1, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
-	require.NoError(t, err)
-	tbl1Meta := tbl1.Meta()
-	statsBeforeRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	tk.MustExec("refresh stats t1")
-	statsAfterFullRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	require.NotSame(t, statsBeforeRefresh, statsAfterFullRefresh)
-	require.NotNil(t, statsAfterFullRefresh.GetIdx(1), "index stats should be loaded in full mode")
+	newCfg2 := *originCfg
+	newCfg2.EnableGlobalKill = true
+	config.StoreGlobalConfig(&newCfg2)
 
-	// Run a lite refresh and verify the index stats remain unloaded.
-	tk.MustExec("refresh stats t1 lite")
-	statsAfterLiteRefresh := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	require.NotSame(t, statsAfterFullRefresh, statsAfterLiteRefresh)
-	require.Nil(t, statsAfterLiteRefresh.GetIdx(1), "index stats should not be loaded in lite mode")
+	// ZERO serverID, treated as truncated.
+	tk.MustExec("kill 1")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
 
-	// Insert additional data and run ANALYZE again.
-	tk.MustExec("insert into t1 values (4,4), (5,5)")
-	// Analyze loads all statistics when running in full mode.
-	tk.MustExec("analyze table t1 all columns with 1 topn, 2 buckets")
-	statsAfterAnalyze := handle.GetPhysicalTableStats(tbl1Meta.ID, tbl1Meta)
-	require.NoError(t, err)
-	require.NotNil(t, statsAfterAnalyze, "analyze loads all statistics when running in full mode")
-	require.NotSame(t, statsAfterFullRefresh, statsAfterAnalyze)
-	indexVersionAfterAnalyze := statsAfterAnalyze.GetIdx(1).LastUpdateVersion
-	require.Len(t, statsAfterAnalyze.GetIdx(1).Buckets, 2, "buckets should be loaded in full mode")
-	require.Greater(t, indexVersionAfterAnalyze, uint64(0), "index stats should be updated")
+	// truncated
+	tk.MustExec("kill 101")
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Kill failed: Received a 32bits truncated ConnectionID, expect 64bits. Please execute 'KILL [CONNECTION | QUERY] ConnectionID' to send a Kill without truncating ConnectionID."))
 
-	// Manually load it again to check it works well.
-	statsAfterLoad, err := handle.TableStatsFromStorage(tbl1Meta, tbl1Meta.ID, false, 0)
-	require.NoError(t, err)
-	require.NotNil(t, statsAfterLoad)
-	require.NotSame(t, statsAfterAnalyze, statsAfterLoad)
-	indexVersionAfterLoad := statsAfterLoad.GetIdx(1).LastUpdateVersion
-	require.Len(t, statsAfterLoad.GetIdx(1).Buckets, 2, "nothing should be changed")
-	require.Equal(t, indexVersionAfterLoad, indexVersionAfterAnalyze, "nothing should be changed")
+	// excceed int64
+	tk.MustExec("kill 9223372036854775808") // 9223372036854775808 == 2^63
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows("Warning 1105 Parse ConnectionID failed: unexpected connectionID exceeds int64"))
+
+	// local kill
+	connIDAllocator := globalconn.NewGlobalAllocator(dom.ServerID, false)
+	killConnID := connIDAllocator.NextID()
+	tk.MustExec("kill " + strconv.FormatUint(killConnID, 10))
+	result = tk.MustQuery("show warnings")
+	result.Check(testkit.Rows())
+
+	tk.MustExecToErr("kill rand()", "Invalid operation. Please use 'KILL TIDB [CONNECTION | QUERY] [connectionID | CONNECTION_ID()]' instead")
+	// remote kill is tested in `tests/globalkilltest`
 }
 
-func TestRefreshStatsConcurrently(t *testing.T) {
-	store, dom := testkit.CreateMockStoreAndDomain(t)
+func TestUserAttributes(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	rootTK := testkit.NewTestKit(t, store)
+	ctx := kv.WithInternalSourceType(context.Background(), kv.InternalTxnPrivilege)
+
+	// https://dev.mysql.com/doc/refman/8.0/en/create-user.html#create-user-comments-attributes
+	rootTK.MustExec(`CREATE USER testuser COMMENT '1234'`)
+	rootTK.MustExec(`CREATE USER testuser1 ATTRIBUTE '{"name": "Tom", "age": 19}'`)
+	_, err := rootTK.Exec(`CREATE USER testuser2 ATTRIBUTE '{"name": "Tom", age: 19}'`)
+	rootTK.MustExec(`CREATE USER testuser2`)
+	require.Error(t, err)
+	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser'`).Check(testkit.Rows(`{"metadata": {"comment": "1234"}}`))
+	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser1'`).Check(testkit.Rows(`{"metadata": {"age": 19, "name": "Tom"}}`))
+	rootTK.MustQuery(`SELECT user_attributes FROM mysql.user WHERE user = 'testuser2'`).Check(testkit.Rows(`{}`))
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser'`).Check(testkit.Rows(`{"comment": "1234"}`))
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 19, "name": "Tom"}`))
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute->>"$.age" AS age, attribute->>"$.name" AS name FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`19 Tom`))
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser2'`).Check(testkit.Rows(`<nil>`))
+
+	// https://dev.mysql.com/doc/refman/8.0/en/alter-user.html#alter-user-comments-attributes
+	rootTK.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"age": 20, "sex": "male"}'`)
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "name": "Tom", "sex": "male"}`))
+	rootTK.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"hobby": "soccer"}'`)
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "hobby": "soccer", "name": "Tom", "sex": "male"}`))
+	rootTK.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"sex": null, "hobby": null}'`)
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "name": "Tom"}`))
+	rootTK.MustExec(`ALTER USER testuser1 COMMENT '5678'`)
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "comment": "5678", "name": "Tom"}`))
+	rootTK.MustExec(`ALTER USER testuser1 COMMENT ''`)
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "comment": "", "name": "Tom"}`))
+	rootTK.MustExec(`ALTER USER testuser1 ATTRIBUTE '{"comment": null}'`)
+	rootTK.MustQueryWithContext(ctx, `SELECT attribute FROM information_schema.user_attributes WHERE user = 'testuser1'`).Check(testkit.Rows(`{"age": 20, "name": "Tom"}`))
+
+	// Non-root users could access COMMENT or ATTRIBUTE of all users via the view,
+	// but not via the mysql.user table.
 	tk := testkit.NewTestKit(t, store)
-	tk.MustExec("use test")
-	tk.MustExec("drop table if exists t1, t2, t_partition")
-	tk.MustExec("create table t1 (a int, b int, index idx_a(a))")
-	tk.MustExec("create table t2 (a int, b int, index idx_a(a))")
-	tk.MustExec(`create table t_partition (
-		id int,
-		a int,
-		b int,
-		index idx_a(a)
-	) partition by hash(id) partitions 4`)
-	tk.MustExec("insert into t1 values (1,1),(2,2),(3,3),(4,4)")
-	tk.MustExec("insert into t2 values (5,5),(6,6),(7,7),(8,8)")
-	tk.MustExec("insert into t_partition values (1,1,1),(2,2,2),(3,3,3),(4,4,4),(5,5,5),(6,6,6)")
-	tk.MustExec("analyze table t1, t2, t_partition all columns with 1 topn, 2 buckets")
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "testuser1"}, nil, nil, nil))
+	tk.MustQueryWithContext(ctx, `SELECT user, host, attribute FROM information_schema.user_attributes ORDER BY user`).Check(
+		testkit.Rows("root % <nil>", "testuser % {\"comment\": \"1234\"}", "testuser1 % {\"age\": 20, \"name\": \"Tom\"}", "testuser2 % <nil>"))
+	tk.MustGetErrCode(`SELECT user, host, user_attributes FROM mysql.user ORDER BY user`, mysql.ErrTableaccessDenied)
 
-	handle := dom.StatsHandle()
-
-	sqls := []string{
-		"REFRESH STATS test.t1",
-		"REFRESH STATS test.t2 FULL",
-		"REFRESH STATS test.t_partition",
-		"REFRESH STATS test.*",
-		"REFRESH STATS test.t1 FULL",
-		"REFRESH STATS test.t_partition FULL",
-		"REFRESH STATS test.t2",
-		"REFRESH STATS *.* FULL",
-	}
-
-	const rounds = 2
-	const workerCount = 4
-
-	workers := make([]*testkit.TestKit, workerCount)
-	for i := range workers {
-		worker := testkit.NewTestKit(t, store)
-		worker.MustExec("use test")
-		workers[i] = worker
-	}
-
-	var wg sync.WaitGroup
-	for _, tkWorker := range workers {
-		wg.Add(1)
-		go func(tkWorker *testkit.TestKit) {
-			defer wg.Done()
-			for i := 0; i < rounds; i++ {
-				for _, sql := range sqls {
-					tkWorker.MustExec(sql)
-				}
-			}
-		}(tkWorker)
-	}
-	wg.Wait()
-
-	ctx := context.Background()
-	is := dom.InfoSchema()
-	checkFullIndex := func(tblName string) {
-		tbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr(tblName))
-		require.NoError(t, err)
-		stats := handle.GetPhysicalTableStats(tbl.Meta().ID, tbl.Meta())
-		require.NotNil(t, stats)
-		idx := stats.GetIdx(1)
-		require.NotNilf(t, idx, "index stats for %s should be present", tblName)
-		require.Truef(t, idx.IsFullLoad(), "index stats for %s should be fully loaded", tblName)
-	}
-	checkFullIndex("t1")
-	checkFullIndex("t2")
-	checkFullIndex("t_partition")
+	// https://github.com/ocean2811/tidbeaff0fbc576a/issues/39207
+	rootTK.MustExec("create user usr1@'%' identified by 'passord'")
+	rootTK.MustExec("alter user usr1 comment 'comment1'")
+	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}}`))
+	rootTK.MustExec("set global tidb_enable_resource_control = 'on'")
+	rootTK.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
+	rootTK.MustExec("alter user usr1 resource group rg1")
+	rootTK.MustQuery("select user_attributes from mysql.user where user = 'usr1'").Check(testkit.Rows(`{"metadata": {"comment": "comment1"}, "resource_group": "rg1"}`))
 }
 
-func TestFlushStatsDelta(t *testing.T) {
-	t.Run("full scope", func(t *testing.T) {
-		store, dom := testkit.CreateMockStoreAndDomain(t)
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t")
-		tk.MustExec("create table t (a int, b int)")
+func TestSetResourceGroup(t *testing.T) {
+	store := testkit.CreateMockStore(t)
+	tk := testkit.NewTestKit(t, store)
 
-		ctx := context.Background()
-		is := dom.InfoSchema()
-		tbl, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t"))
-		require.NoError(t, err)
-		tableID := tbl.Meta().ID
+	tk.MustExec("SET GLOBAL tidb_enable_resource_control='on'")
 
-		tk.MustExec("insert into t values (1,1), (2,2), (3,3), (4,4), (5,5)")
-		tk.MustExec("flush stats_delta *.*")
-		rows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
-		require.Len(t, rows, 1, "stats_meta should have entry for the table")
-		modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
-		require.NoError(t, err)
-		require.Equal(t, int64(5), modifyCnt, "modify_count should be 5 after inserting 5 rows and flushing")
+	tk.MustContainErrMsg("SET RESOURCE GROUP rg1", "Unknown resource group 'rg1'")
 
-		tk.MustExec("insert into t values (6,6), (7,7)")
-		tk.MustExec("flush stats_delta *.*")
-		rows = tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
-		require.Len(t, rows, 1, "stats_meta should have entry for the table")
-		modifyCnt, err = strconv.ParseInt(rows[0][0].(string), 10, 64)
-		require.NoError(t, err)
-		require.Equal(t, int64(7), modifyCnt, "modify_count should be 7 after inserting 2 more rows and flushing")
-	})
+	tk.MustExec("CREATE RESOURCE GROUP rg1 ru_per_sec = 100")
+	tk.MustExec("ALTER USER `root` RESOURCE GROUP `rg1`")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
 
-	t.Run("scoped behavior", func(t *testing.T) {
-		store, dom := testkit.CreateMockStoreAndDomain(t)
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t1, t2, tp")
-		tk.MustExec("create table t1 (a int, b int)")
-		tk.MustExec("create table t2 (a int, b int)")
-		tk.MustExec(`create table tp (a int, b int)
-			partition by range(a) (
-				partition p0 values less than (10),
-				partition p1 values less than (20)
-			)`)
+	tk.MustExec("CREATE RESOURCE GROUP rg2 ru_per_sec = 200")
+	tk.MustExec("SET RESOURCE GROUP `rg2`")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg2"))
+	tk.MustExec("SET RESOURCE GROUP ``")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
+	tk.MustExec("SET RESOURCE GROUP default")
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("default"))
 
-		ctx := context.Background()
-		is := dom.InfoSchema()
-		t1, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t1"))
-		require.NoError(t, err)
-		t2, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("t2"))
-		require.NoError(t, err)
-		tp, err := is.TableByName(ctx, ast.NewCIStr("test"), ast.NewCIStr("tp"))
-		require.NoError(t, err)
-		partitionInfo := tp.Meta().GetPartitionInfo()
-		require.NotNil(t, partitionInfo)
-		p0ID := partitionInfo.Definitions[0].ID
-		p1ID := partitionInfo.Definitions[1].ID
-
-		getModifyCount := func(tableID int64) int64 {
-			rows := tk.MustQuery("select modify_count from mysql.stats_meta where table_id = ?", tableID).Rows()
-			if len(rows) == 0 {
-				return -1
-			}
-			modifyCnt, err := strconv.ParseInt(rows[0][0].(string), 10, 64)
-			require.NoError(t, err)
-			return modifyCnt
-		}
-
-		tk.MustExec("insert into t1 values (1,1), (2,2)")
-		tk.MustExec("insert into t2 values (3,3), (4,4), (5,5)")
-		tk.MustExec("insert into tp values (1,1), (2,2), (11,11)")
-
-		tk.MustExec("flush stats_delta t1")
-		require.Equal(t, int64(2), getModifyCount(t1.Meta().ID))
-		require.NotEqual(t, int64(3), getModifyCount(t2.Meta().ID), "unrelated table should not be flushed by table scope")
-		require.NotEqual(t, int64(3), getModifyCount(tp.Meta().ID), "partitioned table should not be flushed by unrelated table scope")
-
-		tk.MustExec("flush stats_delta tp")
-		require.Equal(t, int64(3), getModifyCount(tp.Meta().ID), "global stats for the partitioned table should be flushed")
-		require.Equal(t, int64(2), getModifyCount(p0ID), "partition p0 should be flushed")
-		require.Equal(t, int64(1), getModifyCount(p1ID), "partition p1 should be flushed")
-		require.NotEqual(t, int64(3), getModifyCount(t2.Meta().ID), "database scope has not been flushed yet")
-
-		tk.MustExec("flush stats_delta test.*")
-		require.Equal(t, int64(3), getModifyCount(t2.Meta().ID), "database scope should flush the remaining table")
-	})
-
-	t.Run("privilege checks", func(t *testing.T) {
-		store, _ := testkit.CreateMockStoreAndDomain(t)
-		tk := testkit.NewTestKit(t, store)
-		tk.MustExec("use test")
-		tk.MustExec("drop table if exists t_flush_priv")
-		tk.MustExec("create table t_flush_priv (a int)")
-
-		t.Run("table scope requires select", func(t *testing.T) {
-			tk.MustExec("drop user if exists 'flush_reader'@'%'")
-			tk.MustExec("create user 'flush_reader'@'%'")
-
-			tkUser := testkit.NewTestKit(t, store)
-			require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "flush_reader", Hostname: "%"}, nil, nil, nil))
-			tkUser.MustGetErrCode("flush stats_delta test.t_flush_priv", errno.ErrTableaccessDenied)
-
-			tk.MustExec("grant select on test.t_flush_priv to 'flush_reader'@'%'")
-			tkUser.MustExec("flush stats_delta test.t_flush_priv")
-		})
-
-		t.Run("database scope requires select", func(t *testing.T) {
-			tk.MustExec("drop user if exists 'flush_db_reader'@'%'")
-			tk.MustExec("create user 'flush_db_reader'@'%'")
-
-			tkUser := testkit.NewTestKit(t, store)
-			require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "flush_db_reader", Hostname: "%"}, nil, nil, nil))
-			tkUser.MustGetErrCode("flush stats_delta test.*", errno.ErrDBaccessDenied)
-
-			tk.MustExec("grant select on test.* to 'flush_db_reader'@'%'")
-			tkUser.MustExec("flush stats_delta test.*")
-		})
-
-		t.Run("global scope requires global select", func(t *testing.T) {
-			tk.MustExec("drop user if exists 'flush_global_reader'@'%'")
-			tk.MustExec("create user 'flush_global_reader'@'%'")
-
-			tkUser := testkit.NewTestKit(t, store)
-			require.NoError(t, tkUser.Session().Auth(&auth.UserIdentity{Username: "flush_global_reader", Hostname: "%"}, nil, nil, nil))
-			tkUser.MustGetErrCode("flush stats_delta *.*", errno.ErrPrivilegeCheckFail)
-
-			tk.MustExec("grant select on *.* to 'flush_global_reader'@'%'")
-			tkUser.MustExec("flush stats_delta *.*")
-		})
-	})
-
-	t.Run("requires default db for bare table", func(t *testing.T) {
-		store, _ := testkit.CreateMockStoreAndDomain(t)
-		tk := testkit.NewTestKit(t, store)
-		tk.MustGetDBError("flush stats_delta t1", plannererrors.ErrNoDB)
-	})
+	tk.RefreshSession()
+	require.NoError(t, tk.Session().Auth(&auth.UserIdentity{Username: "root", Hostname: "%"}, nil, nil, nil))
+	tk.MustQuery("SELECT CURRENT_RESOURCE_GROUP()").Check(testkit.Rows("rg1"))
 }

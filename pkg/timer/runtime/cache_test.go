@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pingcap/tidb/pkg/timer/api"
-	"github.com/pingcap/tidb/pkg/util/timeutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/timer/api"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/timeutil"
 	"github.com/robfig/cron/v3"
 	"github.com/stretchr/testify/require"
 )
@@ -30,7 +30,7 @@ func newTestTimer(id string, policyExpr string, watermark time.Time) *api.TimerR
 		ID: id,
 		TimerSpec: api.TimerSpec{
 			Namespace:       "n1",
-			Key:             "key-" + id,
+			Key:             fmt.Sprintf("key-" + id),
 			SchedPolicyType: api.SchedEventInterval,
 			SchedPolicyExpr: policyExpr,
 			HookClass:       "hook1",

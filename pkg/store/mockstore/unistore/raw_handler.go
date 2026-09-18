@@ -17,11 +17,10 @@ package unistore
 import (
 	"bytes"
 	"context"
-	"slices"
 	"sync"
 
 	"github.com/pingcap/kvproto/pkg/kvrpcpb"
-	"github.com/pingcap/tidb/pkg/store/mockstore/unistore/lockstore"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/mockstore/unistore/lockstore"
 )
 
 type rawHandler struct {
@@ -148,5 +147,5 @@ func (h *rawHandler) appendPair(pairs []*kvrpcpb.KvPair, it *lockstore.Iterator)
 }
 
 func safeCopy(val []byte) []byte {
-	return slices.Clone(val)
+	return append([]byte{}, val...)
 }

@@ -17,15 +17,12 @@ package statistics
 import (
 	"fmt"
 	"testing"
-	"time"
 
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/types"
-	"github.com/pingcap/tidb/pkg/util/codec"
-	"github.com/pingcap/tidb/pkg/util/mock"
-	"github.com/pingcap/tidb/pkg/util/sqlkiller"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/types"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -40,7 +37,7 @@ func TestTruncateHistogram(t *testing.T) {
 }
 
 func TestValueToString4InvalidKey(t *testing.T) {
-	bytes, err := codec.EncodeKey(time.UTC, nil, types.NewDatum(1), types.NewDatum(0.5))
+	bytes, err := codec.EncodeKey(nil, nil, types.NewDatum(1), types.NewDatum(0.5))
 	require.NoError(t, err)
 	// Append invalid flag.
 	bytes = append(bytes, 20)
@@ -66,9 +63,9 @@ type topN4Test struct {
 func genHist4Test(t *testing.T, buckets []*bucket4Test, totColSize int64) *Histogram {
 	h := NewHistogram(0, 0, 0, 0, types.NewFieldType(mysql.TypeBlob), len(buckets), totColSize)
 	for _, bucket := range buckets {
-		lower, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(bucket.lower))
+		lower, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.lower))
 		require.NoError(t, err)
-		upper, err := codec.EncodeKey(time.UTC, nil, types.NewIntDatum(bucket.upper))
+		upper, err := codec.EncodeKey(nil, nil, types.NewIntDatum(bucket.upper))
 		require.NoError(t, err)
 		di, du := types.NewBytesDatum(lower), types.NewBytesDatum(upper)
 		h.AppendBucketWithNDV(&di, &du, bucket.count, bucket.repeat, bucket.ndv)
@@ -82,7 +79,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 		totColSize      []int64
 		popedTopN       []topN4Test
 		expHist         []*bucket4Test
-		expBucketNumber int
+		expBucketNumber int64
 	}
 	tests := []testCase{
 		{
@@ -155,20 +152,27 @@ func TestMergePartitionLevelHist(t *testing.T) {
 			expHist: []*bucket4Test{
 				{
 					lower:  1,
-					upper:  9,
-					count:  10,
-					repeat: 2,
-					ndv:    7,
+					upper:  7,
+					count:  7,
+					repeat: 3,
+					ndv:    5,
+				},
+				{
+					lower:  7,
+					upper:  11,
+					count:  13,
+					repeat: 3,
+					ndv:    3,
 				},
 				{
 					lower:  11,
 					upper:  17,
 					count:  22,
 					repeat: 1,
-					ndv:    8,
+					ndv:    6,
 				},
 			},
-			expBucketNumber: 2,
+			expBucketNumber: 3,
 		},
 		{
 			partitionHists: [][]*bucket4Test{
@@ -252,21 +256,21 @@ func TestMergePartitionLevelHist(t *testing.T) {
 					upper:  5,
 					count:  10,
 					repeat: 1,
-					ndv:    2,
+					ndv:    3,
 				},
 				{
-					lower:  6,
+					lower:  5,
 					upper:  12,
 					count:  22,
 					repeat: 3,
 					ndv:    6,
 				},
 				{
-					lower:  13,
+					lower:  12,
 					upper:  18,
 					count:  33,
 					repeat: 5,
-					ndv:    5,
+					ndv:    6,
 				},
 			},
 			expBucketNumber: 3,
@@ -416,7 +420,7 @@ func TestMergePartitionLevelHist(t *testing.T) {
 					upper:  9,
 					count:  17,
 					repeat: 2,
-					ndv:    8,
+					ndv:    10,
 				},
 				{
 					lower:  11,
@@ -426,20 +430,18 @@ func TestMergePartitionLevelHist(t *testing.T) {
 					ndv:    1,
 				},
 				{
-					lower:  13,
+					lower:  11,
 					upper:  18,
 					count:  55,
 					repeat: 5,
-					ndv:    6,
+					ndv:    8,
 				},
 			},
 			expBucketNumber: 3,
 		},
 	}
 
-	killer := sqlkiller.SQLKiller{}
-
-	for ii, tt := range tests {
+	for _, tt := range tests {
 		var expTotColSize int64
 		hists := make([]*Histogram, 0, len(tt.partitionHists))
 		for i := range tt.partitionHists {
@@ -448,47 +450,98 @@ func TestMergePartitionLevelHist(t *testing.T) {
 		}
 		ctx := mock.NewContext()
 		sc := ctx.GetSessionVars().StmtCtx
-		// Carry the popedTopN entries on the first partition's TopN with
-		// numTopN=0, every entry flows into Pass 2's leftover-TopN
-		// injection rather than being promoted to global TopN.
-		topNs := make([]*TopN, len(hists))
-		topNs[0] = NewTopN(len(tt.popedTopN))
+		poped := make([]TopNMeta, 0, len(tt.popedTopN))
 		for _, top := range tt.popedTopN {
-			b, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(top.data))
+			b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(top.data))
 			require.NoError(t, err)
-			topNs[0].AppendTopN(b, uint64(top.count))
+			tmp := TopNMeta{
+				Encoded: b,
+				Count:   uint64(top.count),
+			}
+			poped = append(poped, tmp)
 		}
-		topNs[0].Sort()
-		for i := 1; i < len(topNs); i++ {
-			topNs[i] = NewTopN(0)
-		}
-		_, globalHist, err := MergePartTopNAndHistToGlobal(
-			sc, &killer, topNs, hists, 0, int64(tt.expBucketNumber), true,
-		)
+		globalHist, err := MergePartitionHist2GlobalHist(sc, hists, poped, tt.expBucketNumber, true)
 		require.NoError(t, err)
-		require.Equal(t, tt.expBucketNumber, len(globalHist.Buckets))
 		for i, b := range tt.expHist {
 			lo, err := ValueToString(ctx.GetSessionVars(), globalHist.GetLower(i), 1, []byte{types.KindInt64})
-			require.NoError(t, err, "failed at #%d case, %d bucket", ii, i)
+			require.NoError(t, err)
 			up, err := ValueToString(ctx.GetSessionVars(), globalHist.GetUpper(i), 1, []byte{types.KindInt64})
-			require.NoError(t, err, "failed at #%d case, %d bucket", ii, i)
-			require.Equal(t, fmt.Sprintf("%v", b.lower), lo, "failed at #%d case, %d bucket", ii, i)
-			require.Equal(t, fmt.Sprintf("%v", b.upper), up, "failed at #%d case, %d bucket", ii, i)
-			require.Equal(t, b.count, globalHist.Buckets[i].Count, "failed at #%d case, %d bucket", ii, i)
-			require.Equal(t, b.repeat, globalHist.Buckets[i].Repeat, "failed at #%d case, %d bucket", ii, i)
+			require.NoError(t, err)
+			require.Equal(t, lo, fmt.Sprintf("%v", b.lower))
+			require.Equal(t, up, fmt.Sprintf("%v", b.upper))
+			require.Equal(t, globalHist.Buckets[i].Count, b.count)
+			require.Equal(t, globalHist.Buckets[i].Repeat, b.repeat)
+			require.Equal(t, globalHist.Buckets[i].NDV, b.ndv)
 		}
-		require.Equal(t, expTotColSize, globalHist.TotColSize, "failed at #%d case", ii)
+		require.Equal(t, expTotColSize, globalHist.TotColSize)
+	}
+}
+
+func genBucket4Merging4Test(lower, upper, ndv, disjointNDV int64) bucket4Merging {
+	l := types.NewIntDatum(lower)
+	r := types.NewIntDatum(upper)
+	return bucket4Merging{
+		lower: &l,
+		upper: &r,
+		Bucket: Bucket{
+			NDV: ndv,
+		},
+		disjointNDV: disjointNDV,
+	}
+}
+
+func TestMergeBucketNDV(t *testing.T) {
+	type testData struct {
+		left   bucket4Merging
+		right  bucket4Merging
+		result bucket4Merging
+	}
+	tests := []testData{
+		{
+			left:   genBucket4Merging4Test(1, 2, 2, 0),
+			right:  genBucket4Merging4Test(1, 2, 3, 0),
+			result: genBucket4Merging4Test(1, 2, 3, 0),
+		},
+		{
+			left:   genBucket4Merging4Test(1, 3, 2, 0),
+			right:  genBucket4Merging4Test(2, 3, 2, 0),
+			result: genBucket4Merging4Test(1, 3, 3, 0),
+		},
+		{
+			left:   genBucket4Merging4Test(1, 3, 2, 0),
+			right:  genBucket4Merging4Test(4, 6, 2, 2),
+			result: genBucket4Merging4Test(1, 3, 2, 4),
+		},
+		{
+			left:   genBucket4Merging4Test(1, 5, 5, 0),
+			right:  genBucket4Merging4Test(2, 6, 5, 0),
+			result: genBucket4Merging4Test(1, 6, 6, 0),
+		},
+		{
+			left:   genBucket4Merging4Test(3, 5, 3, 0),
+			right:  genBucket4Merging4Test(2, 6, 4, 0),
+			result: genBucket4Merging4Test(2, 6, 5, 0),
+		},
+	}
+	sc := mock.NewContext().GetSessionVars().StmtCtx
+	for _, tt := range tests {
+		res, err := mergeBucketNDV(sc, &tt.left, &tt.right)
+		require.NoError(t, err)
+		require.Equal(t, res.lower.GetInt64(), tt.result.lower.GetInt64())
+		require.Equal(t, res.upper.GetInt64(), tt.result.upper.GetInt64())
+		require.Equal(t, res.NDV, tt.result.NDV)
+		require.Equal(t, res.disjointNDV, tt.result.disjointNDV)
 	}
 }
 
 func TestIndexQueryBytes(t *testing.T) {
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
-	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: ast.NewCIStr("a"), Offset: 0}}}}
+	idx := &Index{Info: &model.IndexInfo{Columns: []*model.IndexColumn{{Name: model.NewCIStr("a"), Offset: 0}}}}
 	idx.Histogram = *NewHistogram(0, 15, 0, 0, types.NewFieldType(mysql.TypeBlob), 0, 0)
-	low, err1 := codec.EncodeKey(sc.TimeZone(), nil, types.NewBytesDatum([]byte("0")))
+	low, err1 := codec.EncodeKey(sc, nil, types.NewBytesDatum([]byte("0")))
 	require.NoError(t, err1)
-	high, err2 := codec.EncodeKey(sc.TimeZone(), nil, types.NewBytesDatum([]byte("3")))
+	high, err2 := codec.EncodeKey(sc, nil, types.NewBytesDatum([]byte("3")))
 	require.NoError(t, err2)
 	idx.Bounds.AppendBytes(0, low)
 	idx.Bounds.AppendBytes(0, high)
@@ -575,19 +628,19 @@ func TestStandardizeForV2AnalyzeIndex(t *testing.T) {
 	// 2. prepare the actual Histogram input
 	ctx := mock.NewContext()
 	sc := ctx.GetSessionVars().StmtCtx
-	val0, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(111))
+	val0, err := codec.EncodeKey(sc, nil, types.NewIntDatum(111))
 	require.NoError(t, err)
-	val1, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(123))
+	val1, err := codec.EncodeKey(sc, nil, types.NewIntDatum(123))
 	require.NoError(t, err)
-	val2, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(34567))
+	val2, err := codec.EncodeKey(sc, nil, types.NewIntDatum(34567))
 	require.NoError(t, err)
-	val3, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(5))
+	val3, err := codec.EncodeKey(sc, nil, types.NewIntDatum(5))
 	require.NoError(t, err)
-	val4, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(876))
+	val4, err := codec.EncodeKey(sc, nil, types.NewIntDatum(876))
 	require.NoError(t, err)
-	val5, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(990))
+	val5, err := codec.EncodeKey(sc, nil, types.NewIntDatum(990))
 	require.NoError(t, err)
-	val6, err := codec.EncodeKey(sc.TimeZone(), nil, types.NewIntDatum(95))
+	val6, err := codec.EncodeKey(sc, nil, types.NewIntDatum(95))
 	require.NoError(t, err)
 	val0Bytes := types.NewBytesDatum(val0)
 	val1Bytes := types.NewBytesDatum(val1)
@@ -644,41 +697,36 @@ func TestStandardizeForV2AnalyzeIndex(t *testing.T) {
 	}
 }
 
-func TestNewPseudoHistogramReuseChunk(t *testing.T) {
-	const (
-		msgPseudoSameChunk   = "pseudo histograms should share the same Bounds chunk"
-		msgRegularDiffChunks = "regular histograms should have different Bounds chunks"
-		msgRegularPseudoDiff = "regular and pseudo histograms should have different Bounds chunks"
-	)
+func generateData(t *testing.T) *Histogram {
+	var data []*bucket4Test
+	sumCount := int64(0)
+	for n := 100; n < 10000; n = n + 100 {
+		sumCount += 100
+		data = append(data, &bucket4Test{
+			lower:  int64(n),
+			upper:  int64(n + 100),
+			count:  sumCount,
+			repeat: 10,
+			ndv:    10,
+		})
+	}
+	return genHist4Test(t, data, 0)
+}
 
-	// test that NewPseudoHistogram reuses the same global chunk instance
-	tp1 := types.NewFieldType(mysql.TypeLonglong)
-	tp2 := types.NewFieldType(mysql.TypeVarchar)
-	tp3 := types.NewFieldType(mysql.TypeBlob)
+func TestVerifyHistsBinarySearchRemoveValAndRemoveVals(t *testing.T) {
+	data1 := generateData(t)
+	data2 := generateData(t)
 
-	hist1 := NewPseudoHistogram(1, tp1)
-	hist2 := NewPseudoHistogram(2, tp2)
-	hist3 := NewPseudoHistogram(3, tp3)
-
-	// verify that all pseudo histograms share the same Bounds chunk instance
-	require.Same(t, hist1.Bounds, hist2.Bounds, msgPseudoSameChunk)
-	require.Same(t, hist1.Bounds, hist3.Bounds, msgPseudoSameChunk)
-	require.Same(t, hist2.Bounds, hist3.Bounds, msgPseudoSameChunk)
-
-	// verify that regular histograms do NOT share chunks
-	regularHist1 := NewHistogram(1, 0, 0, 0, tp1, 10, 0)
-	regularHist2 := NewHistogram(2, 0, 0, 0, tp2, 10, 0)
-
-	require.NotSame(t, regularHist1.Bounds, regularHist2.Bounds, msgRegularDiffChunks)
-	require.NotSame(t, regularHist1.Bounds, hist1.Bounds, msgRegularPseudoDiff)
-	require.NotSame(t, regularHist2.Bounds, hist1.Bounds, msgRegularPseudoDiff)
-
-	// verify that string type field types are properly handled
-	require.Equal(t, mysql.TypeLonglong, hist1.Tp.GetType())
-	require.Equal(t, mysql.TypeVarchar, hist2.Tp.GetType())
-	require.Equal(t, mysql.TypeBlob, hist3.Tp.GetType())
-
-	// for string types, collation should be set to binary
-	require.Equal(t, "binary", hist2.Tp.GetCollate())
-	require.Equal(t, "binary", hist3.Tp.GetCollate())
+	require.Equal(t, data1, data2)
+	ctx := mock.NewContext()
+	sc := ctx.GetSessionVars().StmtCtx
+	b, err := codec.EncodeKey(sc, nil, types.NewIntDatum(150))
+	require.NoError(t, err)
+	tmp := TopNMeta{
+		Encoded: b,
+		Count:   2,
+	}
+	data1.RemoveVals([]TopNMeta{tmp})
+	data2.BinarySearchRemoveVal(tmp)
+	require.Equal(t, data1, data2)
 }

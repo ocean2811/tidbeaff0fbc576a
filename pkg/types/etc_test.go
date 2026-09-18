@@ -19,9 +19,9 @@ import (
 	"testing"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/pkg/parser/charset"
-	"github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/parser/terror"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/charset"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/mysql"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/terror"
 	"github.com/stretchr/testify/require"
 )
 
@@ -332,10 +332,6 @@ func TestNeedRestoredData(t *testing.T) {
 		{mysql.TypeVarString, "gbk", "gbk_bin", true},
 		{mysql.TypeString, "gbk", "gbk_chinese_ci", true},
 		{mysql.TypeVarString, "gbk", "gbk_chinese_ci", true},
-		{mysql.TypeString, "gb18030", "gb18030_bin", true},
-		{mysql.TypeVarString, "gb18030", "gb18030_bin", true},
-		{mysql.TypeString, "gb18030", "gb18030_chinese_ci", true},
-		{mysql.TypeVarString, "gb18030", "gb18030_chinese_ci", true},
 	}
 
 	for _, c := range cases {

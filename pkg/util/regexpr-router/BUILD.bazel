@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library", "go_test")
 go_library(
     name = "regexpr-router",
     srcs = ["regexpr_router.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/regexpr-router",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/regexpr-router",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/util/filter",

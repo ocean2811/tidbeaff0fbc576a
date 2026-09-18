@@ -20,7 +20,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/util/checksum"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/checksum"
 	"github.com/stretchr/testify/require"
 )
 
@@ -43,7 +43,7 @@ func testReadAtWithCase(t *testing.T, testCase readAtTestCase) {
 
 	writeString := "0123456789"
 	buf := bytes.NewBuffer(nil)
-	for range 510 {
+	for i := 0; i < 510; i++ {
 		buf.WriteString(writeString)
 	}
 
@@ -58,7 +58,7 @@ func testReadAtWithCase(t *testing.T, testCase readAtTestCase) {
 	f, err = os.Open(path)
 	require.NoError(t, err)
 
-	assertReadAt := func(off int64, assertErr any, assertN int, assertString string) {
+	assertReadAt := func(off int64, assertErr interface{}, assertN int, assertString string) {
 		r := testCase.newReader(f)
 		buf := make([]byte, 10)
 		n, err := r.ReadAt(buf, off)
@@ -121,7 +121,7 @@ func benchmarkReadAtWithCase(b *testing.B, testCase readAtTestCase) {
 
 	writeString := "0123456789"
 	buf := bytes.NewBuffer(nil)
-	for range 510 {
+	for i := 0; i < 510; i++ {
 		buf.WriteString(writeString)
 	}
 
@@ -146,7 +146,7 @@ func benchmarkReadAtWithCase(b *testing.B, testCase readAtTestCase) {
 	r := testCase.newReader(f)
 	rBuf := make([]byte, 10)
 	b.ResetTimer()
-	for i := range b.N {
+	for i := 0; i < b.N; i++ {
 		_, err := r.ReadAt(rBuf, int64(i%(n1+n2)))
 		if err != nil {
 			b.Fatal(err)

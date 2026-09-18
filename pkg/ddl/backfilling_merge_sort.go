@@ -16,62 +16,48 @@ package ddl
 
 import (
 	"context"
-	goerrors "errors"
+	"encoding/json"
 	"path"
 	"strconv"
 	"sync"
-	"sync/atomic"
 
 	"github.com/pingcap/errors"
-	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/ddl/ingest"
-	"github.com/pingcap/tidb/pkg/dxf/framework/handle"
-	"github.com/pingcap/tidb/pkg/dxf/framework/proto"
-	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor"
-	"github.com/pingcap/tidb/pkg/dxf/framework/taskexecutor/execute"
-	"github.com/pingcap/tidb/pkg/ingestor/engineapi"
-	"github.com/pingcap/tidb/pkg/ingestor/globalsort"
-	"github.com/pingcap/tidb/pkg/ingestor/simplesst"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/resourcemanager/pool/workerpool"
-	"github.com/pingcap/tidb/pkg/table"
-	"github.com/pingcap/tidb/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/lightning/backend/external"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/ddl/ingest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/disttask/framework/proto"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/table"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/intest"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/logutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/size"
+	"go.uber.org/zap"
 )
 
 type mergeSortExecutor struct {
-	taskexecutor.BaseStepExecutor
-	task          *proto.TaskBase
-	store         kv.Storage
-	jobID         int64
-	indexes       []*model.IndexInfo
-	ptbl          table.PhysicalTable
-	cloudStoreURI string
-
-	mergeOp atomic.Pointer[globalsort.MergeOperator]
-
+	jobID               int64
+	index               *model.IndexInfo
+	ptbl                table.PhysicalTable
+	bc                  ingest.BackendCtx
+	cloudStoreURI       string
 	mu                  sync.Mutex
-	subtaskSortedKVMeta *globalsort.SortedKVMeta
-	summary             *execute.SubtaskSummary
+	subtaskSortedKVMeta *external.SortedKVMeta
 }
 
 func newMergeSortExecutor(
-	task *proto.TaskBase,
-	store kv.Storage,
 	jobID int64,
-	indexes []*model.IndexInfo,
+	index *model.IndexInfo,
 	ptbl table.PhysicalTable,
+	bc ingest.BackendCtx,
 	cloudStoreURI string,
 ) (*mergeSortExecutor, error) {
 	return &mergeSortExecutor{
-		task:          task,
-		store:         store,
 		jobID:         jobID,
-		indexes:       indexes,
+		index:         index,
 		ptbl:          ptbl,
+		bc:            bc,
 		cloudStoreURI: cloudStoreURI,
-		summary:       &execute.SubtaskSummary{},
 	}, nil
 }
 
@@ -83,67 +69,41 @@ func (*mergeSortExecutor) Init(ctx context.Context) error {
 func (m *mergeSortExecutor) RunSubtask(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort executor run subtask")
 
-	accessRec, objStore, err := handle.NewObjStoreWithRecording(ctx, m.cloudStoreURI)
+	sm := &BackfillSubTaskMeta{}
+	err := json.Unmarshal(subtask.Meta, sm)
 	if err != nil {
-		return err
-	}
-	defer func() {
-		objStore.Close()
-		m.summary.MergeObjStoreRequests(&accessRec.Requests)
-		m.GetMeterRecorder().MergeObjStoreAccess(accessRec)
-	}()
-
-	sm, err := decodeBackfillSubTaskMeta(ctx, objStore, subtask.Meta)
-	if err != nil {
+		logutil.BgLogger().Error("unmarshal error",
+			zap.String("category", "ddl"),
+			zap.Error(err))
 		return err
 	}
 
-	m.subtaskSortedKVMeta = &globalsort.SortedKVMeta{}
-	onWriterClose := func(summary *simplesst.WriterSummary) {
+	m.subtaskSortedKVMeta = &external.SortedKVMeta{}
+	onClose := func(summary *external.WriterSummary) {
 		m.mu.Lock()
 		m.subtaskSortedKVMeta.MergeSummary(summary)
 		m.mu.Unlock()
 	}
 
-	prefix := path.Join(strconv.Itoa(int(subtask.TaskID)), strconv.Itoa(int(subtask.ID)))
-	res := m.GetResource()
-
-	wctx := workerpool.NewContext(ctx)
-	op := globalsort.NewMergeOperator(
-		wctx,
-		objStore,
-		res.MemoryPerCore(),
-		prefix,
-		simplesst.DefaultBlockSize,
-		onWriterClose,
-		globalsort.NewMergeCollector(ctx, nil),
-		int(res.CPU.Capacity()),
-		true,
-		engineapi.OnDuplicateKeyError,
-	)
-
-	m.mergeOp.Store(op)
-	defer m.mergeOp.Store(nil)
-
-	failpoint.InjectCall("mergeOverlappingFiles", op)
-
-	err = globalsort.MergeOverlappingFiles(
-		wctx,
-		sm.DataFiles,
-		op,
-	)
-
-	failpoint.Inject("mockMergeSortRunSubtaskError", func(_ failpoint.Value) {
-		err = context.DeadlineExceeded
-	})
+	storeBackend, err := storage.ParseBackend(m.cloudStoreURI, nil)
 	if err != nil {
-		currentIdx, _, err2 := getIndexInfoAndID(sm.EleIDs, m.indexes)
-		if err2 == nil {
-			return ingest.TryConvertToKeyExistsErr(err, currentIdx, m.ptbl.Meta())
-		}
-		return errors.Trace(err)
+		return err
 	}
-	return m.onFinished(ctx, subtask, sm, objStore)
+	opt := &storage.ExternalStorageOptions{}
+	if intest.InTest {
+		opt.NoCredentials = true
+	}
+	store, err := storage.New(ctx, storeBackend, opt)
+	if err != nil {
+		return err
+	}
+
+	prefix := path.Join(strconv.Itoa(int(m.jobID)), strconv.Itoa(int(subtask.ID)))
+
+	// TODO: config generated by plan.
+	return external.MergeOverlappingFiles(ctx, sm.DataFiles, store, 64*1024, prefix,
+		external.DefaultBlockSize, 8*1024, 1*size.MB, 8*1024, onClose,
+		int(variable.GetDDLReorgWorkerCounter()), true)
 }
 
 func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
@@ -151,16 +111,15 @@ func (*mergeSortExecutor) Cleanup(ctx context.Context) error {
 	return nil
 }
 
-func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subtask, sm *BackfillSubTaskMeta, extStore storeapi.Storage) error {
+func (m *mergeSortExecutor) OnFinished(ctx context.Context, subtask *proto.Subtask) error {
 	logutil.Logger(ctx).Info("merge sort finish subtask")
-	sm.MetaGroups = []*globalsort.SortedKVMeta{m.subtaskSortedKVMeta}
-	m.subtaskSortedKVMeta = nil
-	// write external meta to storage when using global sort
-	if err := writeExternalBackfillSubTaskMeta(ctx, extStore, sm, globalsort.SubtaskMetaPath(subtask.TaskID, subtask.ID)); err != nil {
-		return err
+	var subtaskMeta BackfillSubTaskMeta
+	if err := json.Unmarshal(subtask.Meta, &subtaskMeta); err != nil {
+		return errors.Trace(err)
 	}
-
-	newMeta, err := sm.Marshal()
+	subtaskMeta.SortedKVMeta = *m.subtaskSortedKVMeta
+	m.subtaskSortedKVMeta = nil
+	newMeta, err := json.Marshal(subtaskMeta)
 	if err != nil {
 		return errors.Trace(err)
 	}
@@ -168,29 +127,7 @@ func (m *mergeSortExecutor) onFinished(ctx context.Context, subtask *proto.Subta
 	return nil
 }
 
-func (m *mergeSortExecutor) RealtimeSummary() *execute.SubtaskSummary {
-	return m.summary
-}
-
-func (m *mergeSortExecutor) ResetSummary() {
-	m.summary.Reset()
-}
-
-func (m *mergeSortExecutor) ResourceModified(_ context.Context, newResource *proto.StepResource) error {
-	currOp := m.mergeOp.Load()
-	if currOp == nil {
-		// let framework retry
-		return goerrors.New("no subtask running")
-	}
-
-	targetConcurrency := int32(newResource.CPU.Capacity())
-	currentConcurrency := currOp.GetWorkerPoolSize()
-	// TODO(joechenrh): Currently, the worker pool size matches the task count for most times,
-	// so wait here blocks until the subtask finish. Maybe we may improve this later by killing
-	// tasks directly when reducing workers if tasks are idempotent.
-	if targetConcurrency != currentConcurrency {
-		currOp.TuneWorkerPoolSize(targetConcurrency, true)
-	}
-
+func (*mergeSortExecutor) Rollback(ctx context.Context) error {
+	logutil.Logger(ctx).Info("merge sort executor rollback backfill add index task")
 	return nil
 }

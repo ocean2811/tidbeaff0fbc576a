@@ -3,10 +3,10 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "tableutil",
     srcs = ["tableutil.go"],
-    importpath = "github.com/pingcap/tidb/pkg/util/tableutil",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/util/tableutil",
     visibility = ["//visibility:public"],
     deps = [
         "//pkg/meta/autoid",
-        "//pkg/meta/model",
+        "//pkg/parser/model",
     ],
 )

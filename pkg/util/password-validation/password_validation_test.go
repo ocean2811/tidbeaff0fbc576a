@@ -18,9 +18,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/parser/auth"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/auth"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
 	"github.com/stretchr/testify/require"
 )
 
@@ -30,7 +29,7 @@ func TestValidateDictionaryPassword(t *testing.T) {
 	mock.SessionVars = vars
 	vars.GlobalVarsAccessor = mock
 
-	err := mock.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordDictionary, "abc;123;1234;5678;HIJK;中文测试;。，；！")
+	err := mock.SetGlobalSysVar(context.Background(), variable.ValidatePasswordDictionary, "abc;123;1234;5678;HIJK;中文测试;。，；！")
 	require.NoError(t, err)
 	testcases := []struct {
 		pwd    string
@@ -71,19 +70,19 @@ func TestValidateUserNameInPassword(t *testing.T) {
 		{"Resuhtua", ""},
 	}
 	// Enable check_user_name
-	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordCheckUserName, "ON")
+	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordCheckUserName, "ON")
 	require.NoError(t, err)
 	for _, testcase := range testcases {
-		warn, err := ValidateUserNameInPassword(testcase.pwd, sessionVars.User, &sessionVars.GlobalVarsAccessor)
+		warn, err := ValidateUserNameInPassword(testcase.pwd, sessionVars)
 		require.NoError(t, err)
 		require.Equal(t, testcase.warn, warn, testcase.pwd)
 	}
 
 	// Disable check_user_name
-	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordCheckUserName, "OFF")
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordCheckUserName, "OFF")
 	require.NoError(t, err)
 	for _, testcase := range testcases {
-		warn, err := ValidateUserNameInPassword(testcase.pwd, sessionVars.User, &sessionVars.GlobalVarsAccessor)
+		warn, err := ValidateUserNameInPassword(testcase.pwd, sessionVars)
 		require.NoError(t, err)
 		require.Equal(t, "", warn, testcase.pwd)
 	}
@@ -93,7 +92,7 @@ func TestValidatePasswordLowPolicy(t *testing.T) {
 	sessionVars := variable.NewSessionVars(nil)
 	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	sessionVars.GlobalVarsAccessor.(*variable.MockGlobalAccessor).SessionVars = sessionVars
-	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordLength, "8")
+	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordLength, "8")
 	require.NoError(t, err)
 
 	warn, err := ValidatePasswordLowPolicy("1234", &sessionVars.GlobalVarsAccessor)
@@ -103,7 +102,7 @@ func TestValidatePasswordLowPolicy(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "", warn)
 
-	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordLength, "12")
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordLength, "12")
 	require.NoError(t, err)
 	warn, err = ValidatePasswordLowPolicy("12345678", &sessionVars.GlobalVarsAccessor)
 	require.NoError(t, err)
@@ -115,11 +114,11 @@ func TestValidatePasswordMediumPolicy(t *testing.T) {
 	sessionVars.GlobalVarsAccessor = variable.NewMockGlobalAccessor4Tests()
 	sessionVars.GlobalVarsAccessor.(*variable.MockGlobalAccessor).SessionVars = sessionVars
 
-	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordMixedCaseCount, "1")
+	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordMixedCaseCount, "1")
 	require.NoError(t, err)
-	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordSpecialCharCount, "2")
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordSpecialCharCount, "2")
 	require.NoError(t, err)
-	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordNumberCount, "3")
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordNumberCount, "3")
 	require.NoError(t, err)
 
 	warn, err := ValidatePasswordMediumPolicy("!@A123", &sessionVars.GlobalVarsAccessor)
@@ -145,7 +144,7 @@ func TestValidatePassword(t *testing.T) {
 	sessionVars.GlobalVarsAccessor.(*variable.MockGlobalAccessor).SessionVars = sessionVars
 	sessionVars.User = &auth.UserIdentity{Username: "user", AuthUsername: "authuser"}
 
-	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordPolicy, "LOW")
+	err := sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordPolicy, "LOW")
 	require.NoError(t, err)
 	err = ValidatePassword(sessionVars, "1234")
 	require.Error(t, err)
@@ -156,7 +155,7 @@ func TestValidatePassword(t *testing.T) {
 	err = ValidatePassword(sessionVars, "User1234")
 	require.NoError(t, err)
 
-	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordPolicy, "MEDIUM")
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordPolicy, "MEDIUM")
 	require.NoError(t, err)
 	err = ValidatePassword(sessionVars, "User1234")
 	require.Error(t, err)
@@ -165,9 +164,9 @@ func TestValidatePassword(t *testing.T) {
 	err = ValidatePassword(sessionVars, "！User1234")
 	require.NoError(t, err)
 
-	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordPolicy, "STRONG")
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordPolicy, "STRONG")
 	require.NoError(t, err)
-	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), vardef.ValidatePasswordDictionary, "User")
+	err = sessionVars.GlobalVarsAccessor.SetGlobalSysVar(context.Background(), variable.ValidatePasswordDictionary, "User")
 	require.NoError(t, err)
 	err = ValidatePassword(sessionVars, "!User1234")
 	require.Error(t, err)

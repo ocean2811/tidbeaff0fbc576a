@@ -15,21 +15,12 @@
 package ingestrec_test
 
 import (
-	"context"
 	"encoding/json"
-	"fmt"
 	"testing"
 
-	"github.com/pingcap/errors"
-	"github.com/pingcap/tidb/br/pkg/restore/ingestrec"
-	"github.com/pingcap/tidb/br/pkg/utiltest"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/meta"
-	"github.com/pingcap/tidb/pkg/meta/model"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/session"
-	"github.com/pingcap/tidb/pkg/store/mockstore"
-	"github.com/pingcap/tidb/pkg/testkit"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/restore/ingestrec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 )
 
@@ -42,7 +33,6 @@ const (
 func fakeJob(reorgTp model.ReorgType, jobTp model.ActionType, state model.JobState,
 	rowCnt int64, indices []*model.IndexInfo, rawArgs json.RawMessage) *model.Job {
 	return &model.Job{
-		Version:    model.JobVersion1,
 		SchemaName: SchemaName,
 		TableName:  TableName,
 		TableID:    TableID,
@@ -65,7 +55,7 @@ func getIndex(id int64, columnsName []string) *model.IndexInfo {
 	columns := make([]*model.IndexColumn, 0, len(columnsName))
 	for _, columnName := range columnsName {
 		columns = append(columns, &model.IndexColumn{
-			Name: ast.CIStr{
+			Name: model.CIStr{
 				O: columnName,
 				L: columnName,
 			},
@@ -73,7 +63,7 @@ func getIndex(id int64, columnsName []string) *model.IndexInfo {
 	}
 	return &model.IndexInfo{
 		ID: id,
-		Name: ast.CIStr{
+		Name: model.CIStr{
 			O: columnsName[0],
 			L: columnsName[0], // noused
 		},
@@ -87,7 +77,7 @@ func noItem(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
 	return errors.Errorf("should no items, but have one: [%d, %d, %v]", tableID, indexID, info)
 }
 
-func hasOneItem(idxID int64, columnList string, columnArgs []any) (iterateFunc, *int) {
+func hasOneItem(idxID int64, columnList string, columnArgs []interface{}) (iterateFunc, *int) {
 	count := 0
 	return func(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
 		count += 1
@@ -103,81 +93,52 @@ func hasOneItem(idxID int64, columnList string, columnArgs []any) (iterateFunc, 
 	}, &count
 }
 
-func createMeta(t *testing.T, store kv.Storage, fn func(m *meta.Mutator)) {
-	txn, err := store.Begin()
-	require.NoError(t, err)
-
-	fn(meta.NewMutator(txn))
-
-	err = txn.Commit(context.Background())
-	require.NoError(t, err)
-}
-
 func TestAddIngestRecorder(t *testing.T) {
-	ctx := context.Background()
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	createMeta(t, store, func(m *meta.Mutator) {
-		dbInfo := &model.DBInfo{
-			ID:    1,
-			Name:  ast.NewCIStr(SchemaName),
-			State: model.StatePublic,
-		}
-		err := m.CreateDatabase(dbInfo)
-		require.NoError(t, err)
-		tblInfo := &model.TableInfo{
-			ID:   TableID,
-			Name: ast.NewCIStr(TableName),
-			Columns: []*model.ColumnInfo{
+	allSchemas := []*model.DBInfo{
+		{
+			Name: model.NewCIStr(SchemaName),
+			Tables: []*model.TableInfo{
 				{
-					Name:   ast.NewCIStr("x"),
-					Hidden: false,
-					State:  model.StatePublic,
-				},
-				{
-					Name:   ast.NewCIStr("y"),
-					Hidden: false,
-					State:  model.StatePublic,
-				},
-			},
-			Indices: []*model.IndexInfo{
-				{
-					ID:    1,
-					Name:  ast.NewCIStr("x"),
-					Table: ast.NewCIStr(TableName),
-					Columns: []*model.IndexColumn{
+					ID:   TableID,
+					Name: model.NewCIStr(TableName),
+					Columns: []*model.ColumnInfo{
 						{
-							Name:   ast.NewCIStr("x"),
-							Offset: 0,
-							Length: -1,
+							Name:   model.NewCIStr("x"),
+							Hidden: false,
 						},
 						{
-							Name:   ast.NewCIStr("y"),
-							Offset: 1,
-							Length: -1,
+							Name:   model.NewCIStr("y"),
+							Hidden: false,
 						},
 					},
-					Comment: "123",
-					Tp:      ast.IndexTypeBtree,
-					State:   model.StatePublic,
+					Indices: []*model.IndexInfo{
+						{
+							ID:    1,
+							Name:  model.NewCIStr("x"),
+							Table: model.NewCIStr(TableName),
+							Columns: []*model.IndexColumn{
+								{
+									Name:   model.NewCIStr("x"),
+									Offset: 0,
+									Length: -1,
+								},
+								{
+									Name:   model.NewCIStr("y"),
+									Offset: 1,
+									Length: -1,
+								},
+							},
+							Comment: "123",
+							Tp:      model.IndexTypeBtree,
+						},
+					},
 				},
 			},
-			State: model.StatePublic,
-		}
-		err = m.CreateTableOrView(1, tblInfo)
-		require.NoError(t, err)
-	})
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
-	infoSchema := dom.InfoSchema()
-
+		},
+	}
 	recorder := ingestrec.New()
 	// no ingest job, should ignore it
-	err = recorder.TryAddJob(fakeJob(
+	err := recorder.AddJob(fakeJob(
 		model.ReorgTypeTxn,
 		model.ActionAddIndex,
 		model.JobStateSynced,
@@ -188,14 +149,13 @@ func TestAddIngestRecorder(t *testing.T) {
 		nil,
 	), false)
 	require.NoError(t, err)
-	err = recorder.UpdateIndexInfo(ctx, infoSchema)
-	require.NoError(t, err)
+	recorder.UpdateIndexInfo(allSchemas)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
 
 	// no add-index job, should ignore it
-	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeIngest,
+	err = recorder.AddJob(fakeJob(
+		model.ReorgTypeLitMerge,
 		model.ActionDropIndex,
 		model.JobStateSynced,
 		100,
@@ -205,14 +165,13 @@ func TestAddIngestRecorder(t *testing.T) {
 		nil,
 	), false)
 	require.NoError(t, err)
-	err = recorder.UpdateIndexInfo(ctx, infoSchema)
-	require.NoError(t, err)
+	recorder.UpdateIndexInfo(allSchemas)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
 
 	// no synced job, should ignore it
-	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeIngest,
+	err = recorder.AddJob(fakeJob(
+		model.ReorgTypeLitMerge,
 		model.ActionAddIndex,
 		model.JobStateRollbackDone,
 		100,
@@ -222,28 +181,26 @@ func TestAddIngestRecorder(t *testing.T) {
 		nil,
 	), false)
 	require.NoError(t, err)
-	err = recorder.UpdateIndexInfo(ctx, infoSchema)
-	require.NoError(t, err)
+	recorder.UpdateIndexInfo(allSchemas)
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
 
 	{
 		recorder := ingestrec.New()
 		// a normal ingest add index job
-		err = recorder.TryAddJob(fakeJob(
-			model.ReorgTypeIngest,
+		err = recorder.AddJob(fakeJob(
+			model.ReorgTypeLitMerge,
 			model.ActionAddIndex,
 			model.JobStateSynced,
 			1000,
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, false, [], false]`),
+			json.RawMessage(`[1, "a"]`),
 		), false)
 		require.NoError(t, err)
-		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
-		err = recorder.UpdateIndexInfo(ctx, infoSchema)
-		require.NoError(t, err)
+		f, cnt := hasOneItem(1, "%n,%n", []interface{}{"x", "y"})
+		recorder.UpdateIndexInfo(allSchemas)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
 		require.Equal(t, *cnt, 1)
@@ -252,20 +209,19 @@ func TestAddIngestRecorder(t *testing.T) {
 	{
 		recorder := ingestrec.New()
 		// a normal ingest add primary index job
-		err = recorder.TryAddJob(fakeJob(
-			model.ReorgTypeIngest,
+		err = recorder.AddJob(fakeJob(
+			model.ReorgTypeLitMerge,
 			model.ActionAddPrimaryKey,
 			model.JobStateSynced,
 			1000,
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, false, [], false]`),
+			json.RawMessage(`[1, "a"]`),
 		), false)
 		require.NoError(t, err)
-		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
-		err = recorder.UpdateIndexInfo(ctx, infoSchema)
-		require.NoError(t, err)
+		f, cnt := hasOneItem(1, "%n,%n", []interface{}{"x", "y"})
+		recorder.UpdateIndexInfo(allSchemas)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
 		require.Equal(t, *cnt, 1)
@@ -273,20 +229,19 @@ func TestAddIngestRecorder(t *testing.T) {
 
 	{
 		// a sub job as add primary index job
-		err = recorder.TryAddJob(fakeJob(
-			model.ReorgTypeIngest,
+		err = recorder.AddJob(fakeJob(
+			model.ReorgTypeLitMerge,
 			model.ActionAddPrimaryKey,
 			model.JobStateDone,
 			1000,
 			[]*model.IndexInfo{
 				getIndex(1, []string{"x", "y"}),
 			},
-			json.RawMessage(`[1, false, [], false]`),
+			json.RawMessage(`[1, "a"]`),
 		), true)
 		require.NoError(t, err)
-		f, cnt := hasOneItem(1, "%n,%n", []any{"x", "y"})
-		err = recorder.UpdateIndexInfo(ctx, infoSchema)
-		require.NoError(t, err)
+		f, cnt := hasOneItem(1, "%n,%n", []interface{}{"x", "y"})
+		recorder.UpdateIndexInfo(allSchemas)
 		err = recorder.Iterate(f)
 		require.NoError(t, err)
 		require.Equal(t, *cnt, 1)
@@ -294,96 +249,73 @@ func TestAddIngestRecorder(t *testing.T) {
 }
 
 func TestIndexesKind(t *testing.T) {
-	ctx := context.Background()
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-	/*se, err := session.CreateSession(store)
-	require.NoError(t, err)
-	_, err := se.ExecuteInternal(ctx)
-	*/
-	createMeta(t, store, func(m *meta.Mutator) {
-		dbInfo := &model.DBInfo{
-			ID:    1,
-			Name:  ast.NewCIStr(SchemaName),
-			State: model.StatePublic,
-		}
-		err := m.CreateDatabase(dbInfo)
-		require.NoError(t, err)
-		tblInfo := &model.TableInfo{
-			ID:   TableID,
-			Name: ast.NewCIStr(TableName),
-			Columns: []*model.ColumnInfo{
+	allSchemas := []*model.DBInfo{
+		{
+			Name: model.NewCIStr(SchemaName),
+			Tables: []*model.TableInfo{
 				{
-					Name:   ast.NewCIStr("x"),
-					Hidden: false,
-					State:  model.StatePublic,
-				},
-				{
-					Name:                ast.NewCIStr("_V$_x_0"),
-					Hidden:              true,
-					GeneratedExprString: "`x` * 2",
-					State:               model.StatePublic,
-				},
-				{
-					Name:   ast.NewCIStr("z"),
-					Hidden: false,
-					State:  model.StatePublic,
-				},
-			},
-			Indices: []*model.IndexInfo{
-				{
-					ID:    1,
-					Name:  ast.NewCIStr("x"),
-					Table: ast.NewCIStr(TableName),
-					Columns: []*model.IndexColumn{
+					ID:   TableID,
+					Name: model.NewCIStr(TableName),
+					Columns: []*model.ColumnInfo{
 						{
-							Name:   ast.NewCIStr("x"),
-							Offset: 0,
-							Length: -1,
+							Name:   model.NewCIStr("x"),
+							Hidden: false,
 						},
 						{
-							Name:   ast.NewCIStr("_V$_x_0"),
-							Offset: 1,
-							Length: -1,
+							Name:                model.NewCIStr("_V$_x_0"),
+							Hidden:              true,
+							GeneratedExprString: "`x` * 2",
 						},
 						{
-							Name:   ast.NewCIStr("z"),
-							Offset: 2,
-							Length: 4,
+							Name:   model.NewCIStr("z"),
+							Hidden: false,
 						},
 					},
-					Comment:   "123",
-					Tp:        ast.IndexTypeHash,
-					Invisible: true,
-					State:     model.StatePublic,
+					Indices: []*model.IndexInfo{
+						{
+							ID:    1,
+							Name:  model.NewCIStr("x"),
+							Table: model.NewCIStr(TableName),
+							Columns: []*model.IndexColumn{
+								{
+									Name:   model.NewCIStr("x"),
+									Offset: 0,
+									Length: -1,
+								},
+								{
+									Name:   model.NewCIStr("_V$_x_0"),
+									Offset: 1,
+									Length: -1,
+								},
+								{
+									Name:   model.NewCIStr("z"),
+									Offset: 2,
+									Length: 4,
+								},
+							},
+							Comment:   "123",
+							Tp:        model.IndexTypeHash,
+							Invisible: true,
+						},
+					},
 				},
 			},
-			State: model.StatePublic,
-		}
-		err = m.CreateTableOrView(1, tblInfo)
-		require.NoError(t, err)
-	})
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
-	infoSchema := dom.InfoSchema()
+		},
+	}
 
 	recorder := ingestrec.New()
-	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeIngest,
+	err := recorder.AddJob(fakeJob(
+		model.ReorgTypeLitMerge,
 		model.ActionAddIndex,
 		model.JobStateSynced,
 		1000,
 		[]*model.IndexInfo{
 			getIndex(1, []string{"x"}),
 		},
-		json.RawMessage(`[1, false, [], false]`),
+		json.RawMessage(`[1, "a"]`),
 	), false)
 	require.NoError(t, err)
-	err = recorder.UpdateIndexInfo(ctx, infoSchema)
-	require.NoError(t, err)
+	recorder.UpdateIndexInfo(allSchemas)
 	var (
 		tableID int64
 		indexID int64
@@ -400,198 +332,79 @@ func TestIndexesKind(t *testing.T) {
 	require.Equal(t, 1, count)
 	require.Equal(t, TableID, tableID)
 	require.Equal(t, int64(1), indexID)
-	require.Equal(t, ast.NewCIStr(SchemaName), info.SchemaName)
+	require.Equal(t, model.NewCIStr(SchemaName), info.SchemaName)
 	require.Equal(t, "%n,(`x` * 2),%n(4)", info.ColumnList)
-	require.Equal(t, []any{"x", "z"}, info.ColumnArgs)
+	require.Equal(t, []interface{}{"x", "z"}, info.ColumnArgs)
 	require.Equal(t, TableName, info.IndexInfo.Table.O)
 }
 
 func TestRewriteTableID(t *testing.T) {
-	ctx := context.Background()
-	store, err := mockstore.NewMockStore(mockstore.WithStoreType(mockstore.EmbedUnistore))
-	require.NoError(t, err)
-	defer func() {
-		require.NoError(t, store.Close())
-	}()
-
-	createMeta(t, store, func(m *meta.Mutator) {
-		dbInfo := &model.DBInfo{
-			ID:    1,
-			Name:  ast.NewCIStr(SchemaName),
-			State: model.StatePublic,
-		}
-		err := m.CreateDatabase(dbInfo)
-		require.NoError(t, err)
-		tblInfo := &model.TableInfo{
-			ID:   TableID,
-			Name: ast.NewCIStr(TableName),
-			Columns: []*model.ColumnInfo{
+	allSchemas := []*model.DBInfo{
+		{
+			Name: model.NewCIStr(SchemaName),
+			Tables: []*model.TableInfo{
 				{
-					Name:   ast.NewCIStr("x"),
-					Hidden: false,
-					State:  model.StatePublic,
-				},
-				{
-					Name:   ast.NewCIStr("y"),
-					Hidden: false,
-					State:  model.StatePublic,
-				},
-			},
-			Indices: []*model.IndexInfo{
-				{
-					ID:    1,
-					Name:  ast.NewCIStr("x"),
-					Table: ast.NewCIStr(TableName),
-					Columns: []*model.IndexColumn{
+					ID:   TableID,
+					Name: model.NewCIStr(TableName),
+					Columns: []*model.ColumnInfo{
 						{
-							Name:   ast.NewCIStr("x"),
-							Offset: 0,
-							Length: -1,
+							Name:   model.NewCIStr("x"),
+							Hidden: false,
 						},
 						{
-							Name:   ast.NewCIStr("y"),
-							Offset: 1,
-							Length: -1,
+							Name:   model.NewCIStr("y"),
+							Hidden: false,
 						},
 					},
-					Comment: "123",
-					Tp:      ast.IndexTypeBtree,
-					State:   model.StatePublic,
+					Indices: []*model.IndexInfo{
+						{
+							ID:    1,
+							Name:  model.NewCIStr("x"),
+							Table: model.NewCIStr(TableName),
+							Columns: []*model.IndexColumn{
+								{
+									Name:   model.NewCIStr("x"),
+									Offset: 0,
+									Length: -1,
+								},
+								{
+									Name:   model.NewCIStr("y"),
+									Offset: 1,
+									Length: -1,
+								},
+							},
+							Comment: "123",
+							Tp:      model.IndexTypeBtree,
+						},
+					},
 				},
 			},
-			State: model.StatePublic,
-		}
-		err = m.CreateTableOrView(1, tblInfo)
-		require.NoError(t, err)
-	})
-	dom, err := session.GetDomain(store)
-	require.NoError(t, err)
-	infoSchema := dom.InfoSchema()
-
+		},
+	}
 	recorder := ingestrec.New()
-	err = recorder.TryAddJob(fakeJob(
-		model.ReorgTypeIngest,
+	err := recorder.AddJob(fakeJob(
+		model.ReorgTypeLitMerge,
 		model.ActionAddIndex,
 		model.JobStateSynced,
 		1000,
 		[]*model.IndexInfo{
 			getIndex(1, []string{"x", "y"}),
 		},
-		json.RawMessage(`[1, false, [], false]`),
+		json.RawMessage(`[1, "a"]`),
 	), false)
 	require.NoError(t, err)
-	err = recorder.UpdateIndexInfo(ctx, infoSchema)
-	require.NoError(t, err)
+	recorder.UpdateIndexInfo(allSchemas)
 	recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {
 		return tableID + 1, false, nil
 	})
-	count := 0
 	err = recorder.Iterate(func(tableID, indexID int64, info *ingestrec.IngestIndexInfo) error {
-		count += 1
 		require.Equal(t, TableID+1, tableID)
 		return nil
 	})
 	require.NoError(t, err)
 	recorder.RewriteTableID(func(tableID int64) (int64, bool, error) {
-		count += 1
 		return tableID + 1, true, nil
 	})
 	err = recorder.Iterate(noItem)
 	require.NoError(t, err)
-	require.Equal(t, 2, count)
-}
-
-func fakeJobWithName(
-	schemaName string,
-	tableName string,
-	tableID int64,
-	indexID int64,
-	indexName string,
-	columnName string,
-	args json.RawMessage,
-) *model.Job {
-	return &model.Job{
-		Version:    model.JobVersion1,
-		SchemaName: schemaName,
-		TableName:  tableName,
-		TableID:    tableID,
-		Type:       model.ActionAddIndex,
-		State:      model.JobStateSynced,
-		RowCount:   100,
-		RawArgs:    args,
-		ReorgMeta: &model.DDLReorgMeta{
-			ReorgTp: model.ReorgTypeIngest,
-		},
-		BinlogInfo: &model.HistoryInfo{
-			TableInfo: &model.TableInfo{
-				Indices: []*model.IndexInfo{
-					{
-						ID:   indexID,
-						Name: ast.NewCIStr(indexName),
-						Columns: []*model.IndexColumn{{
-							Name: ast.NewCIStr(columnName),
-						}},
-					},
-				},
-			},
-		},
-	}
-}
-
-func TestRepairIndexNeededInForeignKey(t *testing.T) {
-	ctx := context.Background()
-	s := utiltest.CreateRestoreSchemaSuite(t)
-	tk := testkit.NewTestKit(t, s.Mock.Storage)
-
-	tk.MustExec("create table test.parent (id int, index i1(id))")
-	tk.MustExec("create table test.child (id int, pid int, index i1(pid), foreign key (pid) references test.parent (id) on delete cascade)")
-
-	infoSchema := s.Mock.InfoSchema()
-	childTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("child"))
-	require.NoError(t, err)
-	parentTableInfo, err := infoSchema.TableInfoByName(ast.NewCIStr("test"), ast.NewCIStr("parent"))
-	require.NoError(t, err)
-	childTableIndexI1 := childTableInfo.Indices[0]
-	parentTableIndexI1 := parentTableInfo.Indices[0]
-	{
-		recorder := ingestrec.New()
-		err = recorder.TryAddJob(
-			fakeJobWithName("test", "parent", parentTableInfo.ID, parentTableIndexI1.ID, "i1", "id", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI1.ID))),
-			false,
-		)
-		require.NoError(t, err)
-		err = recorder.TryAddJob(
-			fakeJobWithName("test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID))),
-			false,
-		)
-		require.NoError(t, err)
-		recorder.UpdateIndexInfo(ctx, infoSchema)
-		require.Len(t, recorder.GetFKRecordMap(), 1)
-	}
-	{
-		recorder := ingestrec.New()
-		err = recorder.TryAddJob(
-			fakeJobWithName("test", "child", childTableInfo.ID, childTableIndexI1.ID, "i1", "pid", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", childTableIndexI1.ID))),
-			false,
-		)
-		require.NoError(t, err)
-		recorder.UpdateIndexInfo(ctx, infoSchema)
-		require.Len(t, recorder.GetFKRecordMap(), 1)
-	}
-	{
-		recorder := ingestrec.New()
-		err = recorder.TryAddJob(
-			fakeJobWithName("test", "parent", parentTableInfo.ID, parentTableIndexI1.ID, "i1", "id", json.RawMessage(fmt.Sprintf("[%d, false, [], false]", parentTableIndexI1.ID))),
-			false,
-		)
-		require.NoError(t, err)
-		recorder.UpdateIndexInfo(ctx, infoSchema)
-		require.Len(t, recorder.GetFKRecordMap(), 1)
-	}
-	{
-		recorder := ingestrec.New()
-		require.NoError(t, err)
-		recorder.UpdateIndexInfo(ctx, infoSchema)
-		require.Len(t, recorder.GetFKRecordMap(), 0)
-	}
 }

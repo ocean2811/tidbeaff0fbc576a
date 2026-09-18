@@ -17,7 +17,7 @@ package importer
 import (
 	"fmt"
 
-	"github.com/pingcap/tidb/pkg/util/dbutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/dbutil"
 )
 
 // Config is the configuration.

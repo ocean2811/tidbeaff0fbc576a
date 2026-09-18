@@ -24,25 +24,20 @@ import (
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
 	pclog "github.com/pingcap/log"
-	"github.com/pingcap/tidb/br/pkg/summary"
-	"github.com/pingcap/tidb/br/pkg/version"
-	"github.com/pingcap/tidb/dumpling/cli"
-	tcontext "github.com/pingcap/tidb/dumpling/context"
-	"github.com/pingcap/tidb/dumpling/log"
-	"github.com/pingcap/tidb/pkg/dumpformat/sqlfile"
-	infoschema "github.com/pingcap/tidb/pkg/infoschema/context"
-	"github.com/pingcap/tidb/pkg/objstore"
-	"github.com/pingcap/tidb/pkg/objstore/storeapi"
-	"github.com/pingcap/tidb/pkg/parser"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/format"
-	parsermysql "github.com/pingcap/tidb/pkg/parser/mysql"
-	"github.com/pingcap/tidb/pkg/store/helper"
-	"github.com/pingcap/tidb/pkg/tablecodec"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/codec"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/storage"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/summary"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/version"
+	"github.com/ocean2811/tidbeaff0fbc576a/dumpling/cli"
+	tcontext "github.com/ocean2811/tidbeaff0fbc576a/dumpling/context"
+	"github.com/ocean2811/tidbeaff0fbc576a/dumpling/log"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/format"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/store/helper"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/tablecodec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/codec"
 	pd "github.com/tikv/pd/client"
-	"github.com/tikv/pd/client/pkg/caller"
 	gatomic "go.uber.org/atomic"
 	"go.uber.org/zap"
 	"golang.org/x/sync/errgroup"
@@ -63,30 +58,26 @@ type Dumper struct {
 	conf      *Config
 	metrics   *metrics
 
-	extStore storeapi.Storage
+	extStore storage.ExternalStorage
 	dbHandle *sql.DB
 
 	tidbPDClientForGC             pd.Client
-	tidbUseKeyspaceGC             bool
-	tidbKeyspaceName              string
-	tidbKeyspaceID                uint32
 	selectTiDBTableRegionFunc     func(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error)
 	totalTables                   int64
 	charsetAndDefaultCollationMap map[string]string
 
 	speedRecorder *SpeedRecorder
-	status        atomic.Pointer[DumpStatus]
 }
 
 // NewDumper returns a new Dumper
 func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	failpoint.Inject("setExtStorage", func(val failpoint.Value) {
 		path := val.(string)
-		b, err := objstore.ParseBackend(path, nil)
+		b, err := storage.ParseBackend(path, nil)
 		if err != nil {
 			panic(err)
 		}
-		s, err := objstore.New(context.Background(), b, &storeapi.Options{})
+		s, err := storage.New(context.Background(), b, &storage.ExternalStorageOptions{})
 		if err != nil {
 			panic(err)
 		}
@@ -115,8 +106,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 	err = adjustConfig(conf,
 		buildTLSConfig,
 		validateSpecifiedSQL,
-		adjustFileFormat,
-		validateIncludeGeneratedColumns)
+		adjustFileFormat)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +130,6 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 		resolveAutoConsistency,
 
 		validateResolveAutoConsistency,
-		tidbResolveKeyspaceMetaForGC,
 		tidbSetPDClientForGC,
 		tidbGetSnapshot,
 		tidbStartGCSavepointUpdateService,
@@ -152,7 +141,7 @@ func NewDumper(ctx context.Context, conf *Config) (*Dumper, error) {
 // Dump dumps table from database
 // nolint: gocyclo
 func (d *Dumper) Dump() (dumpErr error) {
-	initColumnTypeSets()
+	initColTypeRowReceiverMap()
 	var (
 		conn    *sql.Conn
 		err     error
@@ -160,12 +149,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 	)
 	tctx, conf, pool := d.tctx, d.conf, d.dbHandle
 	tctx.L().Info("begin to run Dump", zap.Stringer("conf", conf))
-	if len(conf.columnFilter.Filters) > 0 {
-		// Config can be built or mutated without ParseFromFlags, so keep this runtime guard.
-		if err = validateColumnFilterOptions(conf, flagColumnFilterFile); err != nil {
-			return errors.Trace(err)
-		}
-	}
 	m := newGlobalMetadata(tctx, d.extStore, conf.Snapshot)
 	repeatableRead := needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency)
 	defer func() {
@@ -216,9 +199,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 	// for consistency flush, record snapshot after whole tables are locked. The recorded meta info is exactly the locked snapshot.
 	// for consistency snapshot, we should use the snapshot that we get/set at first in metadata. TiDB will assure the snapshot of TSO.
 	// for consistency none, the binlog pos in metadata might be earlier than dumped data. We need to enable safe-mode to assure data safety.
-	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo, false)
+	err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, false)
 	if err != nil {
-		tctx.L().Warn("get global metadata failed", log.ShortError(err))
+		tctx.L().Info("get global metadata failed", log.ShortError(err))
 	}
 
 	if d.conf.CollationCompatible == StrictCollationCompatible {
@@ -242,7 +225,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 	atomic.StoreInt64(&d.totalTables, int64(calculateTableCount(conf.Tables)))
 
 	rebuildMetaConn := func(conn *sql.Conn, updateMeta bool) (*sql.Conn, error) {
-		_ = conn.Raw(func(any) error {
+		_ = conn.Raw(func(dc interface{}) error {
 			// return an `ErrBadConn` to ensure close the connection, but do not put it back to the pool.
 			// if we choose to use `Close`, it will always put the connection back to the pool.
 			return driver.ErrBadConn
@@ -255,7 +238,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 		conn = newConn
 		// renew the master status after connection. dm can't close safe-mode until dm reaches current pos
 		if updateMeta && conf.PosAfterConnect {
-			err1 = m.recordGlobalMetaData(conn, conf.ServerInfo, true)
+			err1 = m.recordGlobalMetaData(conn, conf.ServerInfo.ServerType, true)
 			if err1 != nil {
 				return conn, errors.Trace(err1)
 			}
@@ -272,7 +255,6 @@ func (d *Dumper) Dump() (dumpErr error) {
 		return rebuildMetaConn(conn, updateMeta)
 	}
 
-	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 	chanSize := defaultTaskChannelCapacity
 	failpoint.Inject("SmallDumpChanSize", func() {
 		chanSize = 1
@@ -301,17 +283,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 
 	if conf.PosAfterConnect {
 		// record again, to provide a location to exit safe mode for DM
-		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo, true)
+		err = m.recordGlobalMetaData(metaConn, conf.ServerInfo.ServerType, true)
 		if err != nil {
 			tctx.L().Info("get global metadata (after connection pool established) failed", log.ShortError(err))
-		}
-	}
-
-	if conf.SQL == "" && len(conf.columnFilter.Filters) > 0 {
-		if err = prepareColumnProjection(tctx, conf, baseConn); err != nil {
-			close(taskIn)
-			_ = baseConn.DBConn.Close()
-			return errors.Trace(err)
 		}
 	}
 
@@ -319,8 +293,9 @@ func (d *Dumper) Dump() (dumpErr error) {
 	summary.SetUnit(summary.BackupUnit)
 	defer summary.Summary(summary.BackupUnit)
 
-	stopLogProgress := d.startLogProgress(tctx)
-	defer stopLogProgress()
+	logProgressCtx, logProgressCancel := tctx.WithCancel()
+	go d.runLogProgress(logProgressCtx)
+	defer logProgressCancel()
 
 	tableDataStartTime := time.Now()
 
@@ -334,6 +309,7 @@ func (d *Dumper) Dump() (dumpErr error) {
 			fmt.Printf("tidb_mem_quota_query == %s\n", s)
 		}
 	})
+	baseConn := newBaseConn(metaConn, true, rebuildMetaConn)
 
 	if conf.SQL == "" {
 		if err = d.dumpDatabases(writerCtx, baseConn, taskIn); err != nil && !errors.ErrorEqual(err, context.Canceled) {
@@ -364,7 +340,7 @@ func (d *Dumper) startWriters(tctx *tcontext.Context, wg *errgroup.Group, taskCh
 	rebuildConnFn func(*sql.Conn, bool) (*sql.Conn, error)) ([]*Writer, func(), error) {
 	conf, pool := d.conf, d.dbHandle
 	writers := make([]*Writer, conf.Threads)
-	for i := range conf.Threads {
+	for i := 0; i < conf.Threads; i++ {
 		conn, err := createConnWithConsistency(tctx, pool, needRepeatableRead(conf.ServerInfo.ServerType, conf.Consistency))
 		if err != nil {
 			return nil, func() {}, err
@@ -440,10 +416,6 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 		}
 	}
 
-	if err := d.checkPartitionsFlag(tctx, metaConn, allTables); err != nil {
-		return err
-	}
-
 	parser1 := parser.New()
 	for dbName, tables := range allTables {
 		if !conf.NoSchemas {
@@ -506,192 +478,6 @@ func (d *Dumper) dumpDatabases(tctx *tcontext.Context, metaConn *BaseConn, taskC
 				err = d.dumpTableData(tctx, metaConn, meta, taskChan)
 				if err != nil {
 					return errors.Trace(err)
-				}
-			}
-		}
-	}
-	return nil
-}
-
-func prepareColumnProjection(tctx *tcontext.Context, conf *Config, conn *BaseConn) error {
-	conf.columnProjection = make(map[tableName]columnProjection, calculateTableCount(conf.Tables))
-	anyFilteredColumns := false
-	for dbName, tables := range conf.Tables {
-		for _, table := range tables {
-			projection, err := buildColumnProjection(tctx, conf, conn, dbName, table)
-			if err != nil {
-				return err
-			}
-			conf.columnProjection[tableName{db: dbName, table: table.Name}] = projection
-			anyFilteredColumns = anyFilteredColumns || projection.hasFilteredColumns()
-		}
-	}
-	if conf.NoSchemas || !anyFilteredColumns {
-		return nil
-	}
-
-	for _, tables := range conf.Tables {
-		for _, table := range tables {
-			if table.Type == TableTypeView {
-				return errors.New("schema output with an active column filter is not supported when the dump includes views")
-			}
-		}
-	}
-
-	schemaParser := parser.New()
-	if value, ok := conf.SessionParams["sql_mode"]; ok {
-		sqlMode, err := parsermysql.GetSQLMode(parsermysql.FormatSQLModeStr(fmt.Sprint(value)))
-		if err != nil {
-			return errors.Annotate(err, "failed to parse session sql_mode")
-		}
-		schemaParser.SetSQLMode(sqlMode)
-	}
-	schemas := make(projectedTableSchemas, calculateTableCount(conf.Tables))
-	for dbName, tables := range conf.Tables {
-		for _, table := range tables {
-			if table.Type != TableTypeBase {
-				continue
-			}
-			key := tableName{db: dbName, table: table.Name}
-			projection := conf.columnProjection[key]
-			createTableSQL, err := ShowCreateTable(tctx, conn, dbName, table.Name)
-			if err != nil {
-				return err
-			}
-			if projection.hasFilteredColumns() {
-				schemas[key], err = buildProjectedTableSchema(
-					schemaParser,
-					createTableSQL,
-					columnNames(projection.selectedTypes),
-				)
-			} else {
-				schemas[key], err = parseTableSchema(schemaParser, createTableSQL)
-			}
-			if err != nil {
-				return errors.Annotatef(
-					err,
-					"failed to analyze schema projection for table `%s`.`%s`",
-					escapeString(dbName),
-					escapeString(table.Name),
-				)
-			}
-			projection.schemaSQL = createTableSQL
-			if projection.hasFilteredColumns() {
-				projection.schemaSQL, err = restoreProjectedSchema(schemas[key].createTable)
-				if err != nil {
-					return errors.Annotatef(
-						err,
-						"failed to restore schema projection for table `%s`.`%s`",
-						escapeString(dbName),
-						escapeString(table.Name),
-					)
-				}
-			}
-			conf.columnProjection[key] = projection
-		}
-	}
-
-	// Runs after all schemas are built: map order is random, and an unbuilt parent is treated as "outside the dump" (skipped), so merging into the loop above would drop FK validation nondeterministically.
-	for dbName, tables := range conf.Tables {
-		for _, table := range tables {
-			if table.Type != TableTypeBase {
-				continue
-			}
-			key := tableName{db: dbName, table: table.Name}
-			if err := validateForeignKeyParents(dbName, schemas[key], schemas); err != nil {
-				return errors.Annotatef(
-					err,
-					"failed to validate schema projection for table `%s`.`%s`",
-					escapeString(dbName),
-					escapeString(table.Name),
-				)
-			}
-		}
-	}
-	return nil
-}
-
-func buildColumnProjection(
-	tctx *tcontext.Context,
-	conf *Config,
-	conn *BaseConn,
-	dbName string,
-	table *TableInfo,
-) (columnProjection, error) {
-	if table.Type != TableTypeBase {
-		return columnProjection{}, nil
-	}
-
-	sourceColumns, needExplicitFields, err := getWritableColumnNames(
-		tctx, conn, dbName, table.Name, conf.includeStoredGeneratedColumns())
-	if err != nil {
-		return columnProjection{}, err
-	}
-	selectedColumns, selectedIndexes, err := conf.columnFilter.applyToColumns(dbName, table.Name, sourceColumns)
-	if err != nil {
-		return columnProjection{}, err
-	}
-	if len(selectedColumns) == 0 {
-		// Preserve the existing empty projection for tables with only generated columns.
-		return columnProjection{}, nil
-	}
-
-	sourceFields := columnNamesToSelectFields(sourceColumns)
-	selectedFields := columnNamesToSelectFields(selectedColumns)
-	projection := columnProjection{
-		selectField: strings.Join(selectedFields, ","),
-	}
-	if !needExplicitFields && len(sourceColumns) == len(selectedColumns) && !conf.CompleteInsert {
-		projection.selectField = "*"
-	}
-
-	projection.sourceTypes, err = GetColumnTypes(tctx, conn, strings.Join(sourceFields, ","), dbName, table.Name)
-	if err != nil {
-		return columnProjection{}, err
-	}
-
-	projection.selectedTypes = make([]*sql.ColumnType, len(selectedColumns))
-	for i, idx := range selectedIndexes {
-		projection.selectedTypes[i] = projection.sourceTypes[idx]
-	}
-	return projection, nil
-}
-
-func columnNamesToSelectFields(columns []string) []string {
-	fields := make([]string, 0, len(columns))
-	for _, column := range columns {
-		fields = append(fields, wrapBackTicks(escapeString(column)))
-	}
-	return fields
-}
-
-func (d *Dumper) checkPartitionsFlag(tctx *tcontext.Context, conn *BaseConn, allTables DatabaseTables) error {
-	if len(d.conf.Partitions) == 0 {
-		return nil
-	}
-	conf := d.conf
-	if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
-		return errors.New("--partitions is only available for TiDB")
-	}
-	if conf.ServerInfo.ServerVersion == nil || conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) < 0 {
-		return errors.New("--partitions requires TiDB version >= v5.0.0")
-	}
-	for dbName, tables := range allTables {
-		for _, table := range tables {
-			if table.Type != TableTypeBase {
-				continue
-			}
-			partitions, err := GetPartitionNames(tctx, conn, dbName, table.Name)
-			if err != nil {
-				return err
-			}
-			partitionSet := make(map[string]struct{}, len(partitions))
-			for _, partition := range partitions {
-				partitionSet[strings.ToLower(partition)] = struct{}{}
-			}
-			for _, partition := range conf.Partitions {
-				if _, ok := partitionSet[strings.ToLower(partition)]; !ok {
-					return errors.Errorf("--partitions: partition %s does not exist in table %s.%s", partition, dbName, table.Name)
 				}
 			}
 		}
@@ -937,15 +723,6 @@ func (d *Dumper) sequentialDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	if err != nil {
 		return err
 	}
-	if len(d.conf.Partitions) > 0 {
-		for i, partition := range d.conf.Partitions {
-			err = d.dumpWholeTableDirectly(tctx, meta, taskChan, partition, orderByClause, i, len(d.conf.Partitions))
-			if err != nil {
-				return err
-			}
-		}
-		return nil
-	}
 	return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 }
 
@@ -957,9 +734,6 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		conf.ServerInfo.ServerVersion != nil &&
 		(conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 ||
 			(conf.ServerInfo.HasTiKV && conf.ServerInfo.ServerVersion.Compare(*decodeRegionVersion) >= 0)) {
-		if len(d.conf.Partitions) > 0 && conf.ServerInfo.ServerVersion.Compare(*tableSampleVersion) >= 0 {
-			return d.concurrentDumpTiDBPartitionTablesWithTableSample(tctx, conn, meta, taskChan)
-		}
 		err := d.concurrentDumpTiDBTables(tctx, conn, meta, taskChan)
 		// don't retry on context error and successful tasks
 		if err2 := errors.Cause(err); err2 == nil || err2 == context.DeadlineExceeded || err2 == context.Canceled {
@@ -968,11 +742,6 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 			tctx.L().Info("fallback to concurrent dump tables using rows due to some problem. This won't influence the whole dump process",
 				zap.String("database", db), zap.String("table", tbl), log.ShortError(err))
 		}
-	}
-
-	if len(d.conf.Partitions) > 0 {
-		tctx.L().Warn("--partitions is not compatible with the row-based dump method, skipping fallback")
-		return errors.New("--partitions is not compatible with the row-based dump method")
 	}
 
 	orderByClause, err := buildOrderByClause(tctx, conf, conn, db, tbl, meta.HasImplicitRowID())
@@ -1003,24 +772,24 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
 
-	minv, maxv, err := d.selectMinAndMaxIntValue(tctx, conn, db, tbl, field)
+	min, max, err := d.selectMinAndMaxIntValue(tctx, conn, db, tbl, field)
 	if err != nil {
 		tctx.L().Info("fallback to sequential dump due to cannot get bounding values. This won't influence the whole dump process",
 			log.ShortError(err))
 		return d.dumpWholeTableDirectly(tctx, meta, taskChan, "", orderByClause, 0, 1)
 	}
 	tctx.L().Debug("get int bounding values",
-		zap.String("lower", minv.String()),
-		zap.String("upper", maxv.String()))
+		zap.String("lower", min.String()),
+		zap.String("upper", max.String()))
 
 	// every chunk would have eventual adjustments
 	estimatedChunks := count / conf.Rows
-	estimatedStep := new(big.Int).Sub(maxv, minv).Uint64()/estimatedChunks + 1
+	estimatedStep := new(big.Int).Sub(max, min).Uint64()/estimatedChunks + 1
 	bigEstimatedStep := new(big.Int).SetUint64(estimatedStep)
-	cutoff := new(big.Int).Set(minv)
+	cutoff := new(big.Int).Set(min)
 	totalChunks := estimatedChunks
 	if estimatedStep == 1 {
-		totalChunks = new(big.Int).Sub(maxv, minv).Uint64() + 1
+		totalChunks = new(big.Int).Sub(max, min).Uint64() + 1
 	}
 
 	selectField, selectLen := meta.SelectedField(), meta.SelectedLen()
@@ -1030,7 +799,7 @@ func (d *Dumper) concurrentDumpTable(tctx *tcontext.Context, conn *BaseConn, met
 	if conf.Where == "" {
 		nullValueCondition = fmt.Sprintf("`%s` IS NULL OR ", escapeString(field))
 	}
-	for maxv.Cmp(cutoff) >= 0 {
+	for max.Cmp(cutoff) >= 0 {
 		nextCutOff := new(big.Int).Add(cutoff, bigEstimatedStep)
 		where := fmt.Sprintf("%s(`%s` >= %d AND `%s` < %d)", nullValueCondition, escapeString(field), cutoff, escapeString(field), nextCutOff)
 		query := buildSelectQuery(db, tbl, selectField, "", buildWhereCondition(conf, where), orderByClause)
@@ -1060,7 +829,7 @@ func (d *Dumper) sendTaskToChan(tctx *tcontext.Context, task Task, taskChan chan
 	}
 }
 
-func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn, db, tbl, field string) (minv, maxv *big.Int, err error) {
+func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn, db, tbl, field string) (*big.Int, *big.Int, error) {
 	conf, zero := d.conf, &big.Int{}
 	query := fmt.Sprintf("SELECT MIN(`%s`),MAX(`%s`) FROM `%s`.`%s`",
 		escapeString(field), escapeString(field), escapeString(db), escapeString(tbl))
@@ -1071,7 +840,7 @@ func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn,
 
 	var smin sql.NullString
 	var smax sql.NullString
-	err = conn.QuerySQL(tctx, func(rows *sql.Rows) error {
+	err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
 		err := rows.Scan(&smin, &smax)
 		rows.Close()
 		return err
@@ -1084,16 +853,16 @@ func (d *Dumper) selectMinAndMaxIntValue(tctx *tcontext.Context, conn *BaseConn,
 		return zero, zero, errors.Errorf("no invalid min/max value found in query %s", query)
 	}
 
-	maxv = new(big.Int)
-	minv = new(big.Int)
+	max := new(big.Int)
+	min := new(big.Int)
 	var ok bool
-	if maxv, ok = maxv.SetString(smax.String, 10); !ok {
+	if max, ok = max.SetString(smax.String, 10); !ok {
 		return zero, zero, errors.Errorf("fail to convert max value %s in query %s", smax.String, query)
 	}
-	if minv, ok = minv.SetString(smin.String, 10); !ok {
+	if min, ok = min.SetString(smin.String, 10); !ok {
 		return zero, zero, errors.Errorf("fail to convert min value %s in query %s", smin.String, query)
 	}
-	return minv, maxv, nil
+	return min, max, nil
 }
 
 func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) error {
@@ -1128,37 +897,6 @@ func (d *Dumper) concurrentDumpTiDBTables(tctx *tcontext.Context, conn *BaseConn
 		return err
 	}
 	return d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, handleColNames, handleVals, "", 0, len(handleVals)+1)
-}
-
-func (d *Dumper) concurrentDumpTiDBPartitionTablesWithTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task) error {
-	db, tbl := meta.DatabaseName(), meta.TableName()
-
-	pkFields, pkColTypes, err := selectTiDBRowKeyFields(tctx, conn, meta, nil)
-	if err != nil {
-		return err
-	}
-
-	cachedHandleVals := make([][][]string, len(d.conf.Partitions))
-	totalChunk := 0
-	for i, partition := range d.conf.Partitions {
-		tctx.L().Debug("dumping TiDB tables with TABLESAMPLE",
-			zap.String("database", db), zap.String("table", tbl), zap.String("partition", partition))
-		handleVals, err := selectTiDBTableSampleForPartition(tctx, conn, meta, pkFields, pkColTypes, partition)
-		if err != nil {
-			return err
-		}
-		cachedHandleVals[i] = handleVals
-		totalChunk += len(handleVals) + 1
-	}
-	startChunk := 0
-	for i, partition := range d.conf.Partitions {
-		err = d.sendConcurrentDumpTiDBTasks(tctx, meta, taskChan, pkFields, cachedHandleVals[i], partition, startChunk, totalChunk)
-		if err != nil {
-			return err
-		}
-		startChunk += len(cachedHandleVals[i]) + 1
-	}
-	return nil
 }
 
 func (d *Dumper) concurrentDumpTiDBPartitionTables(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, taskChan chan<- Task, partitions []string) error {
@@ -1226,38 +964,34 @@ func (d *Dumper) L() log.Logger {
 	return d.tctx.L()
 }
 
-func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, partitions ...string) (pkFields []string, pkVals [][]string, err error) {
+func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error) {
 	pkFields, pkColTypes, err := selectTiDBRowKeyFields(tctx, conn, meta, nil)
 	if err != nil {
 		return nil, nil, errors.Trace(err)
 	}
 
-	query := buildTiDBTableSampleQuery(pkFields, meta.DatabaseName(), meta.TableName(), partitions...)
+	query := buildTiDBTableSampleQuery(pkFields, meta.DatabaseName(), meta.TableName())
 	pkValNum := len(pkFields)
 	var iter SQLRowIter
 	rowRec := MakeRowReceiver(pkColTypes)
-	pkKinds := columnKinds(pkColTypes)
-	var (
-		rawRow []sql.RawBytes
-		valBuf []byte
-	)
+	buf := new(bytes.Buffer)
 
 	err = conn.QuerySQL(tctx, func(rows *sql.Rows) error {
 		if iter == nil {
 			iter = &rowIter{
 				rows: rows,
-				args: make([]any, pkValNum),
+				args: make([]interface{}, pkValNum),
 			}
 		}
 		err = iter.Decode(rowRec)
 		if err != nil {
 			return errors.Trace(err)
 		}
-		rawRow = rowRec.appendRawBytes(rawRow[:0])
 		pkValRow := make([]string, 0, pkValNum)
-		for i, raw := range rawRow {
-			valBuf = sqlfile.AppendValue(valBuf[:0], raw, raw == nil, pkKinds[i], true)
-			pkValRow = append(pkValRow, string(valBuf))
+		for _, rec := range rowRec.receivers {
+			rec.WriteToBuffer(buf, true)
+			pkValRow = append(pkValRow, buf.String())
+			buf.Reset()
 		}
 		pkVals = append(pkVals, pkValRow)
 		return nil
@@ -1268,6 +1002,7 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 		}
 		rowRec = MakeRowReceiver(pkColTypes)
 		pkVals = pkVals[:0]
+		buf.Reset()
 	}, query)
 	if err == nil && iter != nil && iter.Error() != nil {
 		err = iter.Error()
@@ -1276,66 +1011,13 @@ func selectTiDBTableSample(tctx *tcontext.Context, conn *BaseConn, meta TableMet
 	return pkFields, pkVals, err
 }
 
-func selectTiDBTableSampleForPartition(tctx *tcontext.Context, conn *BaseConn, meta TableMeta, pkFields, pkColTypes []string, partition string) ([][]string, error) {
-	query := buildTiDBTableSampleQuery(pkFields, meta.DatabaseName(), meta.TableName(), partition)
-	pkValNum := len(pkFields)
-	var iter SQLRowIter
-	rowRec := MakeRowReceiver(pkColTypes)
-	pkKinds := columnKinds(pkColTypes)
-	var (
-		rawRow []sql.RawBytes
-		valBuf []byte
-	)
-
-	var pkVals [][]string
-	err := conn.QuerySQL(tctx, func(rows *sql.Rows) error {
-		if iter == nil {
-			iter = &rowIter{
-				rows: rows,
-				args: make([]any, pkValNum),
-			}
-		}
-		if err := iter.Decode(rowRec); err != nil {
-			return errors.Trace(err)
-		}
-		rawRow = rowRec.appendRawBytes(rawRow[:0])
-		pkValRow := make([]string, 0, pkValNum)
-		for i, raw := range rawRow {
-			valBuf = sqlfile.AppendValue(valBuf[:0], raw, raw == nil, pkKinds[i], true)
-			pkValRow = append(pkValRow, string(valBuf))
-		}
-		pkVals = append(pkVals, pkValRow)
-		return nil
-	}, func() {
-		if iter != nil {
-			_ = iter.Close()
-			iter = nil
-		}
-		rowRec = MakeRowReceiver(pkColTypes)
-		pkVals = pkVals[:0]
-	}, query)
-	if err == nil && iter != nil && iter.Error() != nil {
-		err = iter.Error()
-	}
-
-	return pkVals, err
-}
-
-func buildTiDBTableSampleQuery(pkFields []string, dbName, tblName string, partitions ...string) string {
+func buildTiDBTableSampleQuery(pkFields []string, dbName, tblName string) string {
 	template := "SELECT %s FROM `%s`.`%s` TABLESAMPLE REGIONS() ORDER BY %s"
 	quotaPk := make([]string, len(pkFields))
 	for i, s := range pkFields {
 		quotaPk[i] = fmt.Sprintf("`%s`", escapeString(s))
 	}
 	pks := strings.Join(quotaPk, ",")
-	if len(partitions) > 0 {
-		template = "SELECT %s FROM `%s`.`%s` PARTITION(%s) TABLESAMPLE REGIONS() ORDER BY %s"
-		quotedPartitions := make([]string, len(partitions))
-		for i, partition := range partitions {
-			quotedPartitions[i] = fmt.Sprintf("`%s`", escapeString(partition))
-		}
-		return fmt.Sprintf(template, pks, escapeString(dbName), escapeString(tblName), strings.Join(quotedPartitions, ","), pks)
-	}
 	return fmt.Sprintf(template, pks, escapeString(dbName), escapeString(tblName), pks)
 }
 
@@ -1463,29 +1145,8 @@ func getListTableTypeByConf(conf *Config) listTableType {
 }
 
 func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) error {
-	if conf.SQL != "" {
+	if conf.SpecifiedTables || conf.SQL != "" {
 		return nil
-	}
-
-	var listType listTableType
-
-	// TiDB has optimized the performance of reading INFORMATION_SCHEMA.TABLES
-	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
-		listType = listTableByInfoSchema
-	} else {
-		ifSeqExists, err := checkIfSeqExists(db)
-		if err != nil {
-			return err
-		}
-		if ifSeqExists {
-			listType = listTableByShowFullTables
-		} else {
-			listType = getListTableTypeByConf(conf)
-		}
-	}
-
-	if conf.SpecifiedTables {
-		return updateSpecifiedTablesMeta(tctx, db, conf.Tables, listType)
 	}
 	databases, err := prepareDumpingDatabases(tctx, conf, db)
 	if err != nil {
@@ -1500,6 +1161,17 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 		tableTypes = append(tableTypes, TableTypeSequence)
 	}
 
+	ifSeqExists, err := CheckIfSeqExists(db)
+	if err != nil {
+		return err
+	}
+	var listType listTableType
+	if ifSeqExists {
+		listType = listTableByShowFullTables
+	} else {
+		listType = getListTableTypeByConf(conf)
+	}
+
 	conf.Tables, err = ListAllDatabasesTables(tctx, db, databases, listType, tableTypes...)
 	if err != nil {
 		return err
@@ -1511,22 +1183,12 @@ func prepareTableListToDump(tctx *tcontext.Context, conf *Config, db *sql.Conn) 
 
 func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db string, table *TableInfo) (TableMeta, error) {
 	tbl := table.Name
-	var err error
-	projection, ok := conf.columnProjection[tableName{db: db, table: tbl}]
-	if !ok {
-		if len(conf.columnFilter.Filters) > 0 {
-			return nil, errors.Errorf(
-				"missing column projection for table `%s`.`%s`",
-				escapeString(db),
-				escapeString(tbl),
-			)
-		}
-		projection, err = buildColumnProjection(tctx, conf, conn, db, table)
-		if err != nil {
-			return nil, err
-		}
+	selectField, selectLen, err := buildSelectField(tctx, conn, db, tbl, conf.CompleteInsert)
+	if err != nil {
+		return nil, err
 	}
 	var (
+		colTypes         []*sql.ColumnType
 		hasImplicitRowID bool
 	)
 	if conf.ServerInfo.ServerType == version.ServerTypeTiDB {
@@ -1536,13 +1198,25 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		}
 	}
 
+	// If all columns are generated
+	if table.Type == TableTypeBase {
+		if selectField == "" {
+			colTypes, err = GetColumnTypes(tctx, conn, "*", db, tbl)
+		} else {
+			colTypes, err = GetColumnTypes(tctx, conn, selectField, db, tbl)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
 	meta := &tableMeta{
 		avgRowLength:     table.AvgRowLength,
 		database:         db,
 		table:            tbl,
-		colTypes:         projection.selectedTypes,
-		sourceColTypes:   projection.sourceTypes,
-		selectedField:    projection.selectField,
+		colTypes:         colTypes,
+		selectedField:    selectField,
+		selectedLen:      selectLen,
 		hasImplicitRowID: hasImplicitRowID,
 		specCmts:         getSpecialComments(conf.ServerInfo.ServerType),
 	}
@@ -1570,12 +1244,9 @@ func dumpTableMeta(tctx *tcontext.Context, conf *Config, conn *BaseConn, db stri
 		return meta, nil
 	}
 
-	createTableSQL := projection.schemaSQL
-	if createTableSQL == "" {
-		createTableSQL, err = ShowCreateTable(tctx, conn, db, tbl)
-		if err != nil {
-			return nil, err
-		}
+	createTableSQL, err := ShowCreateTable(tctx, conn, db, tbl)
+	if err != nil {
+		return nil, err
 	}
 	meta.showCreateTable = createTableSQL
 	return meta, nil
@@ -1665,7 +1336,7 @@ func startHTTPService(d *Dumper) error {
 	conf := d.conf
 	if conf.StatusAddr != "" {
 		go func() {
-			err := startDumplingService(d.tctx, conf.StatusAddr, d)
+			err := startDumplingService(d.tctx, conf.StatusAddr)
 			if err != nil {
 				d.L().Info("meet error when stopping dumpling http service", log.ShortError(err))
 			}
@@ -1762,140 +1433,32 @@ func validateResolveAutoConsistency(d *Dumper) error {
 	return nil
 }
 
-// tidbResolveKeyspaceMetaForGC is an initialization step of Dumper.
-//
-// For a premium (keyspace) cluster, cloud control will pass `--pd`.
-// Dumpling resolves the keyspace from information_schema.KEYSPACE_META and uses
-// the keyspace ID for the keyspace-level GC barrier.
-//
-// If KEYSPACE_META reports a classical cluster, `--pd` must not be specified.
-func tidbResolveKeyspaceMetaForGC(d *Dumper) error {
-	tctx, conf, db := d.tctx, d.conf, d.dbHandle
-	if conf.ServerInfo.ServerType != version.ServerTypeTiDB {
-		if conf.PDAddr != "" {
-			return errors.New("--pd only supports TiDB keyspace clusters")
-		}
-		return nil
-	}
-
-	keyspaceName, keyspaceID, err := queryCurrentKeyspaceNameAndID(tctx, db)
-	if err != nil {
-		// If the user explicitly passes premium GC parameters, do not ignore this error.
-		if conf.PDAddr != "" {
-			return err
-		}
-
-		// Be compatible with older TiDB versions which may not have KEYSPACE_META.
-		if mysqlErr, ok := errors.Cause(err).(*mysql.MySQLError); ok && mysqlErr.Number == ErrNoSuchTable {
-			tctx.L().Info("KEYSPACE_META is not available, treat as classical cluster", log.ShortError(err))
-			return nil
-		}
-		tctx.L().Info("meet some problem while fetching keyspace meta. This won't affect dump process", log.ShortError(err))
-		return nil
-	}
-	tctx.L().Info("resolved keyspace meta",
-		zap.String("keyspace-name", keyspaceName),
-		zap.String("keyspace-id", keyspaceID))
-
-	// Classical cluster.
-	if keyspaceName == "" {
-		if conf.PDAddr != "" {
-			return errors.New("classical cluster must not specify --pd")
-		}
-		return nil
-	}
-
-	// Premium cluster.
-	if conf.PDAddr == "" {
-		return errors.New("premium keyspace cluster requires --pd")
-	}
-	if keyspaceID == "" {
-		return errors.Errorf("empty keyspace id from KEYSPACE_META for keyspace %q", keyspaceName)
-	}
-	parsedID, err := strconv.ParseUint(keyspaceID, 10, 32)
-	if err != nil {
-		return errors.Annotatef(err, "invalid keyspace id %q from KEYSPACE_META", keyspaceID)
-	}
-	d.tidbKeyspaceName = keyspaceName
-	d.tidbKeyspaceID = uint32(parsedID)
-	return nil
-}
-
 // tidbSetPDClientForGC is an initialization step of Dumper.
 func tidbSetPDClientForGC(d *Dumper) error {
-	tctx, conf, si, pool := d.tctx, d.conf, d.conf.ServerInfo, d.dbHandle
-	d.tidbUseKeyspaceGC = false
+	tctx, si, pool := d.tctx, d.conf.ServerInfo, d.dbHandle
 	if si.ServerType != version.ServerTypeTiDB ||
 		si.ServerVersion == nil ||
 		si.ServerVersion.Compare(*gcSafePointVersion) < 0 {
 		return nil
 	}
-
-	// Premium cluster: PD endpoints are passed from cloud control.
-	if d.tidbKeyspaceName != "" {
-		pdAddrs := strings.Split(conf.PDAddr, ",")
-		pdAddrs = slices.DeleteFunc(pdAddrs, func(s string) bool { return strings.TrimSpace(s) == "" })
-		for i := range pdAddrs {
-			pdAddrs[i] = strings.TrimSpace(pdAddrs[i])
-		}
-		if len(pdAddrs) == 0 {
-			return errors.New("invalid --pd: empty PD endpoints")
-		}
-
-		apiCtx := pd.NewAPIContextV2(d.tidbKeyspaceName)
-		pdClient, err := pd.NewClientWithAPIContext(tctx, apiCtx, caller.Component("dumpling-gc"), pdAddrs, pdSecurityOptionForGC(conf))
-		if err != nil {
-			return errors.Trace(err)
-		}
-		d.tidbPDClientForGC = pdClient
-		d.tidbUseKeyspaceGC = true
-		return nil
-	}
-
-	// Classical cluster: discover PD endpoints from TiDB.
 	pdAddrs, err := GetPdAddrs(tctx, pool)
 	if err != nil {
 		tctx.L().Info("meet some problem while fetching pd addrs. This won't affect dump process", log.ShortError(err))
 		return nil
 	}
-	if len(pdAddrs) == 0 {
-		return nil
-	}
-
-	doPDGC, err := checkSameCluster(tctx, pool, pdAddrs)
-	if err != nil {
-		tctx.L().Info("meet error while check whether fetched pd addr and TiDB belong to one cluster. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
-		return nil
-	}
-	if !doPDGC {
-		return nil
-	}
-
-	apiCtx := pd.NewAPIContextV1()
-	pdClient, err := pd.NewClientWithAPIContext(tctx, apiCtx, caller.Component("dumpling-gc"), pdAddrs, pdSecurityOptionForGC(conf))
-	if err != nil {
-		tctx.L().Info("create pd client to control GC failed. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
-		return nil
-	}
-	d.tidbPDClientForGC = pdClient
-	return nil
-}
-
-func pdSecurityOptionForGC(conf *Config) pd.SecurityOption {
-	return pd.SecurityOption{
-		CAPath:   firstNonEmpty(conf.ClusterSSLCA, conf.Security.CAPath),
-		CertPath: firstNonEmpty(conf.ClusterSSLCert, conf.Security.CertPath),
-		KeyPath:  firstNonEmpty(conf.ClusterSSLKey, conf.Security.KeyPath),
-	}
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, val := range vals {
-		if val != "" {
-			return val
+	if len(pdAddrs) > 0 {
+		doPdGC, err := checkSameCluster(tctx, pool, pdAddrs)
+		if err != nil {
+			tctx.L().Info("meet error while check whether fetched pd addr and TiDB belong to one cluster. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
+		} else if doPdGC {
+			pdClient, err := pd.NewClientWithContext(tctx, pdAddrs, pd.SecurityOption{})
+			if err != nil {
+				tctx.L().Info("create pd client to control GC failed. This won't affect dump process", log.ShortError(err), zap.Strings("pdAddrs", pdAddrs))
+			}
+			d.tidbPDClientForGC = pdClient
 		}
 	}
-	return ""
+	return nil
 }
 
 // tidbGetSnapshot is an initialization step of Dumper.
@@ -1938,116 +1501,32 @@ func tidbStartGCSavepointUpdateService(d *Dumper) error {
 		if err != nil {
 			return err
 		}
-		if d.tidbUseKeyspaceGC {
-			go updateKeyspaceGCBarrier(tctx, d.tidbPDClientForGC, d.tidbKeyspaceID, defaultDumpGCSafePointTTL, snapshotTS)
-		} else {
-			go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
-		}
+		go updateServiceSafePoint(tctx, d.tidbPDClientForGC, defaultDumpGCSafePointTTL, snapshotTS)
 	} else if si.ServerType == version.ServerTypeTiDB {
-		// Before TiDB v5.0.0, GC lifetime was configured through the tikv_gc_life_time
-		// row in mysql.tidb. Starting with v5.0.0, use the tidb_gc_life_time system variable.
-		tctx.L().Warn("If the amount of data to dump is large (more than 60 GB or expected to take more than 10 minutes),\n" +
-			"consider increasing tidb_gc_life_time to prevent historical data from being collected during the dump.\n" +
-			"Before dumping, record the current value with `SELECT @@GLOBAL.tidb_gc_life_time;`,\n" +
-			"then run `SET GLOBAL tidb_gc_life_time = '720h';`.\n" +
-			"After dumping, restore tidb_gc_life_time to the recorded value.\n")
+		tctx.L().Warn("If the amount of data to dump is large, criteria: (data more than 60GB or dumped time more than 10 minutes)\n" +
+			"you'd better adjust the tikv_gc_life_time to avoid export failure due to TiDB GC during the dump process.\n" +
+			"Before dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '720h' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n" +
+			"After dumping: run sql `update mysql.tidb set VARIABLE_VALUE = '10m' where VARIABLE_NAME = 'tikv_gc_life_time';` in tidb.\n")
 	}
 	return nil
 }
 
 func updateServiceSafePoint(tctx *tcontext.Context, pdClient pd.Client, ttl int64, snapshotTS uint64) {
-	dumplingServiceSafePointID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
-	tctx.L().Info("generate dumpling gc safePoint id", zap.String("id", dumplingServiceSafePointID))
-	runGCProtectionUpdater(
-		tctx,
-		ttl,
-		snapshotTS,
-		func(ctx context.Context, protectTS uint64, retryCnt int) error {
-			if retryCnt == 0 {
-				tctx.L().Debug("update PD safePoint limit with ttl",
-					zap.Uint64("safePoint", protectTS),
-					zap.Int64("ttl", ttl))
-			}
-			_, err := pdClient.UpdateServiceGCSafePoint(ctx, dumplingServiceSafePointID, ttl, protectTS)
-			if err != nil {
-				tctx.L().Debug("update PD safePoint failed", log.ShortError(err), zap.Int("retryTime", retryCnt))
-			}
-			return err
-		},
-		func(ctx context.Context) {
-			if _, err := pdClient.UpdateServiceGCSafePoint(ctx, dumplingServiceSafePointID, 0, 0); err != nil {
-				tctx.L().Debug("remove dumpling gc safePoint failed", log.ShortError(err), zap.String("id", dumplingServiceSafePointID))
-			}
-		},
-	)
-}
-
-func updateKeyspaceGCBarrier(tctx *tcontext.Context, pdClient pd.Client, keyspaceID uint32, ttl int64, snapshotTS uint64) {
-	barrierID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
-	tctx.L().Info("generate dumpling gc barrier id", zap.String("id", barrierID), zap.Uint32("keyspaceID", keyspaceID))
-
-	gcClient := pdClient.GetGCStatesClient(keyspaceID)
-	ttlDuration := time.Duration(ttl) * time.Second
-
-	runGCProtectionUpdater(
-		tctx,
-		ttl,
-		snapshotTS,
-		func(ctx context.Context, protectTS uint64, retryCnt int) error {
-			if retryCnt == 0 {
-				tctx.L().Debug("set keyspace GC barrier with ttl",
-					zap.Uint32("keyspaceID", keyspaceID),
-					zap.Uint64("barrierTS", protectTS),
-					zap.Duration("ttl", ttlDuration))
-			}
-			_, err := gcClient.SetGCBarrier(ctx, barrierID, protectTS, ttlDuration)
-			if err != nil {
-				tctx.L().Warn("set keyspace GC barrier failed", log.ShortError(err),
-					zap.Int("retryTime", retryCnt),
-					zap.Uint32("keyspaceID", keyspaceID))
-			}
-			return err
-		},
-		func(ctx context.Context) {
-			if _, err := gcClient.DeleteGCBarrier(ctx, barrierID); err != nil {
-				tctx.L().Debug("remove dumpling gc barrier failed", log.ShortError(err),
-					zap.String("id", barrierID),
-					zap.Uint32("keyspaceID", keyspaceID))
-			}
-		},
-	)
-}
-
-func runGCProtectionUpdater(
-	tctx *tcontext.Context,
-	ttl int64,
-	snapshotTS uint64,
-	update func(ctx context.Context, protectTS uint64, retryCnt int) error,
-	cleanup func(ctx context.Context),
-) {
 	updateInterval := time.Duration(ttl/2) * time.Second
 	tick := time.NewTicker(updateInterval)
-	defer tick.Stop()
-
-	// Protect `snapshotTS` by keeping the GC protection boundary below it.
-	protectTS := snapshotTS
-	if protectTS > 0 {
-		protectTS--
-	}
-
-	defer func() {
-		// best-effort cleanup (TTL will also expire soon even if this fails)
-		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-		defer cancel()
-		cleanup(ctx)
-	}()
+	dumplingServiceSafePointID := fmt.Sprintf("%s_%d", dumplingServiceSafePointPrefix, time.Now().UnixNano())
+	tctx.L().Info("generate dumpling gc safePoint id", zap.String("id", dumplingServiceSafePointID))
 
 	for {
-		for retryCnt := range 11 {
-			err := update(tctx, protectTS, retryCnt)
+		tctx.L().Debug("update PD safePoint limit with ttl",
+			zap.Uint64("safePoint", snapshotTS),
+			zap.Int64("ttl", ttl))
+		for retryCnt := 0; retryCnt <= 10; retryCnt++ {
+			_, err := pdClient.UpdateServiceGCSafePoint(tctx, dumplingServiceSafePointID, ttl, snapshotTS)
 			if err == nil {
 				break
 			}
+			tctx.L().Debug("update PD safePoint failed", log.ShortError(err), zap.Int("retryTime", retryCnt))
 			select {
 			case <-tctx.Done():
 				return
@@ -2063,8 +1542,8 @@ func runGCProtectionUpdater(
 }
 
 // setDefaultSessionParams is a step to set default params for session params.
-func setDefaultSessionParams(si version.ServerInfo, sessionParams map[string]any) {
-	defaultSessionParams := map[string]any{}
+func setDefaultSessionParams(si version.ServerInfo, sessionParams map[string]interface{}) {
+	defaultSessionParams := map[string]interface{}{}
 	if si.ServerType == version.ServerTypeTiDB && si.HasTiKV && si.ServerVersion.Compare(*enablePagingVersion) >= 0 {
 		defaultSessionParams["tidb_enable_paging"] = "ON"
 	}
@@ -2123,7 +1602,7 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 	}
 	// for TiDB v3.0+, the original selectTiDBTableRegionFunc will always fail,
 	// because TiDB v3.0 doesn't have `tidb_decode_key` function nor `DB_NAME`,`TABLE_NAME` columns in `INFORMATION_SCHEMA.TIKV_REGION_STATUS`.
-	// reference: https://github.com/pingcap/tidb/blob/c497d5c/dumpling/export/dump.go#L775
+	// reference: https://github.com/ocean2811/tidbeaff0fbc576a/blob/c497d5c/dumpling/export/dump.go#L775
 	// To avoid this function continuously returning errors and confusing users because we fail to init this function at first,
 	// selectTiDBTableRegionFunc is set to always return an ignorable error at first.
 	d.selectTiDBTableRegionFunc = func(_ *tcontext.Context, _ *BaseConn, meta TableMeta) (pkFields []string, pkVals [][]string, err error) {
@@ -2152,7 +1631,7 @@ func (d *Dumper) renewSelectTableRegionFuncForLowerTiDB(tctx *tcontext.Context) 
 		return errors.Trace(err)
 	}
 	tikvHelper := &helper.Helper{}
-	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, infoschema.DBInfoAsInfoSchema(dbInfos), nil)
+	tableInfos := tikvHelper.GetRegionsTableInfo(regionsInfo, dbInfos)
 
 	tableInfoMap := make(map[string]map[string][]int64, len(conf.Tables))
 	for _, region := range regionsInfo.Regions {

@@ -54,7 +54,7 @@ func prettyPrint(w io.Writer, val reflect.Value) {
 		}
 	case reflect.Struct:
 		fmt.Fprintf(w, "{")
-		for i := range val.NumField() {
+		for i := 0; i < val.NumField(); i++ {
 			fv := val.Field(i)
 			ft := tp.Field(i)
 			if strings.HasPrefix(ft.Name, "XXX") {

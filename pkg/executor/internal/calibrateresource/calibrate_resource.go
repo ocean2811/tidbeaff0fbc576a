@@ -31,18 +31,20 @@ import (
 	"github.com/docker/go-units"
 	"github.com/pingcap/errors"
 	"github.com/pingcap/failpoint"
-	"github.com/pingcap/tidb/pkg/domain"
-	"github.com/pingcap/tidb/pkg/executor/internal/exec"
-	"github.com/pingcap/tidb/pkg/infoschema"
-	"github.com/pingcap/tidb/pkg/kv"
-	"github.com/pingcap/tidb/pkg/parser/ast"
-	"github.com/pingcap/tidb/pkg/parser/duration"
-	"github.com/pingcap/tidb/pkg/sessionctx"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/sessiontxn/staleread"
-	"github.com/pingcap/tidb/pkg/util"
-	"github.com/pingcap/tidb/pkg/util/chunk"
-	"github.com/pingcap/tidb/pkg/util/sqlexec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/domain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/executor/internal/exec"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/infoschema"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/kv"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/ast"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/duration"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/parser/model"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessiontxn/staleread"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/chunk"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/mathutil"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/util/sqlexec"
 	"github.com/tikv/client-go/v2/oracle"
 	resourceControlClient "github.com/tikv/pd/client/resource_group/controller"
 )
@@ -138,7 +140,7 @@ type Executor struct {
 }
 
 func (e *Executor) parseTsExpr(ctx context.Context, tsExpr ast.ExprNode) (time.Time, error) {
-	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.Ctx().GetPlanCtx(), tsExpr)
+	ts, err := staleread.CalculateAsOfTsExpr(ctx, e.Ctx(), tsExpr)
 	if err != nil {
 		return time.Time{}, err
 	}
@@ -195,10 +197,10 @@ func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.T
 		if startTimeExpr == nil {
 			toTimeExpr := endTimeExpr
 			if endTime.IsZero() {
-				toTimeExpr = &ast.FuncCallExpr{FnName: ast.NewCIStr("CURRENT_TIMESTAMP")}
+				toTimeExpr = &ast.FuncCallExpr{FnName: model.NewCIStr("CURRENT_TIMESTAMP")}
 			}
 			startTimeExpr = &ast.FuncCallExpr{
-				FnName: ast.NewCIStr("DATE_SUB"),
+				FnName: model.NewCIStr("DATE_SUB"),
 				Args: []ast.ExprNode{
 					toTimeExpr,
 					op.Ts,
@@ -212,7 +214,7 @@ func (e *Executor) parseCalibrateDuration(ctx context.Context) (startTime time.T
 		// If endTime is set, duration will be ignored.
 		if endTime.IsZero() {
 			endTime, err = e.parseTsExpr(ctx, &ast.FuncCallExpr{
-				FnName: ast.NewCIStr("DATE_ADD"),
+				FnName: model.NewCIStr("DATE_ADD"),
 				Args: []ast.ExprNode{startTimeExpr,
 					op.Ts,
 					&ast.TimeUnitExpr{Unit: op.Unit}},
@@ -251,7 +253,7 @@ func (e *Executor) Next(ctx context.Context, req *chunk.Chunk) error {
 		return nil
 	}
 	e.done = true
-	if !vardef.EnableResourceControl.Load() {
+	if !variable.EnableResourceControl.Load() {
 		return infoschema.ErrResourceGroupSupportDisabled
 	}
 	ctx = kv.WithInternalSourceType(ctx, kv.InternalTxnOthers)
@@ -267,7 +269,7 @@ var (
 )
 
 func (e *Executor) dynamicCalibrate(ctx context.Context, req *chunk.Chunk) error {
-	exec := e.Ctx().GetRestrictedSQLExecutor()
+	exec := e.Ctx().(sqlexec.RestrictedSQLExecutor)
 	startTs, endTs, err := e.parseCalibrateDuration(ctx)
 	if err != nil {
 		return err
@@ -363,11 +365,11 @@ func (e *Executor) getTiDBQuota(
 		// If one of the two cpu usage is greater than the `valuableUsageThreshold`, we can accept it.
 		// And if both are greater than the `lowUsageThreshold`, we can also accept it.
 		if tikvQuota > valuableUsageThreshold || tidbQuota > valuableUsageThreshold {
-			quotas = append(quotas, rus.getValue()/max(tikvQuota, tidbQuota))
+			quotas = append(quotas, rus.getValue()/mathutil.Max(tikvQuota, tidbQuota))
 		} else if tikvQuota < lowUsageThreshold || tidbQuota < lowUsageThreshold {
 			lowCount++
 		} else {
-			quotas = append(quotas, rus.getValue()/max(tikvQuota, tidbQuota))
+			quotas = append(quotas, rus.getValue()/mathutil.Max(tikvQuota, tidbQuota))
 		}
 		rus.next()
 		tidbCPUs.next()
@@ -592,6 +594,18 @@ func getRUPerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.Rest
 func getComponentCPUUsagePerSec(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, component, startTime, endTime string) (*timeSeriesValues, error) {
 	query := fmt.Sprintf("SELECT time, sum(value) FROM METRICS_SCHEMA.process_cpu_usage where time >= '%s' and time <= '%s' and job like '%%%s' GROUP BY time ORDER BY time asc", startTime, endTime, component)
 	return getValuesFromMetrics(ctx, sctx, exec, query)
+}
+
+func getNumberFromMetrics(ctx context.Context, exec sqlexec.RestrictedSQLExecutor, query, metrics string) (float64, error) {
+	rows, _, err := exec.ExecRestrictedSQL(ctx, []sqlexec.OptionFuncAlias{sqlexec.ExecOptionUseCurSession}, query)
+	if err != nil {
+		return 0.0, errors.Trace(err)
+	}
+	if len(rows) == 0 {
+		return 0.0, errors.Errorf("metrics '%s' is empty", metrics)
+	}
+
+	return rows[0].GetFloat64(0), nil
 }
 
 func getValuesFromMetrics(ctx context.Context, sctx sessionctx.Context, exec sqlexec.RestrictedSQLExecutor, query string) (*timeSeriesValues, error) {

@@ -3,7 +3,7 @@ load("@io_bazel_rules_go//go:def.bzl", "go_library")
 go_library(
     name = "mapcache",
     srcs = ["map_cache.go"],
-    importpath = "github.com/pingcap/tidb/pkg/statistics/handle/cache/internal/mapcache",
+    importpath = "github.com/ocean2811/tidbeaff0fbc576a/pkg/statistics/handle/cache/internal/mapcache",
     visibility = ["//pkg/statistics/handle:__subpackages__"],
     deps = [
         "//pkg/statistics",

@@ -1,7 +1,7 @@
 # Proposal: Support `SELECT FOR UPDATE OF TABLES`
 
 - Author(s): [jackysp](https://github.com/jackysp)
-- Tracking Issue: https://github.com/pingcap/tidb/issues/28689
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/28689
 
 ## Abstract
 

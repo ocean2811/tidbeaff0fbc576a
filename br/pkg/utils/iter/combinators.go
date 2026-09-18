@@ -5,21 +5,21 @@ package iter
 import (
 	"context"
 
-	"github.com/pingcap/tidb/pkg/util"
+	"github.com/ocean2811/tidbeaff0fbc576a/br/pkg/utils"
 )
 
 // TransformConfig is the config for the combinator "transform".
-type TransformConfig func(*bufferedMappingCfg)
+type TransformConfig func(*chunkMappingCfg)
 
 func WithConcurrency(n uint) TransformConfig {
-	return func(c *bufferedMappingCfg) {
-		c.quota = util.NewWorkerPool(n, "transforming")
+	return func(c *chunkMappingCfg) {
+		c.quota = utils.NewWorkerPool(n, "transforming")
 	}
 }
 
-func WithBufferSize(n uint) TransformConfig {
-	return func(c *bufferedMappingCfg) {
-		c.bufferSize = n
+func WithChunkSize(n uint) TransformConfig {
+	return func(c *chunkMappingCfg) {
+		c.chunkSize = n
 	}
 }
 
@@ -28,21 +28,21 @@ func WithBufferSize(n uint) TransformConfig {
 // The execution of that procedure can be paralleled with the config `WithConcurrency`.
 // You may also need to config the `WithChunkSize`, because the concurrent execution is only available intra-batch.
 func Transform[T, R any](it TryNextor[T], with func(context.Context, T) (R, error), cs ...TransformConfig) TryNextor[R] {
-	r := &bufferedMapping[T, R]{
+	r := &chunkMapping[T, R]{
 		inner:  it,
 		mapper: with,
-		bufferedMappingCfg: bufferedMappingCfg{
-			bufferSize: 1,
+		chunkMappingCfg: chunkMappingCfg{
+			chunkSize: 1,
 		},
 	}
 	for _, c := range cs {
-		c(&r.bufferedMappingCfg)
+		c(&r.chunkMappingCfg)
 	}
 	if r.quota == nil {
-		r.quota = util.NewWorkerPool(r.bufferSize, "max-concurrency")
+		r.quota = utils.NewWorkerPool(r.chunkSize, "max-concurrency")
 	}
-	if r.quota.Limit() > int(r.bufferSize) {
-		r.bufferSize = uint(r.quota.Limit())
+	if r.quota.Limit() > int(r.chunkSize) {
+		r.chunkSize = uint(r.quota.Limit())
 	}
 	return r
 }
@@ -79,20 +79,6 @@ func FlatMap[T, R any](it TryNextor[T], mapper func(T) TryNextor[R]) TryNextor[R
 // Map applies the mapper over every elements the origin iterator yields.
 func Map[T, R any](it TryNextor[T], mapper func(T) R) TryNextor[R] {
 	return pureMap[T, R]{
-		inner:  it,
-		mapper: mapper,
-	}
-}
-
-func MapFilter[T, R any](it TryNextor[T], mapper func(T) (R, bool)) TryNextor[R] {
-	return filterMap[T, R]{
-		inner:  it,
-		mapper: mapper,
-	}
-}
-
-func TryMap[T, R any](it TryNextor[T], mapper func(T) (R, error)) TryNextor[R] {
-	return tryMap[T, R]{
 		inner:  it,
 		mapper: mapper,
 	}

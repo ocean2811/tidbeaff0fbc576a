@@ -17,25 +17,31 @@ package executor_test
 import (
 	"testing"
 
-	"github.com/pingcap/tidb/pkg/config"
-	"github.com/pingcap/tidb/pkg/meta/autoid"
-	"github.com/pingcap/tidb/pkg/sessionctx/vardef"
-	"github.com/pingcap/tidb/pkg/testkit/testdata"
-	"github.com/pingcap/tidb/pkg/testkit/testmain"
-	"github.com/pingcap/tidb/pkg/testkit/testsetup"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/config"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/meta/autoid"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/sessionctx/variable"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testdata"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testmain"
+	"github.com/ocean2811/tidbeaff0fbc576a/pkg/testkit/testsetup"
 	"github.com/tikv/client-go/v2/tikv"
 	"go.uber.org/goleak"
 )
 
 var testDataMap = make(testdata.BookKeeper)
 var prepareMergeSuiteData testdata.TestData
+var executorSuiteData testdata.TestData
+var pointGetSuiteData testdata.TestData
 var slowQuerySuiteData testdata.TestData
 
 func TestMain(m *testing.M) {
 	testsetup.SetupForCommonTest()
+	testDataMap.LoadTestSuiteData("testdata", "executor_suite")
 	testDataMap.LoadTestSuiteData("testdata", "prepare_suite")
+	testDataMap.LoadTestSuiteData("testdata", "point_get_suite")
 	testDataMap.LoadTestSuiteData("testdata", "slow_query_suite")
+	executorSuiteData = testDataMap["executor_suite"]
 	prepareMergeSuiteData = testDataMap["prepare_suite"]
+	pointGetSuiteData = testDataMap["point_get_suite"]
 	slowQuerySuiteData = testDataMap["slow_query_suite"]
 
 	autoid.SetStep(5000)
@@ -46,21 +52,18 @@ func TestMain(m *testing.M) {
 		conf.Experimental.AllowsExpressionIndex = true
 	})
 	tikv.EnableFailpoints()
-	vardef.StatsCacheMemQuota.Store(5000)
+	variable.StatsCacheMemQuota.Store(5000)
 
 	opts := []goleak.Option{
 		goleak.IgnoreTopFunction("github.com/golang/glog.(*fileSink).flushDaemon"),
-		goleak.IgnoreTopFunction("github.com/bazelbuild/rules_go/go/tools/bzltestutil.RegisterTimeoutHandler.func1"),
 		goleak.IgnoreTopFunction("github.com/lestrrat-go/httprc.runFetchWorker"),
 		goleak.IgnoreTopFunction("go.etcd.io/etcd/client/pkg/v3/logutil.(*MergeLogger).outputLoop"),
 		goleak.IgnoreTopFunction("gopkg.in/natefinch/lumberjack%2ev2.(*Logger).millRun"),
 		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/txnkv/transaction.keepAlive"),
 		goleak.IgnoreTopFunction("go.opencensus.io/stats/view.(*worker).start"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/ttlworker.(*ttlScanWorker).loop"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/client.(*mockClient).WatchCommand.func1"),
-		goleak.IgnoreTopFunction("github.com/pingcap/tidb/pkg/ttl/ttlworker.(*JobManager).jobLoop"),
-		// backoff function will lead to sleep, so there is a high probability of goroutine leak while it's doing backoff.
-		goleak.IgnoreTopFunction("github.com/tikv/client-go/v2/config/retry.(*Config).createBackoffFn.newBackoffFn.func2"),
+		goleak.IgnoreTopFunction("github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/ttlworker.(*ttlScanWorker).loop"),
+		goleak.IgnoreTopFunction("github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/client.(*mockClient).WatchCommand.func1"),
+		goleak.IgnoreTopFunction("github.com/ocean2811/tidbeaff0fbc576a/pkg/ttl/ttlworker.(*JobManager).jobLoop"),
 	}
 	callback := func(i int) int {
 		testDataMap.GenerateOutputIfNeeded()

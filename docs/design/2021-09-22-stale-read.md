@@ -2,7 +2,7 @@
 
 - Author(s): [Yisaer](https://github.com/Yisaer) (Song Gao)
 - Last updated: 2021-09-22
-- Tracking Issue: https://github.com/pingcap/tidb/issues/21094
+- Tracking Issue: https://github.com/ocean2811/tidbeaff0fbc576a/issues/21094
 - Related Document: https://docs.google.com/document/d/1dSbXbudTK-hpz0vIBsmpfuzeQhhTFJ-zDenygt8fmCk/edit?usp=sharing
 
 ## Table of Contents
